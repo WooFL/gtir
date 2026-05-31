@@ -132,3 +132,14 @@ test("handleRequest preserves a numeric id of 0 (JSON-RPC allows it)", async () 
   const r = await handleRequest({ jsonrpc: "2.0", id: 0, method: "tools/list" }, baseCtx);
   assert.equal(r.id, 0);
 });
+
+import { printConfig } from "../src/mcp.mjs";
+
+test("printConfig emits a stdio .mcp.json snippet with node + the repos", () => {
+  const snippet = JSON.parse(printConfig(["G:/p/code", "G:/p/wiki"]));
+  assert.equal(snippet.gtir.type, "stdio");
+  assert.equal(snippet.gtir.command, "node");
+  assert.match(snippet.gtir.args.join(" "), /bin\/gtir\.mjs mcp/);
+  assert.ok(snippet.gtir.args.includes("G:/p/code"));
+  assert.ok(snippet.gtir.args.includes("G:/p/wiki"));
+});

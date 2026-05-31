@@ -1,4 +1,5 @@
 import { resolve, basename } from "node:path";
+import { fileURLToPath } from "node:url";
 import { loadConfig } from "./config.mjs";
 import { search } from "./search.mjs";
 import { openStore } from "./store.mjs";
@@ -114,4 +115,54 @@ async function dispatchToolCall(params, ctx) {
   } catch (e) {
     return { content: [{ type: "text", text: `error: ${e.message}` }], isError: true };
   }
+}
+
+export function defaultSearchFn(indexes) {
+  return async (label, args) => {
+    const ix = indexes.find((i) => i.label === label);
+    return search(args.query, ix.cfg, { k: args.k, pathPrefix: args.pathPrefix, language: args.language });
+  };
+}
+
+export function defaultStatusFn(indexes) {
+  return async () => Promise.all(indexes.map(async (ix) => {
+    const store = await openStore(ix.cfg);
+    const meta = await store.readMeta();
+    const man = await store.loadManifest();
+    const builtAt = Number(meta.built_at) || 0;
+    return {
+      label: ix.label, repo: ix.repo,
+      model: meta.model ?? ix.cfg.model, dim: meta.dim ?? null,
+      files: Object.keys(man).length, built_at: builtAt,
+      age_minutes: builtAt ? Math.round((Date.now() / 1000 - builtAt) / 60) : null,
+      healthy: !!meta.dim,
+    };
+  }));
+}
+
+export function serveStdio(indexes, { version } = {}) {
+  const ctx = { indexes, searchFn: defaultSearchFn(indexes), statusFn: defaultStatusFn(indexes), version };
+  let buf = "";
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", async (chunk) => {
+    buf += chunk;
+    let nl;
+    while ((nl = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (!line) continue;
+      let msg;
+      try { msg = JSON.parse(line); } catch { continue; }
+      const res = await handleRequest(msg, ctx);
+      if (res) process.stdout.write(JSON.stringify(res) + "\n");
+    }
+  });
+  process.stderr.write(`gtir mcp: serving ${indexes.map((i) => `search_${i.label}`).join(", ")}, gtir_status\n`);
+}
+
+export function printConfig(repos) {
+  const gtirBin = fileURLToPath(new URL("../bin/gtir.mjs", import.meta.url)).split("\\").join("/");
+  const args = ["mcp"];
+  for (const r of repos) args.push("--repo", r);
+  return JSON.stringify({ gtir: { type: "stdio", command: "node", args: [gtirBin, ...args] } }, null, 2);
 }
