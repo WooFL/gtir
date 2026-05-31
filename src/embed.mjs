@@ -18,6 +18,9 @@ async function embedBatch(texts, cfg) {
   }
   const data = await res.json();
   if (!data.embeddings) throw new Error("Ollama returned no embeddings array");
+  if (data.embeddings.length !== texts.length) {
+    throw new Error(`Ollama returned ${data.embeddings.length} embeddings for ${texts.length} inputs`);
+  }
   return data.embeddings.map(l2normalize);
 }
 

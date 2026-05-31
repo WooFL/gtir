@@ -93,3 +93,19 @@ test("cAST merge: many tiny adjacent functions coalesce into fewer chunks", asyn
   assert.equal(merged[1].lineStart, 7,  "chunk2 lineStart must be 7 (f3 row 6)");
   assert.equal(merged[1].lineEnd,   11, "chunk2 lineEnd must be 11 (f5 row 10)");
 });
+
+test("chunkRecursive does not duplicate a single oversize line", () => {
+  const longLine = "x".repeat(300); // one line, >> maxChars below
+  const chunks = chunkRecursive("h.txt", "text", longLine, { maxChars: 120, minChars: 20, overlapChars: 30 });
+  const ids = chunks.map(stableId);
+  assert.equal(new Set(ids).size, ids.length, "no duplicate chunk ids");
+  assert.equal(chunks.length, 1, "a single oversize line must yield exactly one chunk");
+});
+
+test("chunkRecursive does not emit an oversize overlap blob for adjacent long lines", () => {
+  const a = "a".repeat(200), b = "b".repeat(200);
+  const chunks = chunkRecursive("h.txt", "text", a + "\n" + b, { maxChars: 120, minChars: 20, overlapChars: 30 });
+  for (const c of chunks) assert.equal(new Set(chunks.map(stableId)).size, chunks.length); // unique ids
+  // No chunk should exceed maxChars by carrying a whole prior line forward.
+  for (const c of chunks) assert.ok(c.text.length <= 200 + 1, "no merged oversize overlap blob");
+});

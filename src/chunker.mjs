@@ -33,11 +33,14 @@ export function chunkRecursive(relPath, langId, text, cfg) {
         lineStart: startLine, lineEnd: endLine, text: body,
       });
     }
-    // Carry trailing overlapChars-worth of lines into the next bucket.
+    // Carry trailing overlapChars-worth of lines into the next bucket. Never
+    // carry the whole bucket — that would re-emit it as a duplicate chunk on the
+    // next flush (e.g. a single line ≥ maxChars). Carry at most a proper suffix.
     const carry = [];
     let carryChars = 0;
     for (let i = bucket.length - 1; i >= 0; i--) {
       if (carryChars >= overlapChars) break;
+      if (carry.length >= bucket.length - 1) break; // keep carry a proper suffix
       carry.unshift(bucket[i]);
       carryChars += bucket[i].length + 1;
     }
