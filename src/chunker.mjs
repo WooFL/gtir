@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { getParser } from "./parser.mjs";
+import { langFor, targetTypes } from "./languages.mjs";
 
 export function stableId(c) {
   const body = createHash("sha1").update(c.text, "utf8").digest("hex").slice(0, 8);
@@ -52,4 +54,48 @@ export function chunkRecursive(relPath, langId, text, cfg) {
   }
   flush(lineNo);
   return chunks;
+}
+
+// Walk the tree collecting every node whose .type is in `typeSet`. Dedupe by
+// byte span. Port of flow.py's find_nodes_by_type + the seen-span dedupe.
+function collectNodes(root, typeSet) {
+  const found = new Map(); // `${start}:${end}` -> node
+  const stack = [root];
+  while (stack.length) {
+    const n = stack.pop();
+    if (typeSet.has(n.type)) found.set(`${n.startIndex}:${n.endIndex}`, n);
+    for (let i = 0; i < n.namedChildCount; i++) stack.push(n.namedChild(i));
+  }
+  return [...found.values()].sort((a, b) => a.startIndex - b.startIndex);
+}
+
+export async function chunkWithTreesitter(relPath, langId, text, cfg) {
+  const types = targetTypes(langId);
+  if (types.length === 0) return chunkRecursive(relPath, langId, text, cfg);
+  const parser = await getParser(langId);
+  if (!parser) return chunkRecursive(relPath, langId, text, cfg);
+
+  let tree;
+  try { tree = parser.parse(text); } catch { return chunkRecursive(relPath, langId, text, cfg); }
+  const nodes = collectNodes(tree.rootNode, new Set(types));
+  if (nodes.length === 0) return chunkRecursive(relPath, langId, text, cfg);
+
+  const chunks = [];
+  for (const n of nodes) {
+    const body = text.slice(n.startIndex, n.endIndex).trim();
+    if (body.length < cfg.minChars || body.length > cfg.maxChars) continue;
+    chunks.push({
+      path: relPath, language: langId,
+      chunkStart: n.startIndex, chunkEnd: n.endIndex,
+      lineStart: n.startPosition.row + 1, lineEnd: n.endPosition.row + 1,
+      text: body,
+    });
+  }
+  return chunks.length ? chunks : chunkRecursive(relPath, langId, text, cfg);
+}
+
+export async function chunkFile(relPath, ext, text, cfg) {
+  const langId = langFor(ext);
+  if (langId === null) return chunkRecursive(relPath, ext.replace(/^\./, ""), text, cfg);
+  return chunkWithTreesitter(relPath, langId, text, cfg);
 }

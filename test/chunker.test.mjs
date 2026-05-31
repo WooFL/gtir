@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { chunkRecursive, stableId } from "../src/chunker.mjs";
+import { chunkFile } from "../src/chunker.mjs";
 
 const cfg = { maxChars: 120, minChars: 20, overlapChars: 30 };
 
@@ -22,4 +23,28 @@ test("stableId is deterministic and changes with text", () => {
 
 test("chunkRecursive drops content below minChars", () => {
   assert.deepEqual(chunkRecursive("f.txt", "text", "tiny", cfg), []);
+});
+
+const astCfg = { maxChars: 2000, minChars: 20, overlapChars: 100 };
+
+test("chunkFile (python) emits a chunk per function/class via AST", async () => {
+  const py = [
+    "def alpha():",
+    "    return sum([1, 2, 3, 4, 5, 6, 7, 8])  # padding to clear minChars",
+    "",
+    "class Beta:",
+    "    def gamma(self):",
+    "        return 'a reasonably long string body to exceed the minimum'",
+  ].join("\n");
+  const chunks = await chunkFile("m.py", ".py", py, astCfg);
+  const texts = chunks.map((c) => c.text).join("\n---\n");
+  assert.match(texts, /def alpha/);
+  assert.match(texts, /class Beta/);
+});
+
+test("chunkFile falls back to recursive for grammarless ext", async () => {
+  const body = Array.from({ length: 40 }, (_, i) => `shader line ${i} value`).join("\n");
+  const chunks = await chunkFile("s.wgsl", ".wgsl", body, astCfg);
+  assert.ok(chunks.length >= 1);
+  assert.equal(chunks[0].language, "wgsl");
 });
