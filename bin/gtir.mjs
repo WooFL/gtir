@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { fileURLToPath } from "node:url";
-import { realpathSync } from "node:fs";
+import { realpathSync, readFileSync } from "node:fs";
 import { loadConfig } from "../src/config.mjs";
 import { buildIndex } from "../src/indexer.mjs";
 import { search } from "../src/search.mjs";
@@ -8,8 +8,14 @@ import { openStore } from "../src/store.mjs";
 import { installHook, removeHook } from "../src/hook.mjs";
 import { probeDim } from "../src/embed.mjs";
 import { runInit } from "../src/init.mjs";
+import { resolveIndexes, serveStdio, printConfig } from "../src/mcp.mjs";
 
 // --- programmatic entrypoints (used by tests and the dispatcher) ---
+
+function pkgVersion() {
+  try { return JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version; }
+  catch { return "0.0.0"; }
+}
 
 export async function runIndex({ repo, rebuild = false, embedImpl = null } = {}) {
   const cfg = loadConfig(repo);
@@ -44,7 +50,13 @@ function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--rebuild") args.rebuild = true;
-    else if (a === "--repo") args.repo = argv[++i];
+    else if (a === "--repo") { const v = argv[++i]; args.repo = v; (args.repos ??= []).push(v); }
+    else if (a === "--label") {
+      const v = argv[++i] ?? "";
+      const c = v.indexOf(":");
+      if (c > 0) { (args.labels ??= {})[v.slice(c + 1)] = v.slice(0, c); }
+    }
+    else if (a === "--print-config") args.printConfig = true;
     else if (a === "-k" || a === "--k") {
       const next = argv[i + 1];
       if (next !== undefined && !next.startsWith("-") && Number.isFinite(Number(next))) {
@@ -102,6 +114,14 @@ async function main() {
         else { installHook(repo); process.stderr.write("gtir: post-commit refresh hook installed\n"); }
         break;
       }
+      case "mcp": {
+        const repos = args.repos ?? (args.repo ? [args.repo] : []);
+        if (repos.length === 0) { process.stderr.write("gtir mcp: pass at least one --repo <path>\n"); process.exit(2); }
+        if (args.printConfig) { process.stdout.write(printConfig(repos) + "\n"); break; }
+        const indexes = resolveIndexes(repos, args.labels ?? {});
+        serveStdio(indexes, { version: pkgVersion() });
+        return; // keep the process alive on stdin; do not fall through to exit
+      }
       case "init": {
         const mode = args.notes ? "notes" : args.code ? "code" : null;
         const r = await runInit({ repo, mode, index: !args.noIndex, hook: !args.noHook });
@@ -119,7 +139,7 @@ async function main() {
         break;
       }
       default:
-        process.stderr.write("usage: gtir <init|index|refresh|search|status|setup|hook> [--repo <path>] [--notes|--code] [--rebuild] [--no-index] [--no-hook] [-k N] [--path-prefix P] [--language L] [--remove]\n");
+        process.stderr.write("usage: gtir <init|index|refresh|search|status|setup|hook|mcp> [--repo <path>] [--notes|--code] [--label name:<repo>] [--print-config] [--rebuild] [--no-index] [--no-hook] [-k N] [--path-prefix P] [--language L] [--remove]\n");
         process.exit(cmd ? 1 : 0);
     }
   } catch (e) {

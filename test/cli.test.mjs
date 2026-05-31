@@ -1,9 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { cpSync, mkdtempSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { fileURLToPath as f2 } from "node:url";
+import { dirname as d2, join as j2 } from "node:path";
 import { runIndex, runSearch, runStatus } from "../bin/gtir.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -38,4 +41,12 @@ test("index then search finds the session manager; gitignored file excluded", as
   assert.ok(hits.length >= 1);
   assert.ok(hits.some((h) => h.path === "auth.py"));
   assert.equal(hits.some((h) => h.path === "secret.py"), false); // gitignored
+});
+
+test("gtir mcp --print-config prints a valid .mcp.json snippet and exits", () => {
+  const bin = j2(d2(f2(import.meta.url)), "..", "bin", "gtir.mjs");
+  const out = execFileSync("node", [bin, "mcp", "--repo", "G:/p/code", "--repo", "G:/p/wiki", "--print-config"], { encoding: "utf8" });
+  const snippet = JSON.parse(out);
+  assert.equal(snippet.gtir.command, "node");
+  assert.ok(snippet.gtir.args.includes("G:/p/code"));
 });

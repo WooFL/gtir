@@ -70,6 +70,21 @@ gtir hook    --repo <project> [--remove]               # install/remove post-com
 - The index lives in `<project>/.gtir/` — regenerable, add it to `.gitignore`.
 - `gtir hook` installs a git `post-commit` hook so the index refreshes itself as you commit; it's idempotent and preserves any existing hook.
 
+## MCP server (use gtir from inside Claude)
+
+Expose gtir's search as native MCP tools so Claude can call them mid-session:
+
+    gtir mcp --repo <codeRepo> --repo <wikiRepo>
+
+It serves one tool per index — `search_code`, `search_notes` (auto-labeled from each
+index's model; override with `--label name:<repo>`) — plus `gtir_status`. Register it by
+pasting the snippet from:
+
+    gtir mcp --repo <codeRepo> --repo <wikiRepo> --print-config
+
+into your project's `.mcp.json` (`mcpServers`). The server is stdio JSON-RPC, zero extra
+deps, and adds no new retrieval logic — it wraps the same hybrid search as the CLI.
+
 ## Model
 
 Default model tag (in `src/config.mjs`): `hf.co/jinaai/jina-code-embeddings-0.5b-GGUF:F16` (994 MB, ~896-dim).
