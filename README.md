@@ -135,6 +135,40 @@ cold-start flip clears, a real regression (≥0.05) persists. Decoys follow one 
 query has exactly one defensible target; a decoy must be wrong for the intent, only superficially
 similar.
 
+## Reranking (optional cross-encoder stage)
+
+gtir can rerank the top hybrid candidates with a **cross-encoder** before returning them. A
+bi-encoder (the default vector+BM25+RRF path) scores query and document separately; a cross-encoder
+reads the `(query, chunk)` pair together, so it resolves *intent* — which is what beats shadowing
+(a test file or doc-copy outranking the source the query actually wants). It's **off by default** and
+needs a separate `llama-server` runtime, so it's opt-in.
+
+**Setup (once):**
+
+1. Download a reranker GGUF (~600 MB), e.g. `bge-reranker-v2-m3-Q8_0.gguf`, into
+   `G:\demon\llamacpp\models\`.
+2. Run llama.cpp's server with the reranking endpoint:
+
+       llama-server.exe -m models\bge-reranker-v2-m3-Q8_0.gguf --reranking --pooling rank --host 127.0.0.1 --port 8088
+
+3. Enable it per-repo in `.gtir/config.json`: `{ "rerank": true }` — or pass `--rerank` per command.
+
+**Config keys** (defaults): `rerank` (`false`), `rerankUrl` (`http://127.0.0.1:8088`), `rerankModel`
+(`bge-reranker-v2-m3`), `rerankCandidates` (`24` — how many hybrid hits to rerank), `rerankMaxChars`
+(`2000` — per-document cap, ~512 tokens).
+
+If the server is unreachable, gtir **degrades gracefully** to hybrid order with a one-line stderr
+note — it never fails a search because the reranker is down.
+
+**Measure the gain** with the eval harness (the rerank stage is deterministic, so the delta is real):
+
+       gtir eval --repo eval/corpus --golden eval/golden.json --baseline eval/baseline.json --no-build            # hybrid (floor)
+       gtir eval --repo eval/corpus --golden eval/golden.json --baseline eval/baseline.json --no-build --rerank   # + rerank
+
+Compare the **`hard`-tier** Recall@1 between the two runs — that tier encodes the shadowing cases the
+reranker is meant to fix. The reranker is swappable (it's just the GGUF `llama-server` loads plus the
+`rerankModel` label), so trying `jina-reranker-v2` later is a relaunch, not a code change.
+
 ## MCP server (use gtir from inside Claude)
 
 Expose gtir's search as native MCP tools so Claude can call them mid-session:
