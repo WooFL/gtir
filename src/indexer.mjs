@@ -3,7 +3,7 @@ import { extname } from "node:path";
 import { walkRepo } from "./walker.mjs";
 import { chunkFile, stableId } from "./chunker.mjs";
 import { contextualizeChunk } from "./contextualize.mjs";
-import { embedTexts } from "./embed.mjs";
+import { embedTexts, contentHash } from "./embed.mjs";
 import { openStore } from "./store.mjs";
 
 export async function buildIndex(cfg, { rebuild = false } = {}) {
@@ -42,26 +42,46 @@ export async function buildIndex(cfg, { rebuild = false } = {}) {
     // a git commit is common and must preserve the dim recorded by the last real
     // build. Report the existing dim if the index already exists.
     const meta = await store.readMeta();
-    return { scanned: files.length, skipped, evicted, chunks: 0, dim: Number(meta.dim) || 0 };
+    return { scanned: files.length, skipped, evicted, chunks: 0, dim: Number(meta.dim) || 0, reused: 0, embedded: 0 };
   }
 
-  // Contextualize, then embed.
+  // Contextualize, then embed — reusing cached embeddings for unchanged content.
   const ctx = [];
   for (const c of allChunks) ctx.push(await contextualizeChunk(c, cfg));
-  const vecs = await embed(ctx.map((c) => c.embedText));
-  const dim = vecs[0]?.length ?? 0;
+  const hashes = ctx.map((c) => contentHash(c.embedText));
 
-  // Upsert (delete-by-path happens inside store for changed paths).
+  // Load the cache BEFORE any eviction/drop: reuse the prior index's embeddings when the
+  // model matches and the existing table carries content_hash.
+  const tableHasHash = await store.hasContentHash();
+  const useCache = !cfg.noCache && tableHasHash && (await store.readMeta()).model === cfg.model;
+  const cache = useCache ? await store.loadEmbedCache() : new Map();
+
+  const missIdx = [];
+  for (let i = 0; i < hashes.length; i++) if (!cache.has(hashes[i])) missIdx.push(i);
+  const missVecs = missIdx.length ? await embed(missIdx.map((i) => ctx[i].embedText)) : [];
+  const vecs = new Array(ctx.length);
+  for (let i = 0; i < ctx.length; i++) vecs[i] = cache.get(hashes[i]) ?? null;
+  missIdx.forEach((i, k) => { vecs[i] = missVecs[k]; });
+  const reused = ctx.length - missIdx.length;
+  const embedded = missIdx.length;
+  const dim = (vecs.find((v) => v) ?? []).length;
+
+  // Replace prior rows. Rebuild drops+recreates the table (also migrates the schema to
+  // include content_hash); refresh deletes the changed paths' rows.
   const changedPaths = [...new Set(toIndex.map((f) => f.relPath))];
-  if (changedPaths.length) await store.evictPaths(changedPaths);
+  if (rebuild) await store.dropChunks();
+  else if (changedPaths.length) await store.evictPaths(changedPaths);
+
+  const writeHash = rebuild || tableHasHash; // rebuild recreates with the column; refresh matches existing schema
   const rows = allChunks.map((c, i) => ({
     id: stableId(c), path: c.path, language: c.language,
     chunk_start: c.chunkStart, chunk_end: c.chunkEnd,
     line_start: c.lineStart, line_end: c.lineEnd,
     text: c.text, mtime_ms: c.mtimeMs, embedding: vecs[i],
+    ...(writeHash ? { content_hash: hashes[i] } : {}),
   }));
   await store.upsertRows(rows);
   await store.writeMeta({ model: cfg.model, dim, version: cfg.version });
 
-  return { scanned: files.length, skipped, evicted, chunks: rows.length, dim };
+  return { scanned: files.length, skipped, evicted, chunks: rows.length, dim, reused, embedded };
 }

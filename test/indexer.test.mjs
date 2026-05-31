@@ -81,3 +81,54 @@ test("no-op incremental refresh preserves meta dim (does not clobber to 0)", asy
   await buildIndex(cfg, { rebuild: false });            // no-op refresh, nothing changed
   assert.equal((await store.readMeta()).dim, "3");      // dim preserved, NOT clobbered to 0
 });
+
+// A counting embedder: records how many texts it was asked to embed.
+function counter() {
+  const state = { calls: 0 };
+  const fn = (texts) => {
+    state.calls += texts.length;
+    return Promise.resolve(texts.map((t) => { const n = (t.length % 5) + 1; const v = [n, n + 1, n + 2]; const L = Math.hypot(...v); return v.map((x) => x / L); }));
+  };
+  return { fn, state };
+}
+const CODE = "export function foo(input) {\n  // a body long enough to comfortably clear the 100-char minimum chunk size threshold here\n  return String(input).trim();\n}";
+
+test("rebuild reuses cached embeddings: second build embeds 0", async () => {
+  const repo = repoWith({ "a.ts": CODE, "b.ts": CODE.replace("foo", "bar") });
+  const c1 = counter();
+  const r1 = await buildIndex({ ...loadConfig(repo), embedImpl: c1.fn }, { rebuild: true });
+  assert.ok(r1.embedded >= 2 && c1.state.calls === r1.embedded);
+  const c2 = counter();
+  const r2 = await buildIndex({ ...loadConfig(repo), embedImpl: c2.fn }, { rebuild: true });
+  assert.equal(c2.state.calls, 0, "unchanged rebuild should embed nothing");
+  assert.equal(r2.reused, r2.chunks);
+  assert.equal(r2.embedded, 0);
+});
+
+test("model change ignores the cache (re-embeds all)", async () => {
+  const repo = repoWith({ "a.ts": CODE });
+  await buildIndex({ ...loadConfig(repo), embedImpl: counter().fn }, { rebuild: true });
+  const c2 = counter();
+  await buildIndex({ ...loadConfig(repo), model: "different-model", embedImpl: c2.fn }, { rebuild: true });
+  assert.ok(c2.state.calls > 0, "model change must re-embed");
+});
+
+test("--no-cache (cfg.noCache) forces re-embed", async () => {
+  const repo = repoWith({ "a.ts": CODE });
+  await buildIndex({ ...loadConfig(repo), embedImpl: counter().fn }, { rebuild: true });
+  const c2 = counter();
+  await buildIndex({ ...loadConfig(repo), noCache: true, embedImpl: c2.fn }, { rebuild: true });
+  assert.ok(c2.state.calls > 0, "noCache must re-embed");
+});
+
+test("refresh reuses unchanged sections within a changed file", async () => {
+  const md = "# Page\n\n## A\nSection A body that is stable and long enough to be its own chunk here.\n\n## B\nSection B body original and also long enough to be a real chunk on its own.\n";
+  const repo = repoWith({ "p.md": md });
+  await buildIndex({ ...loadConfig(repo), embedImpl: counter().fn }, { rebuild: true }); // initial
+  writeFileSync(join(repo, "p.md"), md.replace("Section B body original", "Section B body EDITED"));
+  const c2 = counter();
+  const r = await buildIndex({ ...loadConfig(repo), embedImpl: c2.fn }, { rebuild: false });
+  assert.ok(r.reused >= 1, "section A should be reused");
+  assert.ok(r.embedded >= 1, "section B should be re-embedded");
+  assert.equal(c2.state.calls, r.embedded);
+});
