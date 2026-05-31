@@ -1,8 +1,8 @@
 # gtir
 
-**gtir** (Armenian *գտնել*, "to find") — a portable, install-once CLI for semantic code retrieval over any repository. It chunks code with tree-sitter (AST-aware, with a cAST sibling-merge refinement), embeds chunks via a local **Ollama** model (`jina-code-embeddings-0.5b`), stores vectors + a BM25 index in **LanceDB**, and answers queries with hybrid (vector + BM25 + RRF) search.
+**gtir** (Armenian *գտնել*, "to find") — a portable, install-once CLI for semantic **code and notes** retrieval over any repository or note vault. It chunks code with tree-sitter (AST-aware, with a cAST sibling-merge refinement), embeds chunks via a local **Ollama** model (`jina-code-embeddings-0.5b`), stores vectors + a BM25 index in **LanceDB**, and answers queries with hybrid (vector + BM25 + RRF) search.
 
-**Scope:** code only. Wiki/notes retrieval is intentionally *not* here — that stays with [claude-obsidian](https://github.com/AgriciDaniel/claude-obsidian)'s `wiki-retrieve`. gtir is the code half of a two-store setup: both are reached from the same Claude session (notes via `wiki-query`, code via `gtir search`).
+**Scope:** code *and* notes. gtir indexes a codebase (`jina-code-embeddings`) or an Obsidian-style note vault (`nomic-embed-text`) — `gtir init` auto-detects which, and the MCP server exposes `search_code` / `search_notes` accordingly. (claude-obsidian's `wiki-retrieve` is an alternative for notes, but its scripts are Unix-only; gtir runs natively on Windows.)
 
 ## How it works
 
@@ -95,7 +95,7 @@ Default model tag (in `src/config.mjs`): `hf.co/jinaai/jina-code-embeddings-0.5b
 
 ## Migration from the MediaTraktor pipelines
 
-- **Notes:** provision claude-obsidian retrieval per vault (`bash bin/setup-retrieve.sh`). **Retire `G:\mediaTraktor\tools\vault-index`** — `wiki-retrieve` supersedes it (it was cosine-only on a custom binary store; `wiki-retrieve` adds contextual-prefix + BM25 + rerank).
+- **Notes:** point gtir at the wiki with a `nomic-embed-text` config (`gtir init` does this automatically). **Retire `G:\mediaTraktor\tools\vault-index`** — gtir supersedes it (vault-index was cosine-only on a custom binary store; gtir adds BM25 + RRF, runs on Windows, and shares one tool with code search).
 - **Code:** replace `tools\code-index` + `tools\code-mcp` with `gtir`. The embedding model changed (old `jina-v2-base-code` was 768-dim; this is ~896-dim), so run `gtir index --rebuild` once. tree-sitter chunking, LanceDB, and hybrid RRF search are carried over; the Python/torch/uv embed stack is gone.
 
 ## Known limitations

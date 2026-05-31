@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { sanitizeLabel, deriveLabel, resolveIndexes } from "../src/mcp.mjs";
+import { sanitizeLabel, deriveLabel, resolveIndexes, defaultStatusFn } from "../src/mcp.mjs";
+import { loadConfig } from "../src/config.mjs";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -142,4 +143,13 @@ test("printConfig emits a stdio .mcp.json snippet with node + the repos", () => 
   assert.match(snippet.gtir.args.join(" "), /bin\/gtir\.mjs mcp/);
   assert.ok(snippet.gtir.args.includes("G:/p/code"));
   assert.ok(snippet.gtir.args.includes("G:/p/wiki"));
+});
+
+test("defaultStatusFn: an unbuilt index reports healthy:false + a note, never throws", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "gtir-status-"));
+  const indexes = [{ label: "code", repo: dir, cfg: loadConfig(dir) }];
+  const status = await defaultStatusFn(indexes)();
+  assert.equal(status.length, 1);
+  assert.equal(status[0].healthy, false);
+  assert.match(status[0].note, /not built/);
 });

@@ -126,17 +126,24 @@ export function defaultSearchFn(indexes) {
 
 export function defaultStatusFn(indexes) {
   return async () => Promise.all(indexes.map(async (ix) => {
-    const store = await openStore(ix.cfg);
-    const meta = await store.readMeta();
-    const man = await store.loadManifest();
-    const builtAt = Number(meta.built_at) || 0;
-    return {
-      label: ix.label, repo: ix.repo,
-      model: meta.model ?? ix.cfg.model, dim: meta.dim ?? null,
-      files: Object.keys(man).length, built_at: builtAt,
-      age_minutes: builtAt ? Math.round((Date.now() / 1000 - builtAt) / 60) : null,
-      healthy: !!meta.dim,
-    };
+    try {
+      const store = await openStore(ix.cfg);
+      const meta = await store.readMeta();
+      const man = await store.loadManifest();
+      const builtAt = Number(meta.built_at) || 0;
+      const dim = meta.dim ?? null;
+      return {
+        label: ix.label, repo: ix.repo,
+        model: meta.model ?? ix.cfg.model, dim,
+        files: Object.keys(man).length, built_at: builtAt,
+        age_minutes: builtAt ? Math.round((Date.now() / 1000 - builtAt) / 60) : null,
+        healthy: !!dim,
+        ...(dim ? {} : { note: `index not built — run: gtir index --repo ${ix.repo}` }),
+      };
+    } catch (e) {
+      // One broken/corrupt store must not blank out the others.
+      return { label: ix.label, repo: ix.repo, healthy: false, note: `index unreadable: ${e.message}` };
+    }
   }));
 }
 
