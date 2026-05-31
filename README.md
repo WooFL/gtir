@@ -9,6 +9,7 @@
 ```
 walk repo (.gitignore-aware)
   → tree-sitter AST chunks (+ cAST sibling-merge; recursive fallback for grammarless files)
+  → markdown: heading-aware sections, each carrying its heading breadcrumb + frontmatter tags
   → contextual prefix per chunk (synthetic by default; opt-in claude-cli tier)
   → embed via Ollama /api/embed  (jina-code-embeddings-0.5b)
   → LanceDB upsert (vectors + BM25 FTS)
