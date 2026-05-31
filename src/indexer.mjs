@@ -38,8 +38,11 @@ export async function buildIndex(cfg, { rebuild = false } = {}) {
   }
 
   if (allChunks.length === 0) {
-    await store.writeMeta({ model: cfg.model, dim: 0, version: cfg.version });
-    return { scanned: files.length, skipped, evicted, chunks: 0, dim: 0 };
+    // Nothing to (re)embed. Do NOT clobber existing meta — a no-op refresh after
+    // a git commit is common and must preserve the dim recorded by the last real
+    // build. Report the existing dim if the index already exists.
+    const meta = await store.readMeta();
+    return { scanned: files.length, skipped, evicted, chunks: 0, dim: Number(meta.dim) || 0 };
   }
 
   // Contextualize, then embed.
