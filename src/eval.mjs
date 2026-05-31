@@ -21,6 +21,7 @@ export function overlaps(a, b) {
 // Score one golden entry against a query's result list (ordered best-first).
 // Returns { pageRank, secRank, hasLines } with 1-indexed ranks (null if no hit).
 export function scoreGolden(results, entry) {
+  if (entry.path == null) throw new Error(`golden entry missing 'path': ${JSON.stringify(entry)}`);
   const wanted = new Set((Array.isArray(entry.path) ? entry.path : [entry.path]).map(String));
   const hasLines = Array.isArray(entry.lines) && entry.lines.length === 2;
   let pageRank = null, secRank = null;
@@ -78,6 +79,9 @@ export function compareBaseline(cur, base, tol = 0.005) {
     if (!(key in b)) continue;
     const delta = c[key] - b[key];
     if (delta < -tol) regressions.push({ metric: key, cur: c[key], base: b[key], delta: round(delta) });
+  }
+  for (const key of Object.keys(b)) {
+    if (!(key in c)) regressions.push({ metric: key, cur: null, base: b[key], delta: round(-b[key]) });
   }
   return regressions;
 }

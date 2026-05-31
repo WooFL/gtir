@@ -137,3 +137,22 @@ test("evalGolden: runs each query through searchFn and aggregates", async () => 
 test("evalGolden: empty golden throws", async () => {
   await assert.rejects(() => evalGolden([], async () => []), /golden set is empty/);
 });
+
+test("scoreGolden: missing path throws (malformed golden entry)", () => {
+  assert.throws(() => scoreGolden([R("a.ts", "1-9")], { query: "q" }), /missing.*path/i);
+});
+test("scoreGolden: a valid path simply not in results is a normal miss, not an error", () => {
+  const s = scoreGolden([R("a.ts", "1-9")], { query: "q", path: "not-in-corpus.ts" });
+  assert.equal(s.pageRank, null);
+});
+
+test("compareBaseline: a metric present in baseline but gone from current is flagged", () => {
+  const cur =  { recall: { 1: 0.5, 5: 0.8, 10: 0.9 }, mrr: 0.6, sec_hit: { 1: null, 5: null } }; // n_sec went to 0
+  const base = { recall: { 1: 0.5, 5: 0.8, 10: 0.9 }, mrr: 0.6, sec_hit: { 1: 0.4, 5: 0.6 } };
+  const regs = compareBaseline(cur, base, 0.005);
+  const keys = regs.map((r) => r.metric).sort();
+  assert.deepEqual(keys, ["sec_hit@1", "sec_hit@5"]);
+  const one = regs.find((r) => r.metric === "sec_hit@1");
+  assert.equal(one.cur, null);
+  assert.equal(one.base, 0.4);
+});
