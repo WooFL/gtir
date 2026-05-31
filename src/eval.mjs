@@ -17,3 +17,20 @@ export function parseLines(s) {
 export function overlaps(a, b) {
   return a[0] <= b[1] && b[0] <= a[1];
 }
+
+// Score one golden entry against a query's result list (ordered best-first).
+// Returns { pageRank, secRank, hasLines } with 1-indexed ranks (null if no hit).
+export function scoreGolden(results, entry) {
+  const wanted = new Set((Array.isArray(entry.path) ? entry.path : [entry.path]).map(String));
+  const hasLines = Array.isArray(entry.lines) && entry.lines.length === 2;
+  let pageRank = null, secRank = null;
+  for (let i = 0; i < results.length; i++) {
+    const isPage = wanted.has(String(results[i].path));
+    if (!isPage) continue;
+    if (pageRank === null) pageRank = i + 1;
+    if (hasLines && secRank === null && overlaps(parseLines(results[i].lines), entry.lines)) {
+      secRank = i + 1;
+    }
+  }
+  return { pageRank, secRank, hasLines };
+}
