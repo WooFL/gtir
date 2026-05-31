@@ -74,5 +74,5 @@ export async function openStore(cfg) {
     return Object.fromEntries(rows.map((r) => [r.key, r.value]));
   }
 
-  return { db, chunksTable, upsertRows, loadManifest, evictPaths, writeMeta, readMeta };
+  return { chunksTable, upsertRows, loadManifest, evictPaths, writeMeta, readMeta };
 }

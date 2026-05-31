@@ -39,3 +39,17 @@ test("writeMeta + readMeta roundtrip", async () => {
   assert.equal(meta.model, "jina-code-embeddings-0.5b");
   assert.equal(meta.dim, "3");
 });
+
+test("upsertRows on an existing path replaces its rows (no doubling)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "gtir-store-"));
+  const store = await openStore({ indexDir: join(dir, "i.lance") });
+  await store.upsertRows([row("a.py", "first body", 100)]);
+  // Re-index the same path with new content + mtime.
+  await store.upsertRows([row("a.py", "second body REPLACED", 200)]);
+  const man = await store.loadManifest();
+  assert.equal(man["a.py"], 200);               // mtime updated, not stale 100
+  const tbl = await store.chunksTable();
+  const rows = await tbl.query().where("path = 'a.py'").toArray();
+  assert.equal(rows.length, 1);                  // exactly one row, not doubled
+  assert.match(rows[0].text, /REPLACED/);
+});
