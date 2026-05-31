@@ -89,6 +89,22 @@ The stats line reports the split: `gtir: indexed N chunks (R reused, K embedded)
   `gtir index --rebuild` migrates them and enables the cache thereafter.
 - `--no-cache` forces a full re-embed (for debugging or distrust of the cache).
 
+## Measuring retrieval quality — `gtir eval`
+
+gtir ships a committed eval harness so retrieval changes are measurable, not vibes:
+
+    gtir eval --repo eval/corpus --golden eval/golden.json --baseline eval/baseline.json            # score the golden set, compare to baseline
+    gtir eval --repo eval/corpus --golden eval/golden.json --baseline eval/baseline.json --save     # set the current metrics as the new baseline
+
+It runs a hand-authored golden query set (`eval/golden.json`) against a fixture corpus
+(`eval/corpus/`) and reports **Recall@{1,5,10}**, **MRR**, and **Sec-hit@{1,5}**, then compares
+to `eval/baseline.json` and **exits non-zero if any metric regressed** (CI-usable). The harness is
+corpus-agnostic — point `--repo` at any index and pass `--golden <file>` to score your own set.
+`--json` emits the metrics object to stdout; `--no-build` skips the pre-run refresh.
+
+A/B across a change: `gtir eval --save` on the old commit, then `gtir eval` on the new one reads
+the delta. Metric math is unit-tested (hermetic); the corpus run needs Ollama.
+
 ## MCP server (use gtir from inside Claude)
 
 Expose gtir's search as native MCP tools so Claude can call them mid-session:
