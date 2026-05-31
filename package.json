@@ -2,6 +2,7 @@
   "name": "gtir",
   "version": "0.1.0",
   "description": "Portable code retrieval CLI: tree-sitter + jina-code-embeddings (Ollama) + LanceDB hybrid search.",
+  "license": "MIT",
   "type": "module",
   "bin": { "gtir": "bin/gtir.mjs" },
   "scripts": {

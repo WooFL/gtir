@@ -229,3 +229,7 @@ npm test        # node --test — full suite, hermetic (embedder is injected; no
 ```
 
 Tests never hit the network: the Ollama client and embedder are injectable (`cfg.fetchImpl` / `cfg.embedImpl`), so unit and integration tests run offline against a fake embedder.
+
+## License
+
+[MIT](LICENSE) © 2026 WooFL
