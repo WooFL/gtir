@@ -5,7 +5,7 @@
   "type": "module",
   "bin": { "gtir": "bin/gtir.mjs" },
   "scripts": {
-    "test": "node --test",
+    "test": "node --test test/*.test.mjs",
     "gtir": "node bin/gtir.mjs"
   },
   "engines": { "node": ">=20" },
