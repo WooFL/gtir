@@ -84,12 +84,40 @@ export function compareBaseline(cur, base, tol = 0.005) {
 }
 
 // Run a golden set through an injected async searchFn(query, k) -> results[], score, aggregate.
+// Each record carries its entry's tier (default "gate"); returns overall metrics + per-tier breakdown.
 export async function evalGolden(golden, searchFn, { maxK = 10, ks } = {}) {
   if (!Array.isArray(golden) || golden.length === 0) throw new Error("golden set is empty");
   const records = [];
   for (const entry of golden) {
     const results = await searchFn(entry.query, maxK);
-    records.push(scoreGolden(results, entry));
+    const rec = scoreGolden(results, entry);
+    rec.tier = entry.tier || "gate";
+    records.push(rec);
   }
-  return aggregate(records, ks);
+  const overall = aggregate(records, ks);
+  const byTier = {};
+  for (const tier of [...new Set(records.map((r) => r.tier))]) {
+    byTier[tier] = aggregate(records.filter((r) => r.tier === tier), ks);
+  }
+  return { ...overall, byTier };
+}
+
+// Compare per-tier metrics. Returns regressions with metric names prefixed "<tier>:".
+// A tier present in cur but absent from base is skipped (mirrors compareBaseline's missing-metric rule).
+export function compareTiers(cur, base, tol = 0.005) {
+  const out = [];
+  const curTiers = cur.byTier || {};
+  const baseTiers = base.byTier || {};
+  for (const tier of Object.keys(curTiers)) {
+    if (!(tier in baseTiers)) continue;
+    for (const r of compareBaseline(curTiers[tier], baseTiers[tier], tol)) {
+      out.push({ ...r, metric: `${tier}:${r.metric}` });
+    }
+  }
+  return out;
+}
+
+// All regressions the CLI gates on: overall metrics plus every shared tier.
+export function allRegressions(cur, base, tol = 0.005) {
+  return [...compareBaseline(cur, base, tol), ...compareTiers(cur, base, tol)];
 }

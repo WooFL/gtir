@@ -159,3 +159,53 @@ test("compareBaseline: a real drop in a shared metric is still flagged", () => {
   const regs = compareBaseline(cur, base, 0.005);
   assert.deepEqual(regs.map((r) => r.metric), ["recall@1"]);
 });
+
+import { compareTiers, allRegressions } from "../src/eval.mjs";
+
+test("evalGolden: splits records into byTier (gate/hard), overall unchanged", async () => {
+  const golden = [
+    { query: "g1", path: "a.ts", lines: [1, 9], tier: "gate" },
+    { query: "g2", path: "b.ts", tier: "gate" },
+    { query: "h1", path: "c.ts", tier: "hard" },
+  ];
+  const fake = async (q) => {
+    if (q === "g1") return [R("a.ts", "1-9")];                 // gate hit @1
+    if (q === "g2") return [R("b.ts", "1-9")];                 // gate hit @1
+    return [R("x.ts", "1-9"), R("y.ts", "1-9"), R("c.ts", "1-9")]; // hard hit @3
+  };
+  const m = await evalGolden(golden, fake, { maxK: 10 });
+  assert.equal(m.n, 3);                       // overall still present
+  assert.ok(m.byTier.gate && m.byTier.hard);
+  assert.equal(m.byTier.gate.n, 2);
+  assert.equal(m.byTier.gate.recall[1], 1.0);
+  assert.equal(m.byTier.hard.n, 1);
+  assert.equal(m.byTier.hard.recall[1], 0.0);
+  assert.equal(m.byTier.hard.recall[5], 1.0);
+});
+
+test("evalGolden: entry with no tier defaults to gate", async () => {
+  const golden = [{ query: "x", path: "a.ts" }];
+  const m = await evalGolden(golden, async () => [R("a.ts", "1-9")], { maxK: 10 });
+  assert.equal(m.byTier.gate.n, 1);
+  assert.equal(m.byTier.hard, undefined);
+});
+
+test("compareTiers: flags a per-tier regression with a tier-prefixed metric", () => {
+  const cur =  { byTier: { hard: M({ 1: 0.40, 5: 0.80, 10: 0.90 }, 0.5, { 1: 0.3, 5: 0.5 }) } };
+  const base = { byTier: { hard: M({ 1: 0.55, 5: 0.80, 10: 0.90 }, 0.5, { 1: 0.3, 5: 0.5 }) } };
+  const regs = compareTiers(cur, base, 0.005);
+  assert.deepEqual(regs.map((r) => r.metric), ["hard:recall@1"]);
+});
+
+test("compareTiers: a tier missing from baseline is skipped (no false regression)", () => {
+  const cur =  { byTier: { hard: M({ 1: 0.4, 5: 0.8, 10: 0.9 }, 0.5, { 1: 0.3, 5: 0.5 }) } };
+  const base = { byTier: {} };
+  assert.equal(compareTiers(cur, base, 0.005).length, 0);
+});
+
+test("allRegressions: combines overall + per-tier regressions", () => {
+  const cur =  { recall: { 1: 0.40 }, mrr: 0.5, sec_hit: {}, byTier: { hard: M({ 1: 0.40, 5: 0.8, 10: 0.9 }, 0.5, { 1: 0.3, 5: 0.5 }) } };
+  const base = { recall: { 1: 0.55 }, mrr: 0.5, sec_hit: {}, byTier: { hard: M({ 1: 0.55, 5: 0.8, 10: 0.9 }, 0.5, { 1: 0.3, 5: 0.5 }) } };
+  const keys = allRegressions(cur, base, 0.005).map((r) => r.metric).sort();
+  assert.deepEqual(keys, ["hard:recall@1", "recall@1"]);
+});
