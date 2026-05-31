@@ -146,7 +146,11 @@ Default model tag (in `src/config.mjs`): `hf.co/jinaai/jina-code-embeddings-0.5b
 ## Known limitations
 
 - **FTS index rebuilds fully on every upsert.** Correct, but O(corpus) per write — fine for solo-dev repos, noticeable on very large monorepos during incremental refresh. (Faithful to the original Python pipeline.)
-- **Oversize *leaf* nodes are dropped, not re-split.** A single function/struct larger than `maxChars` (2000 by default) with no nested target nodes is skipped. Container types (class/impl/mod) lose nothing — their members are indexed as their own chunks. Lower `maxChars` or rely on the recursive fallback for files with no AST targets.
+- **Oversize *leaf* nodes are re-split, not dropped.** A function/struct larger than `maxChars`
+  (2000) with no nested target nodes is split into line-aware windows (same fallback as
+  grammarless files), so its content stays searchable. Oversize *containers* (class/impl/mod)
+  are still represented by their members, which are indexed as their own chunks — the container's
+  own non-member lines (e.g. a class docstring) are not separately re-split.
 - **No automatic dimension-skew guard at query time.** `meta` records the model + dim; if you switch models, rebuild. (`gtir status` shows the recorded dim.)
 
 ## Development

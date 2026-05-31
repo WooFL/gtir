@@ -36,5 +36,6 @@
   { "query": "split text into word tokens for text processing", "path": "text/tokenizer.py", "lines": [8, 10] },
   { "query": "how are session tokens stored in the database schema", "path": "notes/data-model.md", "lines": [10, 13] },
   { "query": "find the shortest unweighted path in a graph using breadth-first search", "path": "graph/bfs.py", "lines": [20, 37] },
-  { "query": "set up local development environment and run the test suite", "path": "notes/onboarding.md", "lines": [10, 17] }
+  { "query": "set up local development environment and run the test suite", "path": "notes/onboarding.md", "lines": [10, 17] },
+  { "query": "how is the monthly variance computed — moving average or year-to-date mean", "path": "data/aggregate_report.py", "lines": [27, 29] }
 ]
