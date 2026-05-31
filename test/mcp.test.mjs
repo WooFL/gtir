@@ -41,3 +41,16 @@ test("resolveIndexes throws on label collision, unless --label disambiguates", (
   const ix = resolveIndexes([a, b], { [b]: "notes2" });
   assert.deepEqual(ix.map((i) => i.label).sort(), ["notes", "notes2"]);
 });
+
+import { buildTools } from "../src/mcp.mjs";
+
+test("buildTools emits search_<label> per index plus gtir_status", () => {
+  const tools = buildTools([{ label: "code", repo: "/r/code", cfg: {} }, { label: "notes", repo: "/r/wiki", cfg: {} }]);
+  const names = tools.map((t) => t.name);
+  assert.deepEqual(names, ["search_code", "search_notes", "gtir_status"]);
+  const search = tools[0];
+  assert.deepEqual(search.inputSchema.required, ["query"]);
+  assert.ok(search.inputSchema.properties.k);
+  assert.ok(search.inputSchema.properties.path_prefix);
+  assert.deepEqual(tools[2].inputSchema.properties, {}); // status takes no args
+});
