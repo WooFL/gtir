@@ -14,7 +14,7 @@ walk repo (.gitignore-aware)
     (path › enclosing class/module — first line); markdown uses its heading breadcrumb;
     grammarless files use path + first line (opt-in claude-cli tier still available)
   → embed via Ollama /api/embed  (jina-code-embeddings-0.5b)
-  → LanceDB upsert (vectors + BM25 FTS)
+  → LanceDB upsert (vectors + BM25 FTS over a path/scope/decl-weighted text)
 search: query → embed → vector branch + BM25 branch → Reciprocal Rank Fusion (k=60)
 ```
 
@@ -27,6 +27,14 @@ methods), it lifted Recall@1 and Sec-hit@1 by ~6 points each via `gtir eval`, wi
 the rest of the corpus. (No LLM, no second model — it reuses structure tree-sitter already parsed.)
 The gain is corpus-dependent — it helps codebases with large classes and method-name ambiguity,
 and is neutral elsewhere. Disable it per-repo with `{ "contextScope": false }` in `.gtir/config.json`.
+
+The BM25 branch indexes a **field-weighted** text rather than the raw chunk body: the tokenized file
+path, enclosing scope, and declaration line are repeated `bm25Boost` (=3) times ahead of the body, so
+a lexical match on a *symbol or path* outweighs an incidental mention of it in some other file's body.
+This is the main defense against shadowing — a test or doc that merely references a symbol no longer
+outranks the source that defines it. Measured on the fixture via `gtir eval` (embeddings unchanged, so
+the gain is purely BM25): overall Recall@1 0.77 → ~0.82, gate tier 0.84 → 0.90. Tune or disable it with
+`{ "bm25Boost": 0 }` in `.gtir/config.json` (0 indexes the raw body, as before).
 
 ## Install
 
