@@ -56,3 +56,31 @@ export function buildTools(indexes) {
   });
   return tools;
 }
+
+export async function handleRequest(msg, ctx) {
+  const { indexes, version } = ctx;
+  const reply = (result) => ({ jsonrpc: "2.0", id: msg.id, result });
+  const fail = (code, message) => ({ jsonrpc: "2.0", id: msg.id, error: { code, message } });
+
+  switch (msg.method) {
+    case "initialize":
+      return reply({
+        protocolVersion: "2024-11-05",
+        capabilities: { tools: {} },
+        serverInfo: { name: "gtir", version: version ?? "0.0.0" },
+      });
+    case "notifications/initialized":
+      return null;
+    case "tools/list":
+      return reply({ tools: buildTools(indexes) });
+    case "tools/call":
+      return reply(await dispatchToolCall(msg.params ?? {}, ctx));
+    default:
+      return fail(-32601, `method not found: ${msg.method}`);
+  }
+}
+
+// TEMPORARY stub — replaced with the real implementation in the next task.
+async function dispatchToolCall() {
+  return { content: [{ type: "text", text: "(not implemented)" }], isError: true };
+}

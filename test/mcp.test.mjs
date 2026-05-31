@@ -54,3 +54,34 @@ test("buildTools emits search_<label> per index plus gtir_status", () => {
   assert.ok(search.inputSchema.properties.path_prefix);
   assert.deepEqual(tools[2].inputSchema.properties, {}); // status takes no args
 });
+
+import { handleRequest } from "../src/mcp.mjs";
+
+const baseCtx = {
+  indexes: [{ label: "code", repo: "/r", cfg: {} }],
+  searchFn: async () => [],
+  statusFn: async () => [],
+  version: "9.9.9",
+};
+
+test("handleRequest: initialize returns serverInfo + tools capability", async () => {
+  const r = await handleRequest({ jsonrpc: "2.0", id: 1, method: "initialize" }, baseCtx);
+  assert.equal(r.result.serverInfo.name, "gtir");
+  assert.equal(r.result.serverInfo.version, "9.9.9");
+  assert.ok(r.result.capabilities.tools);
+});
+
+test("handleRequest: notifications/initialized returns null (no reply)", async () => {
+  const r = await handleRequest({ jsonrpc: "2.0", method: "notifications/initialized" }, baseCtx);
+  assert.equal(r, null);
+});
+
+test("handleRequest: tools/list returns the tool set", async () => {
+  const r = await handleRequest({ jsonrpc: "2.0", id: 2, method: "tools/list" }, baseCtx);
+  assert.deepEqual(r.result.tools.map((t) => t.name), ["search_code", "gtir_status"]);
+});
+
+test("handleRequest: unknown method => JSON-RPC -32601", async () => {
+  const r = await handleRequest({ jsonrpc: "2.0", id: 3, method: "bogus/x" }, baseCtx);
+  assert.equal(r.error.code, -32601);
+});
