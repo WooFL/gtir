@@ -147,3 +147,15 @@ test("pre-feature index: refresh on a column-less table runs legacy without sche
   assert.equal(await (await openStore(loadConfig(repo))).hasContentHash(), false, "still legacy after refresh (no column added)");
   assert.equal(r.reused, 0, "legacy refresh reuses nothing (no cache)");
 });
+
+test("prefix-sensitivity: retitling a page changes the hash and forces re-embed", async () => {
+  const body = "## Stable Section\nThis section body stays exactly the same across the retitle and is long enough to be its own chunk for sure.\n";
+  const repo = repoWith({ "p.md": "# Original Title\n\n" + body });
+  await buildIndex({ ...loadConfig(repo), embedImpl: counter().fn }, { rebuild: true });
+  // Retitle the H1 — the section's body is byte-identical, but its heading breadcrumb prefix changes.
+  writeFileSync(join(repo, "p.md"), "# Renamed Title\n\n" + body);
+  const c2 = counter();
+  const r = await buildIndex({ ...loadConfig(repo), embedImpl: c2.fn }, { rebuild: false });
+  assert.ok(c2.state.calls > 0, "retitle must re-embed (prefix changed → new hash)");
+  assert.ok(r.embedded >= 1, "at least the retitled section re-embeds");
+});

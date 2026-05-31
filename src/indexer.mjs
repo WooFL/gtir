@@ -59,6 +59,7 @@ export async function buildIndex(cfg, { rebuild = false } = {}) {
   const missIdx = [];
   for (let i = 0; i < hashes.length; i++) if (!cache.has(hashes[i])) missIdx.push(i);
   const missVecs = missIdx.length ? await embed(missIdx.map((i) => ctx[i].embedText)) : [];
+  if (missVecs.length !== missIdx.length) throw new Error(`embed returned ${missVecs.length} vectors for ${missIdx.length} chunks`);
   const vecs = new Array(ctx.length);
   for (let i = 0; i < ctx.length; i++) vecs[i] = cache.get(hashes[i]) ?? null;
   missIdx.forEach((i, k) => { vecs[i] = missVecs[k]; });
