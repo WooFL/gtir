@@ -169,6 +169,15 @@ Compare the **`hard`-tier** Recall@1 between the two runs — that tier encodes 
 reranker is meant to fix. The reranker is swappable (it's just the GGUF `llama-server` loads plus the
 `rerankModel` label), so trying `jina-reranker-v2` later is a relaunch, not a code change.
 
+**Measured A/B (2026-06-01, `bge-reranker-v2-m3` Q8_0):** on the bundled fixture, reranking did **not**
+help — it slightly hurt. Stable across 3 paired runs: hard-tier Recall@1 **0.633 → 0.600** (one query
+demoted out of rank 1), MRR ~**0.726 → 0.710**, Recall@5 ~flat, gate tier flat. So the stage stays
+**off by default**: the hybrid RRF order is already strong on this corpus, and a general-purpose
+multilingual cross-encoder doesn't add over it (and isn't code-tuned). The harness earned its keep by
+catching this before it shipped as a default. **Next experiment:** A/B `jina-reranker-v2` (code-trained)
+— a relaunch + `rerankModel` swap, no code change — to see whether a code-aware reranker beats the
+hybrid where bge didn't.
+
 ## MCP server (use gtir from inside Claude)
 
 Expose gtir's search as native MCP tools so Claude can call them mid-session:
