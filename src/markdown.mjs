@@ -73,3 +73,48 @@ export function sectionPrefix(relPath, breadcrumb, tags) {
   const tagStr = tags && tags.length ? `  [tags: ${tags.join(", ")}]` : "";
   return `${relPath}${SEP}${breadcrumb.join(SEP)}${tagStr}`;
 }
+
+export function chunkMarkdown(relPath, text, cfg) {
+  const lines = text.split("\n");
+  const lineStartChar = [0];
+  for (let i = 0; i < lines.length; i++) lineStartChar.push(lineStartChar[i] + lines[i].length + 1);
+
+  const fm = parseFrontmatter(lines);
+  const root = fm.title || basename(relPath).replace(/\.(md|mdx)$/i, "");
+  const headings = scanHeadings(lines, fm.bodyStartLineIdx);
+  const sections = buildSections(lines, headings, fm.bodyStartLineIdx, root);
+
+  const chunks = [];
+  for (const sec of sections) {
+    if (sec.headingOnly) continue;
+    const body = lines.slice(sec.startLineIdx, sec.endLineIdx).join("\n").replace(/\s+$/, "");
+    if (!body.trim()) continue;
+    // Deduplicate adjacent identical breadcrumb entries (e.g. fm.title == H1 title)
+    const crumb = sec.breadcrumb.filter((v, i) => i === 0 || v !== sec.breadcrumb[i - 1]);
+    const prefix = sectionPrefix(relPath, crumb, fm.tags);
+    const charStart = lineStartChar[sec.startLineIdx];
+    const lineStart = sec.startLineIdx + 1;
+    if (body.length <= cfg.maxChars) {
+      chunks.push({
+        path: relPath, language: "markdown",
+        chunkStart: charStart, chunkEnd: charStart + body.length,
+        lineStart, lineEnd: sec.startLineIdx + body.split("\n").length,
+        text: body, prefix,
+      });
+    } else {
+      // Reuse the recursive splitter on the section body; offset its positions
+      // back to the original file and stamp the section's breadcrumb prefix.
+      for (const s of chunkRecursive(relPath, "markdown", body, cfg)) {
+        chunks.push({
+          ...s,
+          chunkStart: s.chunkStart + charStart,
+          chunkEnd: s.chunkEnd + charStart,
+          lineStart: s.lineStart + (lineStart - 1),
+          lineEnd: s.lineEnd + (lineStart - 1),
+          prefix,
+        });
+      }
+    }
+  }
+  return chunks;
+}

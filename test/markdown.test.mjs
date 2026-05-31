@@ -70,3 +70,50 @@ test("sectionPrefix formats path › breadcrumb [tags]", () => {
   assert.equal(sectionPrefix("c/x.md", ["X", "Sec"], ["t1", "t2"]), "c/x.md › X › Sec  [tags: t1, t2]");
   assert.equal(sectionPrefix("c/x.md", ["X"], []), "c/x.md › X");
 });
+
+import { chunkMarkdown } from "../src/markdown.mjs";
+
+const cfg = { maxChars: 2000, minChars: 80, overlapChars: 100 };
+
+test("chunkMarkdown: content section -> chunk w/ breadcrumb+tags prefix; heading-only skipped", () => {
+  const text = [
+    "---", "title: Auth Guide", "tags: [auth]", "---",
+    "# Auth Guide",
+    "",
+    "## Tokens",
+    "How tokens refresh and rotate over time in this system, with enough characters here.",
+    "## Empty",
+  ].join("\n");
+  const chunks = chunkMarkdown("notes/auth.md", text, cfg);
+  // "# Auth Guide" (only a blank line before "## Tokens") and "## Empty" (EOF) are heading-only -> skipped.
+  assert.equal(chunks.length, 1);
+  const c = chunks[0];
+  assert.equal(c.language, "markdown");
+  assert.match(c.text, /How tokens refresh/);
+  assert.match(c.prefix, /notes\/auth\.md › Auth Guide › Tokens/);
+  assert.match(c.prefix, /\[tags: auth\]/);
+});
+
+test("chunkMarkdown: no headings -> single preamble chunk, root = filename stem", () => {
+  const text = "Just a paragraph of prose with plenty of characters to be a real chunk here, yes indeed.";
+  const chunks = chunkMarkdown("notes/loose.md", text, cfg);
+  assert.equal(chunks.length, 1);
+  assert.match(chunks[0].prefix, /notes\/loose\.md › loose/);
+});
+
+test("chunkMarkdown: oversize section is split; all sub-chunks share one prefix", () => {
+  const big = Array.from({ length: 80 }, (_, i) => `line ${i} of a long section body that keeps going on`).join("\n");
+  const chunks = chunkMarkdown("n.md", `## Big\n${big}`, { maxChars: 400, minChars: 40, overlapChars: 0 });
+  assert.ok(chunks.length >= 2);
+  const prefixes = new Set(chunks.map((c) => c.prefix));
+  assert.equal(prefixes.size, 1);
+  assert.match([...prefixes][0], /n\.md › n › Big/);
+});
+
+test("chunkMarkdown: char/line offsets map into the original text", () => {
+  const text = "# A\nalpha body line that is clearly long enough to be a chunk on its own here.\n## B\nbeta body line also long enough to be a standalone chunk for testing offsets.";
+  const chunks = chunkMarkdown("n.md", text, cfg);
+  const b = chunks.find((c) => /beta body/.test(c.text));
+  assert.equal(text.slice(b.chunkStart, b.chunkStart + 4), "## B"); // chunkStart points at the "## B" heading
+  assert.equal(b.lineStart, 3); // "## B" is line 3 (1-indexed)
+});
