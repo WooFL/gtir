@@ -1,5 +1,6 @@
 import { openStore } from "./store.mjs";
 import { embedTexts } from "./embed.mjs";
+import { rerankDocs } from "./rerank.mjs";
 
 const RRF_K = 60; // canonical default (Cormack et al.), as in the original server.mjs
 
@@ -23,6 +24,23 @@ export function fuseRRF(vecRows, ftsRows, limit) {
     }));
 }
 
+// Pure reorder of fused RRF rows by a reranker's [{index, score}] list (best-first).
+// Falls back to RRF order when `ranked` is null/empty; ignores out-of-range indices;
+// appends any fused rows the reranker omitted, preserving RRF order. Then slices to k.
+export function applyRerank(fused, ranked, limit) {
+  if (!Array.isArray(ranked) || ranked.length === 0) return fused.slice(0, limit);
+  const used = new Set();
+  const out = [];
+  for (const { index, score } of ranked) {
+    if (fused[index] && !used.has(index)) {
+      used.add(index);
+      out.push({ ...fused[index], rerank_score: Number(score.toFixed(4)) });
+    }
+  }
+  for (let i = 0; i < fused.length; i++) if (!used.has(i)) out.push(fused[i]);
+  return out.slice(0, limit);
+}
+
 export async function search(query, cfg, { k = 8, pathPrefix = null, language = null } = {}) {
   if (!query || typeof query !== "string") throw new Error("query is required (string)");
   const store = await openStore(cfg);
@@ -32,7 +50,8 @@ export async function search(query, cfg, { k = 8, pathPrefix = null, language = 
   const embed = cfg.embedImpl ?? ((t) => embedTexts(t, cfg));
   const [qvec] = await embed([query]);
   const limit = Math.max(1, Math.min(50, k | 0 || 8));
-  const fanout = Math.min(50, Math.max(limit * 3, 16));
+  const rcand = Math.min(50, cfg.rerankCandidates ?? 24);
+  const fanout = Math.min(50, Math.max(limit * 3, 16, cfg.rerank ? rcand : 0));
 
   const filters = [];
   if (pathPrefix) filters.push(`path LIKE '${String(pathPrefix).replace(/'/g, "''")}%'`);
@@ -52,5 +71,9 @@ export async function search(query, cfg, { k = 8, pathPrefix = null, language = 
     process.stderr.write(`[gtir] FTS unavailable, vector-only: ${err.message}\n`);
   }
 
-  return fuseRRF(vecRows, ftsRows, limit);
+  const fused = fuseRRF(vecRows, ftsRows, cfg.rerank ? rcand : limit);
+  if (!cfg.rerank) return fused;
+  const rerankImpl = cfg.rerankImpl ?? ((q, docs) => rerankDocs(q, docs, cfg));
+  const ranked = await rerankImpl(query, fused.map((r) => r.snippet));
+  return applyRerank(fused, ranked, limit);
 }
