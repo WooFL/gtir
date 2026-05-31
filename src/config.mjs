@@ -20,6 +20,11 @@ export const DEFAULTS = {
   contextTier: "synthetic",       // "synthetic" | "claude-cli"
   contextScope: true,             // prepend the AST scope breadcrumb (enclosing class/module) to code chunks
   noCache: false,
+  rerank: false,                          // opt-in cross-encoder rerank; off by default
+  rerankUrl: "http://127.0.0.1:8088",     // llama-server --reranking endpoint
+  rerankModel: "bge-reranker-v2-m3",      // sent in the /rerank request (informational for a 1-model server)
+  rerankCandidates: 24,                   // hybrid candidates to rerank before slicing to k
+  rerankMaxChars: 2000,                   // per-document char cap (~512 tokens, bge context)
   version: 1,
   skipDirs: [
     "node_modules", ".git", "dist", "build", ".next", ".turbo", ".cache",

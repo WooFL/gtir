@@ -38,3 +38,22 @@ test("contextScope defaults to true; overridable to false", () => {
   writeFileSync(join(off, ".gtir", "config.json"), JSON.stringify({ contextScope: false }));
   assert.equal(loadConfig(off).contextScope, false);
 });
+
+test("rerank defaults: off, with url/model/candidates/maxChars", () => {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-cfg-"));
+  const cfg = loadConfig(repo);
+  assert.equal(cfg.rerank, false);
+  assert.equal(cfg.rerankUrl, "http://127.0.0.1:8088");
+  assert.equal(cfg.rerankModel, "bge-reranker-v2-m3");
+  assert.equal(cfg.rerankCandidates, 24);
+  assert.equal(cfg.rerankMaxChars, 2000);
+});
+
+test("rerank is overridable via .gtir/config.json", () => {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-cfg-"));
+  mkdirSync(join(repo, ".gtir"), { recursive: true });
+  writeFileSync(join(repo, ".gtir", "config.json"), JSON.stringify({ rerank: true, rerankCandidates: 30 }));
+  const cfg = loadConfig(repo);
+  assert.equal(cfg.rerank, true);
+  assert.equal(cfg.rerankCandidates, 30);
+});
