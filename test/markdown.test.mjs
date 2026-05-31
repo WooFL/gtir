@@ -117,3 +117,22 @@ test("chunkMarkdown: char/line offsets map into the original text", () => {
   assert.equal(text.slice(b.chunkStart, b.chunkStart + 4), "## B"); // chunkStart points at the "## B" heading
   assert.equal(b.lineStart, 3); // "## B" is line 3 (1-indexed)
 });
+
+test("chunkMarkdown: CRLF frontmatter is parsed (title/tags not dropped)", () => {
+  const text = "---\r\ntitle: CRLF Page\r\ntags: [x, y]\r\n---\r\n## Sec\r\nbody content that is plenty long enough to be a real chunk here for the test.\r\n";
+  const chunks = chunkMarkdown("n.md", text, cfg);
+  assert.equal(chunks.length, 1);
+  assert.match(chunks[0].prefix, /n\.md › CRLF Page › Sec/);
+  assert.match(chunks[0].prefix, /\[tags: x, y\]/);
+  assert.ok(!chunks[0].text.includes("title:"), "raw YAML must not leak into the chunk body");
+});
+
+test("chunkMarkdown: oversize sub-chunk offsets map back into the original text", () => {
+  const big = Array.from({ length: 80 }, (_, i) => `line ${i} of a long section body that keeps going on`).join("\n");
+  const text = `## Big\n${big}`;
+  const chunks = chunkMarkdown("n.md", text, { maxChars: 400, minChars: 40, overlapChars: 0 });
+  assert.ok(chunks.length >= 2);
+  for (const c of chunks) {
+    assert.equal(text.slice(c.chunkStart, c.chunkEnd), c.text, "sub-chunk char offsets must slice to its text");
+  }
+});

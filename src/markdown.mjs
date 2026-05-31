@@ -59,7 +59,7 @@ export function buildSections(lines, headings, bodyStartLineIdx, root) {
   for (let h = 0; h < headings.length; h++) {
     const { level, title, lineIdx } = headings[h];
     while (stack.length && stack[stack.length - 1].level >= level) stack.pop();
-    const breadcrumb = [root, ...stack.map((s) => s.title), title];
+    const breadcrumb = [root, ...stack.map((s) => s.title), title].filter((v, i, a) => i === 0 || v !== a[i - 1]);
     stack.push({ level, title });
     const endLineIdx = h + 1 < headings.length ? headings[h + 1].lineIdx : lines.length;
     let hasContent = false;
@@ -75,7 +75,8 @@ export function sectionPrefix(relPath, breadcrumb, tags) {
 }
 
 export function chunkMarkdown(relPath, text, cfg) {
-  const lines = text.split("\n");
+  const norm = text.replace(/\r\n?/g, "\n"); // normalize CRLF/CR so frontmatter + headings parse
+  const lines = norm.split("\n");
   const lineStartChar = [0];
   for (let i = 0; i < lines.length; i++) lineStartChar.push(lineStartChar[i] + lines[i].length + 1);
 
@@ -89,9 +90,7 @@ export function chunkMarkdown(relPath, text, cfg) {
     if (sec.headingOnly) continue;
     const body = lines.slice(sec.startLineIdx, sec.endLineIdx).join("\n").replace(/\s+$/, "");
     if (!body.trim()) continue;
-    // Deduplicate adjacent identical breadcrumb entries (e.g. fm.title == H1 title)
-    const crumb = sec.breadcrumb.filter((v, i) => i === 0 || v !== sec.breadcrumb[i - 1]);
-    const prefix = sectionPrefix(relPath, crumb, fm.tags);
+    const prefix = sectionPrefix(relPath, sec.breadcrumb, fm.tags);
     const charStart = lineStartChar[sec.startLineIdx];
     const lineStart = sec.startLineIdx + 1;
     if (body.length <= cfg.maxChars) {
