@@ -146,13 +146,16 @@ test("scoreGolden: a valid path simply not in results is a normal miss, not an e
   assert.equal(s.pageRank, null);
 });
 
-test("compareBaseline: a metric present in baseline but gone from current is flagged", () => {
+test("compareBaseline: a sec_hit metric that became n/a (golden lost its lines) is NOT a phantom regression", () => {
   const cur =  { recall: { 1: 0.5, 5: 0.8, 10: 0.9 }, mrr: 0.6, sec_hit: { 1: null, 5: null } }; // n_sec went to 0
   const base = { recall: { 1: 0.5, 5: 0.8, 10: 0.9 }, mrr: 0.6, sec_hit: { 1: 0.4, 5: 0.6 } };
   const regs = compareBaseline(cur, base, 0.005);
-  const keys = regs.map((r) => r.metric).sort();
-  assert.deepEqual(keys, ["sec_hit@1", "sec_hit@5"]);
-  const one = regs.find((r) => r.metric === "sec_hit@1");
-  assert.equal(one.cur, null);
-  assert.equal(one.base, 0.4);
+  assert.equal(regs.length, 0, "a vanished sec_hit is a benchmark change, not a retrieval regression");
+});
+
+test("compareBaseline: a real drop in a shared metric is still flagged", () => {
+  const cur =  { recall: { 1: 0.40, 5: 0.80, 10: 0.90 }, mrr: 0.60, sec_hit: { 1: 0.40, 5: 0.60 } };
+  const base = { recall: { 1: 0.55, 5: 0.80, 10: 0.90 }, mrr: 0.60, sec_hit: { 1: 0.40, 5: 0.60 } };
+  const regs = compareBaseline(cur, base, 0.005);
+  assert.deepEqual(regs.map((r) => r.metric), ["recall@1"]);
 });

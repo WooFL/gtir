@@ -80,9 +80,6 @@ export function compareBaseline(cur, base, tol = 0.005) {
     const delta = c[key] - b[key];
     if (delta < -tol) regressions.push({ metric: key, cur: c[key], base: b[key], delta: round(delta) });
   }
-  for (const key of Object.keys(b)) {
-    if (!(key in c)) regressions.push({ metric: key, cur: null, base: b[key], delta: round(-b[key]) });
-  }
   return regressions;
 }
 

@@ -105,6 +105,16 @@ corpus-agnostic — point `--repo` at any index and pass `--golden <file>` to sc
 A/B across a change: `gtir eval --save` on the old commit, then `gtir eval` on the new one reads
 the delta. Metric math is unit-tested (hermetic); the corpus run needs Ollama.
 
+**Where golden/baseline live:** keep `golden.json` / `baseline.json` *outside* the indexed
+tree (the bundled fixture keeps them at `eval/`, scoring the corpus under `eval/corpus/`). If you
+point `--repo` at a tree that contains your golden file, that JSON gets indexed as corpus content
+and can surface in results — pass `--golden`/`--baseline` to files kept outside `--repo`, or add
+them to the index's skip list.
+
+**Headroom:** the shipped fixture is near-saturated (Recall@1 ≈ 0.92), which makes it a strong
+*regression gate* but a weak *improvement meter* — a real retrieval gain has little room to show.
+To measure gains, expand the corpus and add harder, more ambiguous queries, then re-`--save`.
+
 ## MCP server (use gtir from inside Claude)
 
 Expose gtir's search as native MCP tools so Claude can call them mid-session:
