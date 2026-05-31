@@ -35,3 +35,16 @@ export function parseFrontmatter(lines) {
   }
   return meta;
 }
+
+export function scanHeadings(lines, bodyStartLineIdx) {
+  const headings = [];
+  let inFence = false;
+  for (let i = bodyStartLineIdx; i < lines.length; i++) {
+    const t = lines[i].trimStart();
+    if (t.startsWith("```") || t.startsWith("~~~")) { inFence = !inFence; continue; }
+    if (inFence) continue;
+    const m = lines[i].match(/^(#{1,6})\s+(.+?)\s*#*\s*$/);
+    if (m) headings.push({ level: m[1].length, title: m[2].trim(), lineIdx: i });
+  }
+  return headings;
+}
