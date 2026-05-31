@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 export function l2normalize(v) {
   let n = 0;
   for (const x of v) n += x * x;
@@ -36,4 +38,8 @@ export async function embedTexts(texts, cfg) {
 export async function probeDim(cfg) {
   const [v] = await embedTexts(["ping"], cfg);
   return v.length;
+}
+
+export function contentHash(s) {
+  return createHash("sha256").update(String(s), "utf8").digest("hex");
 }

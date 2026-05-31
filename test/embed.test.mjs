@@ -36,3 +36,12 @@ test("embedTexts truncates inputs to maxEmbedChars before sending", async () => 
   await embedTexts([long], cfg);
   assert.equal(seen[0].length, 50, "input must be truncated to maxEmbedChars");
 });
+
+import { contentHash } from "../src/embed.mjs";
+
+test("contentHash: stable sha256 hex; differs by input", () => {
+  const a = contentHash("hello world");
+  assert.match(a, /^[0-9a-f]{64}$/);
+  assert.equal(contentHash("hello world"), a);      // deterministic
+  assert.notEqual(contentHash("hello world!"), a);  // input-sensitive
+});
