@@ -43,5 +43,11 @@
   { "query": "how is the rate limit policy evaluated for an incoming request", "path": "policy/evaluators.py", "lines": [31, 33] },
   { "query": "when does the circuit breaker policy evaluate the request as allowed", "path": "policy/evaluators.py", "lines": [43, 45] },
   { "query": "what limit check does the retry policy perform internally", "path": "policy/evaluators.py", "lines": [11, 12] },
-  { "query": "how does the circuit breaker policy run its internal limit check", "path": "policy/evaluators.py", "lines": [47, 48] }
+  { "query": "how does the circuit breaker policy run its internal limit check", "path": "policy/evaluators.py", "lines": [47, 48] },
+  { "query": "how does the ingress throttle strategy admit an inbound request", "path": "edge/node_a.py", "lines": [15, 22] },
+  { "query": "how does the egress throttle strategy admit an outbound request", "path": "edge/node_b.py", "lines": [14, 21] },
+  { "query": "how does the ingress strategy reset its accounting window", "path": "edge/node_a.py", "lines": [24, 31] },
+  { "query": "how does the egress strategy reset its accounting window", "path": "edge/node_b.py", "lines": [23, 30] },
+  { "query": "what does the ingress throttle strategy snapshot expose for metrics", "path": "edge/node_a.py", "lines": [33, 40] },
+  { "query": "what does the egress throttle strategy snapshot expose for metrics", "path": "edge/node_b.py", "lines": [32, 39] }
 ]

@@ -10,13 +10,21 @@
 walk repo (.gitignore-aware)
   → tree-sitter AST chunks (+ cAST sibling-merge; recursive fallback for grammarless files)
   → markdown: heading-aware sections, each carrying its heading breadcrumb + frontmatter tags
-  → contextual prefix per chunk (synthetic by default; opt-in claude-cli tier)
+  → contextual prefix per chunk: code chunks prepend an AST scope breadcrumb
+    (path › enclosing class/module — first line); markdown uses its heading breadcrumb;
+    grammarless files use path + first line (opt-in claude-cli tier still available)
   → embed via Ollama /api/embed  (jina-code-embeddings-0.5b)
   → LanceDB upsert (vectors + BM25 FTS)
 search: query → embed → vector branch + BM25 branch → Reciprocal Rank Fusion (k=60)
 ```
 
 Everything runs through **one runtime — Ollama** (the same daemon that serves `nomic-embed-text` for your notes). No Python, no sentence-transformers, no torch.
+
+The AST scope breadcrumb is **additive** — it prepends the enclosing class/module to the chunk's
+informative first line rather than replacing it. It restores the context a method loses when it is
+sliced out of a large class: on a scope-ambiguous fixture (two big classes with identically-named
+methods), it lifted Recall@1 and Sec-hit@1 by ~6 points each via `gtir eval`, with no regression on
+the rest of the corpus. (No LLM, no second model — it reuses structure tree-sitter already parsed.)
 
 ## Install
 
