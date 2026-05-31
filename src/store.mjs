@@ -74,5 +74,32 @@ export async function openStore(cfg) {
     return Object.fromEntries(rows.map((r) => [r.key, r.value]));
   }
 
-  return { chunksTable, upsertRows, loadManifest, evictPaths, writeMeta, readMeta };
+  async function hasContentHash() {
+    const tbl = await chunksTable();
+    if (!tbl) return false;
+    try {
+      const rows = await tbl.query().limit(1).toArray();
+      return rows.length > 0 && Object.prototype.hasOwnProperty.call(rows[0], "content_hash");
+    } catch { return false; }
+  }
+
+  async function loadEmbedCache() {
+    const tbl = await chunksTable();
+    if (!tbl) return new Map();
+    let rows;
+    try { rows = await tbl.query().select(["content_hash", "embedding"]).toArray(); }
+    catch { return new Map(); } // table lacks the column
+    const m = new Map();
+    for (const r of rows) {
+      if (r.content_hash && r.embedding) m.set(r.content_hash, Array.from(r.embedding));
+    }
+    return m;
+  }
+
+  async function dropChunks() {
+    const names = await tableNames();
+    if (names.includes("chunks")) await db.dropTable("chunks");
+  }
+
+  return { chunksTable, upsertRows, loadManifest, evictPaths, writeMeta, readMeta, hasContentHash, loadEmbedCache, dropChunks };
 }

@@ -53,3 +53,34 @@ test("upsertRows on an existing path replaces its rows (no doubling)", async () 
   assert.equal(rows.length, 1);                  // exactly one row, not doubled
   assert.match(rows[0].text, /REPLACED/);
 });
+
+function rowH(path, text, ch, vec = [0.1, 0.2, 0.3]) {
+  return { id: `${path}:${text}`, path, language: "md", chunk_start: 0, chunk_end: text.length,
+    line_start: 1, line_end: 1, text, mtime_ms: 1, embedding: vec, content_hash: ch };
+}
+
+test("hasContentHash: true when rows carry content_hash, false otherwise", async () => {
+  const a = mkdtempSync(join(tmpdir(), "gtir-ch-"));
+  const sa = await openStore({ indexDir: join(a, "i.lance") });
+  assert.equal(await sa.hasContentHash(), false); // no table yet
+  await sa.upsertRows([rowH("a.md", "alpha", "hash-a")]);
+  assert.equal(await sa.hasContentHash(), true);
+});
+
+test("loadEmbedCache: returns {content_hash -> embedding}", async () => {
+  const a = mkdtempSync(join(tmpdir(), "gtir-ch-"));
+  const sa = await openStore({ indexDir: join(a, "i.lance") });
+  await sa.upsertRows([rowH("a.md", "alpha", "h1", [1, 0, 0]), rowH("b.md", "beta", "h2", [0, 1, 0])]);
+  const cache = await sa.loadEmbedCache();
+  assert.equal(cache.size, 2);
+  assert.deepEqual(Array.from(cache.get("h1")), [1, 0, 0]);
+});
+
+test("dropChunks: removes the chunks table", async () => {
+  const a = mkdtempSync(join(tmpdir(), "gtir-ch-"));
+  const sa = await openStore({ indexDir: join(a, "i.lance") });
+  await sa.upsertRows([rowH("a.md", "alpha", "h1")]);
+  assert.notEqual(await sa.chunksTable(), null);
+  await sa.dropChunks();
+  assert.equal(await sa.chunksTable(), null);
+});
