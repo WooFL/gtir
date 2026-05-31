@@ -169,14 +169,25 @@ Compare the **`hard`-tier** Recall@1 between the two runs — that tier encodes 
 reranker is meant to fix. The reranker is swappable (it's just the GGUF `llama-server` loads plus the
 `rerankModel` label), so trying `jina-reranker-v2` later is a relaunch, not a code change.
 
-**Measured A/B (2026-06-01, `bge-reranker-v2-m3` Q8_0):** on the bundled fixture, reranking did **not**
-help — it slightly hurt. Stable across 3 paired runs: hard-tier Recall@1 **0.633 → 0.600** (one query
-demoted out of rank 1), MRR ~**0.726 → 0.710**, Recall@5 ~flat, gate tier flat. So the stage stays
-**off by default**: the hybrid RRF order is already strong on this corpus, and a general-purpose
-multilingual cross-encoder doesn't add over it (and isn't code-tuned). The harness earned its keep by
-catching this before it shipped as a default. **Next experiment:** A/B `jina-reranker-v2` (code-trained)
-— a relaunch + `rerankModel` swap, no code change — to see whether a code-aware reranker beats the
-hybrid where bge didn't.
+**Measured A/B (2026-06-01) — two rerankers, both a net negative on the bundled fixture.** Each
+stable across 3 paired runs (hybrid hard-tier Recall@1 = 0.633 every run):
+
+| reranker | hard Recall@1 | hard MRR | hard Recall@5 |
+|---|---|---|---|
+| *(hybrid, no rerank)* | **0.633** | ~0.724 | 0.867 |
+| `bge-reranker-v2-m3` Q8_0 | 0.600 | ~0.710 | ~flat |
+| `jina-reranker-v2-base-multilingual` Q8_0 | 0.567 | ~0.686 | ~flat–0.900 |
+
+Both demote correct top-1 hits; neither beats the hybrid. So the stage stays **off by default**.
+Honest read: the hybrid RRF order is already strong here, and a pointwise cross-encoder reranking
+short code chunks — without the contextual prefix the *embedder* sees (path › scope), so with *less*
+context than the index — doesn't add over it. The harness earned its keep: it caught a plausible,
+expensive-sounding feature before it shipped as a default.
+
+Caveats and unexplored levers (the infrastructure stays in place for them): this is the synthetic
+fixture, not real code; feeding the reranker the *contextualized* text rather than raw chunk text is
+untried; and `jina-reranker-v3` is a different (listwise) paradigm that needs a llama.cpp fork + an MLP
+projector, so it's a separate integration, not a drop-in swap.
 
 ## MCP server (use gtir from inside Claude)
 
