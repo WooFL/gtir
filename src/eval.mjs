@@ -81,3 +81,14 @@ export function compareBaseline(cur, base, tol = 0.005) {
   }
   return regressions;
 }
+
+// Run a golden set through an injected async searchFn(query, k) -> results[], score, aggregate.
+export async function evalGolden(golden, searchFn, { maxK = 10, ks } = {}) {
+  if (!Array.isArray(golden) || golden.length === 0) throw new Error("golden set is empty");
+  const records = [];
+  for (const entry of golden) {
+    const results = await searchFn(entry.query, maxK);
+    records.push(scoreGolden(results, entry));
+  }
+  return aggregate(records, ks);
+}

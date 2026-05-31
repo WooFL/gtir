@@ -4,6 +4,7 @@ import { parseLines, overlaps } from "../src/eval.mjs";
 import { scoreGolden } from "../src/eval.mjs";
 import { aggregate } from "../src/eval.mjs";
 import { flattenMetrics, compareBaseline } from "../src/eval.mjs";
+import { evalGolden } from "../src/eval.mjs";
 
 test("parseLines: 'start-end' string", () => {
   assert.deepEqual(parseLines("12-40"), [12, 40]);
@@ -113,4 +114,26 @@ test("compareBaseline: missing baseline metric is skipped (no false regression)"
   const base = { recall: { 1: 0.50 }, mrr: 0.60, sec_hit: {} };
   const regs = compareBaseline(cur, base, 0.005);
   assert.equal(regs.length, 0);
+});
+
+test("evalGolden: runs each query through searchFn and aggregates", async () => {
+  const golden = [
+    { query: "alpha", path: "a.ts", lines: [1, 9] },
+    { query: "bravo", path: "b.ts" },
+  ];
+  const fake = async (q, k) => {
+    assert.equal(k, 10);
+    if (q === "alpha") return [R("a.ts", "1-9"), R("z.ts", "1-9")];
+    return [R("x.ts", "1-9"), R("y.ts", "1-9"), R("b.ts", "1-9")];
+  };
+  const m = await evalGolden(golden, fake, { maxK: 10 });
+  assert.equal(m.n, 2);
+  assert.equal(m.recall[1], 0.5);
+  assert.equal(m.recall[5], 1.0);
+  assert.equal(m.n_sec, 1);
+  assert.equal(m.sec_hit[1], 1.0);
+});
+
+test("evalGolden: empty golden throws", async () => {
+  await assert.rejects(() => evalGolden([], async () => []), /golden set is empty/);
 });
