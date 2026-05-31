@@ -132,3 +132,18 @@ test("refresh reuses unchanged sections within a changed file", async () => {
   assert.ok(r.embedded >= 1, "section B should be re-embedded");
   assert.equal(c2.state.calls, r.embedded);
 });
+
+test("pre-feature index: refresh on a column-less table runs legacy without schema error", async () => {
+  const repo = repoWith({ "a.ts": CODE });
+  // First build WITHOUT rebuild → creates a chunks table that lacks content_hash (legacy shape).
+  await buildIndex({ ...loadConfig(repo), embedImpl: counter().fn }, { rebuild: false });
+  const store = await openStore(loadConfig(repo));
+  assert.equal(await store.hasContentHash(), false, "legacy table must lack content_hash");
+  // Edit the file and refresh — must not throw a LanceDB schema-mismatch on add.
+  writeFileSync(join(repo, "a.ts"), CODE.replace("trim()", "trimEnd()"));
+  const c2 = counter();
+  const r = await buildIndex({ ...loadConfig(repo), embedImpl: c2.fn }, { rebuild: false });
+  assert.ok(r.chunks > 0, "refresh produced rows");
+  assert.equal(await (await openStore(loadConfig(repo))).hasContentHash(), false, "still legacy after refresh (no column added)");
+  assert.equal(r.reused, 0, "legacy refresh reuses nothing (no cache)");
+});
