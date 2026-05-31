@@ -48,3 +48,14 @@ test("chunkFile falls back to recursive for grammarless ext", async () => {
   assert.ok(chunks.length >= 1);
   assert.equal(chunks[0].language, "wgsl");
 });
+
+test("cAST merge: many tiny adjacent functions coalesce into fewer chunks", async () => {
+  // Six one-line functions, each individually below minChars=80.
+  const tiny = Array.from({ length: 6 }, (_, i) => `def f${i}(): return ${i}`).join("\n\n");
+  const merged = await chunkFile("tiny.py", ".py", tiny, { maxChars: 200, minChars: 80, overlapChars: 0 });
+  assert.ok(merged.length >= 1, "small siblings should not all be dropped");
+  // Each emitted chunk respects the size budget.
+  for (const c of merged) assert.ok(c.text.length <= 200);
+  // At least one chunk contains two merged functions.
+  assert.ok(merged.some((c) => /f0/.test(c.text) && /f1/.test(c.text)));
+});

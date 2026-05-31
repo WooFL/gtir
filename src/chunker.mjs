@@ -69,6 +69,39 @@ function collectNodes(root, typeSet) {
   return [...found.values()].sort((a, b) => a.startIndex - b.startIndex);
 }
 
+// cAST refinement: greedily merge adjacent nodes (source order) whose combined
+// span stays within maxChars. Replaces the "drop everything < minChars" rule
+// for small declarations so consecutive helpers index as one coherent unit.
+function mergeSiblings(nodes, text, langId, relPath, cfg) {
+  const out = [];
+  let group = null; // { startIndex, endIndex, startRow, endRow }
+  const flush = () => {
+    if (!group) return;
+    const body = text.slice(group.startIndex, group.endIndex).trim();
+    if (body.length >= cfg.minChars) {
+      out.push({
+        path: relPath, language: langId,
+        chunkStart: group.startIndex, chunkEnd: group.endIndex,
+        lineStart: group.startRow + 1, lineEnd: group.endRow + 1, text: body,
+      });
+    }
+    group = null;
+  };
+  for (const n of nodes) {
+    const span = n.endIndex - n.startIndex;
+    if (span > cfg.maxChars) { flush(); continue; } // oversize: members emitted separately
+    if (group && (n.endIndex - group.startIndex) <= cfg.maxChars) {
+      group.endIndex = n.endIndex; group.endRow = n.endPosition.row;
+    } else {
+      flush();
+      group = { startIndex: n.startIndex, endIndex: n.endIndex,
+        startRow: n.startPosition.row, endRow: n.endPosition.row };
+    }
+  }
+  flush();
+  return out;
+}
+
 export async function chunkWithTreesitter(relPath, langId, text, cfg) {
   const types = targetTypes(langId);
   if (types.length === 0) return chunkRecursive(relPath, langId, text, cfg);
@@ -80,17 +113,7 @@ export async function chunkWithTreesitter(relPath, langId, text, cfg) {
   const nodes = collectNodes(tree.rootNode, new Set(types));
   if (nodes.length === 0) return chunkRecursive(relPath, langId, text, cfg);
 
-  const chunks = [];
-  for (const n of nodes) {
-    const body = text.slice(n.startIndex, n.endIndex).trim();
-    if (body.length < cfg.minChars || body.length > cfg.maxChars) continue;
-    chunks.push({
-      path: relPath, language: langId,
-      chunkStart: n.startIndex, chunkEnd: n.endIndex,
-      lineStart: n.startPosition.row + 1, lineEnd: n.endPosition.row + 1,
-      text: body,
-    });
-  }
+  const chunks = mergeSiblings(nodes, text, langId, relPath, cfg);
   return chunks.length ? chunks : chunkRecursive(relPath, langId, text, cfg);
 }
 
