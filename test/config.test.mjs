@@ -24,3 +24,8 @@ test("loadConfig merges .gtir/config.json over defaults", () => {
   assert.equal(cfg.maxChars, 3000);
   assert.equal(cfg.minChars, DEFAULTS.minChars); // untouched default preserved
 });
+
+test("noCache defaults to false", () => {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-cfg-"));
+  assert.equal(loadConfig(repo).noCache, false);
+});

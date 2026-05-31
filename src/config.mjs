@@ -18,6 +18,7 @@ export const DEFAULTS = {
   maxEmbedChars: 6000,           // hard cap on per-input embed length (avoids model context overflow)
   contextPrefix: true,            // synthetic prefix on by default
   contextTier: "synthetic",       // "synthetic" | "claude-cli"
+  noCache: false,
   version: 1,
   skipDirs: [
     "node_modules", ".git", "dist", "build", ".next", ".turbo", ".cache",

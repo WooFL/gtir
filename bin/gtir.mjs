@@ -17,9 +17,10 @@ function pkgVersion() {
   catch { return "0.0.0"; }
 }
 
-export async function runIndex({ repo, rebuild = false, embedImpl = null } = {}) {
+export async function runIndex({ repo, rebuild = false, noCache = false, embedImpl = null } = {}) {
   const cfg = loadConfig(repo);
   if (embedImpl) cfg.embedImpl = embedImpl;
+  cfg.noCache = noCache ?? cfg.noCache ?? false;
   return buildIndex(cfg, { rebuild });
 }
 
@@ -69,6 +70,7 @@ function parseArgs(argv) {
     else if (a === "--remove") args.remove = true;
     else if (a === "--notes") args.notes = true;
     else if (a === "--code") args.code = true;
+    else if (a === "--no-cache") args.noCache = true;
     else if (a === "--no-index") args.noIndex = true;
     else if (a === "--no-hook") args.noHook = true;
     else args._.push(a);
@@ -85,13 +87,13 @@ async function main() {
   try {
     switch (cmd) {
       case "index": {
-        const r = await runIndex({ repo, rebuild: !!args.rebuild });
-        process.stderr.write(`gtir: indexed ${r.chunks} chunks (${r.skipped} skipped, ${r.evicted} evicted), dim=${r.dim}\n`);
+        const r = await runIndex({ repo, rebuild: !!args.rebuild, noCache: args.noCache ?? false });
+        process.stderr.write(`gtir: indexed ${r.chunks} chunks (${r.reused ?? 0} reused, ${r.embedded ?? 0} embedded, ${r.skipped} skipped, ${r.evicted} evicted), dim=${r.dim}\n`);
         break;
       }
       case "refresh": {
-        const r = await runIndex({ repo, rebuild: false });
-        process.stderr.write(`gtir: refresh — ${r.chunks} chunks updated (${r.skipped} skipped, ${r.evicted} evicted)\n`);
+        const r = await runIndex({ repo, rebuild: false, noCache: args.noCache ?? false });
+        process.stderr.write(`gtir: refresh — ${r.chunks} chunks updated (${r.reused ?? 0} reused, ${r.embedded ?? 0} embedded, ${r.skipped} skipped, ${r.evicted} evicted)\n`);
         break;
       }
       case "search": {
@@ -139,7 +141,7 @@ async function main() {
         break;
       }
       default:
-        process.stderr.write("usage: gtir <init|index|refresh|search|status|setup|hook|mcp> [--repo <path>] [--notes|--code] [--label name:<repo>] [--print-config] [--rebuild] [--no-index] [--no-hook] [-k N] [--path-prefix P] [--language L] [--remove]\n");
+        process.stderr.write("usage: gtir <init|index|refresh|search|status|setup|hook|mcp> [--repo <path>] [--notes|--code] [--label name:<repo>] [--print-config] [--rebuild] [--no-cache] [--no-index] [--no-hook] [-k N] [--path-prefix P] [--language L] [--remove]\n");
         process.exit(cmd ? 1 : 0);
     }
   } catch (e) {
