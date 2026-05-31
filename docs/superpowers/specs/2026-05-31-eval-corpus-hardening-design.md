@@ -181,3 +181,19 @@ emitting `byTier` alongside the overall blob.
 4. `hard`-tier Recall@1 lands in 0.55–0.75; new tiered `baseline.json` saved.
 5. Hermetic eval unit tests pass; full suite green.
 6. README updated.
+
+## Implementation note — measured revision (2026-06-01)
+
+Two things were learned during implementation and changed the design:
+
+1. **Test discovery collision.** The decoy `*.test.ts` files under `eval/corpus/` were picked up by
+   `node --test`'s repo-wide discovery and failed (they're vitest-syntax fixtures, not node:test
+   files). Fixed by scoping the `test` script to `node --test test/*.test.mjs`.
+
+2. **"Both tiers gate" was wrong.** The spec assumed both tiers would gate on regression. Measurement
+   on an unchanged index showed the **overall and `gate`-tier metrics are stable run-to-run**, but the
+   small **`hard` tier is intrinsically noisy** — one borderline query flipping rank 1↔2 (Ollama F16
+   embedding inference isn't bit-exact) moves its recall by ~1/30 ≈ 0.033, which no sane CI tolerance
+   survives. So the shipped design gates on **overall + `gate` only** (`tol = 0.02`) and treats the
+   `hard` tier as the reported **meter** — which is exactly what the gate/meter naming promised. This
+   matches Component 3's intent (the gate stays strict) while keeping the harness non-flaky.

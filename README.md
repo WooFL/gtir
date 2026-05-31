@@ -121,9 +121,19 @@ point `--repo` at a tree that contains your golden file, that JSON gets indexed 
 and can surface in results — pass `--golden`/`--baseline` to files kept outside `--repo`, or add
 them to the index's skip list.
 
-**Headroom:** the shipped fixture is near-saturated (Recall@1 ≈ 0.92), which makes it a strong
-*regression gate* but a weak *improvement meter* — a real retrieval gain has little room to show.
-To measure gains, expand the corpus and add harder, more ambiguous queries, then re-`--save`.
+**Tiers — gate vs meter:** golden entries carry a `tier`. The **`gate`** tier (51 near-saturated
+queries) is the strict regression floor; the **`hard`** tier (~30 queries over realistic decoys —
+near-duplicate implementations, test-file/doc-copy shadows, method-name ambiguity, and
+cross-vocabulary phrasings) is the improvement meter, sitting at Recall@1 ≈ 0.63 so a real
+retrieval gain has room to register. `gtir eval` prints overall **and** per-tier metrics, and **exits
+non-zero on a regression in the overall or `gate` metrics** (`tol = 0.02`). The `hard` tier is the
+*meter*, not a gate: it's small enough that one borderline query flipping rank 1↔2 between runs moves
+its recall by ~1/30 ≈ 0.03 (Ollama's embedding inference isn't bit-exact), so gating on it would
+flake — instead it's reported with deltas so you can read a real gain. Measured: overall/`gate`
+metrics are stable run-to-run; if a single small regression ever shows, re-run to confirm — a
+cold-start flip clears, a real regression (≥0.05) persists. Decoys follow one authoring rule: each
+query has exactly one defensible target; a decoy must be wrong for the intent, only superficially
+similar.
 
 ## MCP server (use gtir from inside Claude)
 

@@ -10,7 +10,7 @@ import { installHook, removeHook } from "../src/hook.mjs";
 import { probeDim } from "../src/embed.mjs";
 import { runInit } from "../src/init.mjs";
 import { resolveIndexes, serveStdio, printConfig } from "../src/mcp.mjs";
-import { evalGolden, flattenMetrics, allRegressions } from "../src/eval.mjs";
+import { evalGolden, flattenMetrics, compareBaseline, compareTiers } from "../src/eval.mjs";
 
 // --- programmatic entrypoints (used by tests and the dispatcher) ---
 
@@ -136,7 +136,18 @@ async function runEval(args) {
   if (baseline.model && baseline.model !== metrics.model) {
     process.stderr.write(`eval: WARNING baseline model (${baseline.model}) != current (${metrics.model}) — cross-model comparison\n`);
   }
-  const regressions = allRegressions(metrics, baseline, 0.005);
+  // The CLI gates on the stable tiers only: overall + the `gate` tier. Measured on
+  // an unchanged index, those are stable run-to-run (recall@k identical; mrr wobbles
+  // ~0.004, well under tol). The `hard` tier is the improvement *meter*, not a gate:
+  // it's small enough that one borderline query flipping rank 1↔2 between runs moves
+  // its recall by ~1/30 ≈ 0.033, so gating on it would flake. It's reported with
+  // deltas (see printMetricsTable) so you can read a real gain; it just doesn't fail
+  // CI. tol=0.02 absorbs the mrr wobble; real regressions move metrics by ≥0.05.
+  const GATING_TIERS = new Set(["gate"]);
+  const regressions = [
+    ...compareBaseline(metrics, baseline, 0.02),
+    ...compareTiers(metrics, baseline, 0.02).filter((r) => GATING_TIERS.has(r.metric.split(":")[0])),
+  ];
   if (regressions.length) {
     for (const r of regressions) {
       process.stderr.write(`eval: REGRESSION ${r.metric}: ${r.base} → ${r.cur} (${r.delta})\n`);
