@@ -48,3 +48,28 @@ export function scanHeadings(lines, bodyStartLineIdx) {
   }
   return headings;
 }
+
+export function buildSections(lines, headings, bodyStartLineIdx, root) {
+  const sections = [];
+  const firstHeadingLine = headings.length ? headings[0].lineIdx : lines.length;
+  if (firstHeadingLine > bodyStartLineIdx) {
+    sections.push({ breadcrumb: [root], startLineIdx: bodyStartLineIdx, endLineIdx: firstHeadingLine, headingOnly: false });
+  }
+  const stack = []; // [{level, title}]
+  for (let h = 0; h < headings.length; h++) {
+    const { level, title, lineIdx } = headings[h];
+    while (stack.length && stack[stack.length - 1].level >= level) stack.pop();
+    const breadcrumb = [root, ...stack.map((s) => s.title), title];
+    stack.push({ level, title });
+    const endLineIdx = h + 1 < headings.length ? headings[h + 1].lineIdx : lines.length;
+    let hasContent = false;
+    for (let i = lineIdx + 1; i < endLineIdx; i++) { if (lines[i].trim()) { hasContent = true; break; } }
+    sections.push({ breadcrumb, startLineIdx: lineIdx, endLineIdx, headingOnly: !hasContent });
+  }
+  return sections;
+}
+
+export function sectionPrefix(relPath, breadcrumb, tags) {
+  const tagStr = tags && tags.length ? `  [tags: ${tags.join(", ")}]` : "";
+  return `${relPath}${SEP}${breadcrumb.join(SEP)}${tagStr}`;
+}

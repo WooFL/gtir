@@ -48,3 +48,25 @@ test("scanHeadings: respects bodyStartLineIdx (skips frontmatter region)", () =>
   const lines = ["---", "title: x", "---", "# Body H1"];
   assert.deepEqual(scanHeadings(lines, 3).map((h) => h.title), ["Body H1"]);
 });
+
+import { buildSections, sectionPrefix } from "../src/markdown.mjs";
+
+test("buildSections: breadcrumb stack pops on same-or-shallower level", () => {
+  const lines = ["# A", "a", "## B", "b", "### C", "c", "## D", "d"];
+  const secs = buildSections(lines, scanHeadings(lines, 0), 0, "Root");
+  assert.deepEqual(secs.map((s) => s.breadcrumb.join("/")),
+    ["Root/A", "Root/A/B", "Root/A/B/C", "Root/A/D"]);
+});
+
+test("buildSections: preamble emitted; heading-only section flagged", () => {
+  const lines = ["pre", "# A", "## B", "b"]; // "# A" has only "## B" after it => heading-only
+  const secs = buildSections(lines, scanHeadings(lines, 0), 0, "R");
+  assert.equal(secs[0].breadcrumb.join("/"), "R");           // preamble ("pre")
+  assert.equal(secs.find((s) => s.breadcrumb.join("/") === "R/A").headingOnly, true);
+  assert.equal(secs.find((s) => s.breadcrumb.join("/") === "R/A/B").headingOnly, false);
+});
+
+test("sectionPrefix formats path › breadcrumb [tags]", () => {
+  assert.equal(sectionPrefix("c/x.md", ["X", "Sec"], ["t1", "t2"]), "c/x.md › X › Sec  [tags: t1, t2]");
+  assert.equal(sectionPrefix("c/x.md", ["X"], []), "c/x.md › X");
+});
