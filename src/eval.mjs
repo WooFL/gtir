@@ -56,3 +56,28 @@ export function aggregate(records, ks = { recall: [1, 5, 10], sec: [1, 5] }) {
   }
   return { n, n_sec: nSec, recall, mrr, sec_hit };
 }
+
+// Flatten a metrics object to scalar { "recall@1": ..., mrr: ..., "sec_hit@1": ... }.
+// Null sec_hit values (n_sec === 0) are omitted so they never read as regressions.
+export function flattenMetrics(m) {
+  const out = {};
+  for (const k of Object.keys(m.recall || {})) out[`recall@${k}`] = m.recall[k];
+  if (typeof m.mrr === "number") out.mrr = m.mrr;
+  for (const k of Object.keys(m.sec_hit || {})) {
+    if (m.sec_hit[k] !== null && m.sec_hit[k] !== undefined) out[`sec_hit@${k}`] = m.sec_hit[k];
+  }
+  return out;
+}
+
+// Return [{ metric, cur, base, delta }] for every metric that dropped by more than tol.
+// A metric absent from the baseline is skipped (not a false regression).
+export function compareBaseline(cur, base, tol = 0.005) {
+  const c = flattenMetrics(cur), b = flattenMetrics(base);
+  const regressions = [];
+  for (const key of Object.keys(c)) {
+    if (!(key in b)) continue;
+    const delta = c[key] - b[key];
+    if (delta < -tol) regressions.push({ metric: key, cur: c[key], base: b[key], delta: round(delta) });
+  }
+  return regressions;
+}

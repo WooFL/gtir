@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { parseLines, overlaps } from "../src/eval.mjs";
 import { scoreGolden } from "../src/eval.mjs";
 import { aggregate } from "../src/eval.mjs";
+import { flattenMetrics, compareBaseline } from "../src/eval.mjs";
 
 test("parseLines: 'start-end' string", () => {
   assert.deepEqual(parseLines("12-40"), [12, 40]);
@@ -90,4 +91,26 @@ test("aggregate: empty records", () => {
   assert.equal(m.n, 0);
   assert.equal(m.recall[1], 0);
   assert.equal(m.mrr, 0);
+});
+
+const M = (recall, mrr, sec_hit) => ({ recall, mrr, sec_hit, n: 10, n_sec: 8 });
+
+test("flattenMetrics: scalar keys; null sec_hit dropped", () => {
+  const f = flattenMetrics(M({ 1: 0.5, 5: 0.8, 10: 0.9 }, 0.6, { 1: 0.4, 5: null }));
+  assert.deepEqual(f, { "recall@1": 0.5, "recall@5": 0.8, "recall@10": 0.9, mrr: 0.6, "sec_hit@1": 0.4 });
+});
+
+test("compareBaseline: flags drops beyond tol, not within, not improvements", () => {
+  const cur =  M({ 1: 0.50, 5: 0.80, 10: 0.90 }, 0.60, { 1: 0.40, 5: 0.60 });
+  const base = M({ 1: 0.55, 5: 0.80, 10: 0.85 }, 0.60, { 1: 0.50, 5: 0.60 });
+  const regs = compareBaseline(cur, base, 0.005);
+  const keys = regs.map((r) => r.metric).sort();
+  assert.deepEqual(keys, ["recall@1", "sec_hit@1"]);
+});
+
+test("compareBaseline: missing baseline metric is skipped (no false regression)", () => {
+  const cur =  M({ 1: 0.50, 5: 0.80, 10: 0.90 }, 0.60, { 1: 0.40, 5: 0.60 });
+  const base = { recall: { 1: 0.50 }, mrr: 0.60, sec_hit: {} };
+  const regs = compareBaseline(cur, base, 0.005);
+  assert.equal(regs.length, 0);
 });
