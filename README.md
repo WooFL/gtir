@@ -60,8 +60,8 @@ Flags: `--notes` / `--code` to force the mode, `--no-index`, `--no-hook`.
 ## Use
 
 ```bash
-gtir index   --repo <project> [--rebuild]              # build / full rebuild
-gtir refresh --repo <project>                          # incremental (changed files only)
+gtir index   --repo <project> [--rebuild] [--no-cache]  # build / full rebuild
+gtir refresh --repo <project> [--no-cache]              # incremental (changed files only)
 gtir search  "how are sessions created" --repo <project> [-k 8] [--language python] [--path-prefix src/]
 gtir status  --repo <project>                          # model, dim, file count
 gtir hook    --repo <project> [--remove]               # install/remove post-commit auto-refresh
@@ -70,6 +70,24 @@ gtir hook    --repo <project> [--remove]               # install/remove post-com
 - `search` prints JSON to **stdout** (pipe to `jq`); all human-readable logs go to stderr.
 - The index lives in `<project>/.gtir/` — regenerable, add it to `.gitignore`.
 - `gtir hook` installs a git `post-commit` hook so the index refreshes itself as you commit; it's idempotent and preserves any existing hook.
+
+### Embedding cache (content-addressed)
+
+An embedding is a pure function of `(model, embedText)`, and the index already stores
+embeddings for the current content. gtir keys each chunk row by `content_hash =
+sha256(embedText)` and, before embedding, reuses the prior index's vectors for any chunk
+whose embedded text is byte-identical — so **unchanged content is never re-embedded**. This
+helps both `--rebuild` (reuse the whole unchanged corpus) and `refresh` (reuse unchanged
+sections of a changed file). The hash covers the *contextualized* text (heading breadcrumb /
+prefix included), so a rename or markdown retitle correctly invalidates the entry.
+
+The stats line reports the split: `gtir: indexed N chunks (R reused, K embedded), dim=D`.
+
+- Reuse is gated on `meta.model === cfg.model`, so switching the embedding model re-embeds
+  everything (no stale-model vectors).
+- Pre-feature indexes (built before this column existed) keep working unchanged; a one-time
+  `gtir index --rebuild` migrates them and enables the cache thereafter.
+- `--no-cache` forces a full re-embed (for debugging or distrust of the cache).
 
 ## MCP server (use gtir from inside Claude)
 
