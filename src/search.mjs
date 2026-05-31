@@ -63,12 +63,16 @@ export async function search(query, cfg, { k = 8, pathPrefix = null, language = 
   const vecRows = await vq.toArray();
 
   let ftsRows = [];
-  try {
-    let fq = tbl.query().nearestToText(query).limit(fanout);
+  const ftsSearch = async (cols) => {
+    let fq = tbl.query().nearestToText(query, cols).limit(fanout);
     if (where) fq = fq.where(where);
-    ftsRows = await fq.toArray();
-  } catch (err) {
-    process.stderr.write(`[gtir] FTS unavailable, vector-only: ${err.message}\n`);
+    return fq.toArray();
+  };
+  try {
+    ftsRows = await ftsSearch(["fts_text"]);          // boosted FTS column (current schema)
+  } catch {
+    try { ftsRows = await ftsSearch(undefined); }      // fall back to the default/single FTS index (old schema)
+    catch (err) { process.stderr.write(`[gtir] FTS unavailable, vector-only: ${err.message}\n`); }
   }
 
   const fused = fuseRRF(vecRows, ftsRows, cfg.rerank ? rcand : limit);

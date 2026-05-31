@@ -31,10 +31,33 @@ function claudeCliPrefix(chunk, cfg) {
   }
 }
 
+// Tokenize a path into search terms: split on separators and camelCase, lowercased.
+// "auth/jwt.ts" -> "auth jwt ts"; "src/userApi.ts" -> "src user api ts".
+export function pathTokens(path) {
+  return String(path)
+    .split(/[/\\._\-]+/)
+    .flatMap((seg) => seg.replace(/([a-z0-9])([A-Z])/g, "$1 $2").split(/\s+/))
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
+// Text handed to the BM25/FTS index. The path tokens, enclosing scope, and the
+// declaration line are repeated `bm25Boost` times ahead of the body so a lexical
+// match on a symbol/path outweighs an incidental mention in some other file's body
+// (the shadowing case). boost = 0 falls back to indexing the raw chunk text.
+export function ftsText(chunk, cfg) {
+  const boost = Math.max(0, cfg?.bm25Boost ?? 0);
+  if (boost === 0) return chunk.text;
+  const scope = chunk.scope?.length ? chunk.scope.join(" ") : "";
+  const head = `${pathTokens(chunk.path)} ${scope} ${firstSignificantLine(chunk.text)}`.replace(/\s+/g, " ").trim();
+  return `${(head + "\n").repeat(boost)}${chunk.text}`;
+}
+
 export async function contextualizeChunk(chunk, cfg) {
   // A chunk may carry a precomputed context prefix (e.g. the markdown chunker's
   // heading breadcrumb + tags). Honor it; otherwise fall back to the synthetic /
   // claude-cli prefix used for code chunks.
   const prefix = chunk.prefix ?? (cfg.contextTier === "claude-cli" ? claudeCliPrefix(chunk, cfg) : syntheticPrefix(chunk, cfg));
-  return { ...chunk, embedText: `${prefix}\n${chunk.text}` };
+  return { ...chunk, embedText: `${prefix}\n${chunk.text}`, ftsText: ftsText(chunk, cfg) };
 }

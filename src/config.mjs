@@ -25,6 +25,7 @@ export const DEFAULTS = {
   rerankModel: "bge-reranker-v2-m3",      // sent in the /rerank request (informational for a 1-model server)
   rerankCandidates: 24,                   // hybrid candidates to rerank before slicing to k
   rerankMaxChars: 2000,                   // per-document char cap (~512 tokens, bge context)
+  bm25Boost: 3,                           // repeat the path+scope+decl head N times in the FTS text so BM25 weights symbol/path matches above incidental body hits (0 = index raw text)
   version: 1,
   skipDirs: [
     "node_modules", ".git", "dist", "build", ".next", ".turbo", ".cache",

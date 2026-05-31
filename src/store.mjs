@@ -25,9 +25,13 @@ export async function openStore(cfg) {
       await tbl.delete(`path IN (${inList(paths)})`); // delete-then-add upsert
       await tbl.add(rows);
     }
-    // (Re)build BM25 FTS over the text column. Mirrors flow.py create_fts_index.
-    try { await tbl.createIndex("text", { config: lancedb.Index.fts(), replace: true }); }
-    catch { /* older builds / empty table: degrade to vector-only at search time */ }
+    // (Re)build the BM25 FTS index. Prefer the boosted `fts_text` column (path/scope/decl
+    // weighted ahead of the body); fall back to raw `text` for pre-existing schemas.
+    try { await tbl.createIndex("fts_text", { config: lancedb.Index.fts(), replace: true }); }
+    catch {
+      try { await tbl.createIndex("text", { config: lancedb.Index.fts(), replace: true }); }
+      catch { /* older builds / empty table: degrade to vector-only at search time */ }
+    }
   }
 
   async function loadManifest() {
