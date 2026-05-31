@@ -8,7 +8,7 @@ export const DEFAULTS = {
   model: "jina-code-embeddings-0.5b",
   ollamaUrl: process.env.OLLAMA_URL || "http://localhost:11434",
   maxChars: 2000,
-  minChars: 100,
+  minChars: 50,
   overlapChars: 400,
   maxFileBytes: 256 * 1024,
   embedBatch: 32,
