@@ -24,8 +24,20 @@ function repoWith(files) {
 
 test("buildIndex indexes files and reports counts", async () => {
   const repo = repoWith({
-    "user.py": "class User:\n    def login(self):\n        return 'authenticated successfully here'",
-    "note.md": "# Title\n\nSome documentation text that is long enough to pass minChars easily.",
+    "user.py": [
+      "class User:",
+      "    def login(self, username, password):",
+      "        # Authenticate the user and return a freshly minted session token on success.",
+      "        if not username or not password:",
+      "            return None",
+      "        return create_session(username, password)",
+    ].join("\n"),
+    "note.md": [
+      "# Authentication",
+      "",
+      "This document explains how the session manager creates and revokes tokens during",
+      "the authentication flow, including the credential checks performed on each login.",
+    ].join("\n"),
   });
   const cfg = { ...loadConfig(repo), embedImpl: fakeEmbed, contextTier: "synthetic" };
   const res = await buildIndex(cfg, { rebuild: true });
@@ -35,7 +47,14 @@ test("buildIndex indexes files and reports counts", async () => {
 
 test("incremental: unchanged files are skipped on second run", async () => {
   const repo = repoWith({
-    "a.py": "def alpha():\n    return 'a body long enough to clear the minimum chars'",
+    "a.py": [
+      "def alpha(items):",
+      "    # Sum every value in the provided collection and return the running total here.",
+      "    total = 0",
+      "    for item in items:",
+      "        total += item",
+      "    return total",
+    ].join("\n"),
   });
   const cfg = { ...loadConfig(repo), embedImpl: fakeEmbed };
   await buildIndex(cfg, { rebuild: true });
