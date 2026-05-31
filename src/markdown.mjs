@@ -43,7 +43,7 @@ export function scanHeadings(lines, bodyStartLineIdx) {
     const t = lines[i].trimStart();
     if (t.startsWith("```") || t.startsWith("~~~")) { inFence = !inFence; continue; }
     if (inFence) continue;
-    const m = lines[i].match(/^(#{1,6})\s+(.+?)\s*#*\s*$/);
+    const m = lines[i].match(/^(#{1,6})\s+(\S.*?)\s*#*\s*$/);
     if (m) headings.push({ level: m[1].length, title: m[2].trim(), lineIdx: i });
   }
   return headings;

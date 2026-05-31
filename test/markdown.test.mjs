@@ -136,3 +136,8 @@ test("chunkMarkdown: oversize sub-chunk offsets map back into the original text"
     assert.equal(text.slice(c.chunkStart, c.chunkEnd), c.text, "sub-chunk char offsets must slice to its text");
   }
 });
+
+test("scanHeadings: a whitespace-only heading line is not a heading", () => {
+  const lines = ["#    ", "# Real Title", "##\t  "];
+  assert.deepEqual(scanHeadings(lines, 0).map((h) => h.title), ["Real Title"]);
+});
