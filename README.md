@@ -38,6 +38,24 @@ gtir setup --repo <project>
 # → gtir: Ollama OK — model=hf.co/jinaai/jina-code-embeddings-0.5b-GGUF:F16 dim=896
 ```
 
+## Quick start — `gtir init`
+
+One command sets up a repo or vault end-to-end:
+
+```bash
+gtir init --repo <path>          # auto-detects notes vs code
+```
+
+It detects whether the target is a **note vault** (has `.obsidian/` or is markdown-dominant → `nomic-embed-text` + prose chunk sizes) or a **codebase** (→ `jina-code` defaults), then:
+1. writes the right `.gtir/config.json` (never clobbers an existing one),
+2. appends `.gtir/` to `.gitignore`,
+3. builds the first index,
+4. installs the post-commit auto-refresh hook — or, if it detects **lefthook/husky**, prints the snippet to add instead of clobbering the managed hook.
+
+For a code repo with a **nested vault** (e.g. `wiki/`), it auto-adds that folder to `skipDirs` so it isn't double-indexed with the code model.
+
+Flags: `--notes` / `--code` to force the mode, `--no-index`, `--no-hook`.
+
 ## Use
 
 ```bash

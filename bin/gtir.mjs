@@ -7,6 +7,7 @@ import { search } from "../src/search.mjs";
 import { openStore } from "../src/store.mjs";
 import { installHook, removeHook } from "../src/hook.mjs";
 import { probeDim } from "../src/embed.mjs";
+import { runInit } from "../src/init.mjs";
 
 // --- programmatic entrypoints (used by tests and the dispatcher) ---
 
@@ -54,6 +55,10 @@ function parseArgs(argv) {
     else if (a === "--path-prefix") args.pathPrefix = argv[++i];
     else if (a === "--language") args.language = argv[++i];
     else if (a === "--remove") args.remove = true;
+    else if (a === "--notes") args.notes = true;
+    else if (a === "--code") args.code = true;
+    else if (a === "--no-index") args.noIndex = true;
+    else if (a === "--no-hook") args.noHook = true;
     else args._.push(a);
   }
   return args;
@@ -97,8 +102,23 @@ async function main() {
         else { installHook(repo); process.stderr.write("gtir: post-commit refresh hook installed\n"); }
         break;
       }
+      case "init": {
+        const mode = args.notes ? "notes" : args.code ? "code" : null;
+        const r = await runInit({ repo, mode, index: !args.noIndex, hook: !args.noHook });
+        process.stderr.write(`gtir init: ${r.repo}\n`);
+        process.stderr.write(`  mode: ${r.mode}${mode ? " (forced)" : " (detected)"}\n`);
+        process.stderr.write(`  config: ${r.config.written ? "wrote .gtir/config.json" : `kept existing (${r.config.reason})`}\n`);
+        process.stderr.write(`  gitignore: ${r.gitignore.added ? ".gtir/ added" : "already ignored"}\n`);
+        process.stderr.write(`  index: ${r.indexed ? `${r.indexed.chunks} chunks, dim=${r.indexed.dim}` : "skipped (--no-index)"}\n`);
+        if (args.noHook) process.stderr.write("  hook: skipped (--no-hook)\n");
+        else if (r.hookInstalled) process.stderr.write("  hook: post-commit auto-refresh installed\n");
+        else if (r.lefthookSnippet) process.stderr.write(`  hook: lefthook detected — add to lefthook.yml:\n\n${r.lefthookSnippet}\n\n`);
+        else if (r.hookManager === "husky") process.stderr.write("  hook: husky detected — add 'gtir refresh --repo .' to .husky/post-commit\n");
+        else process.stderr.write("  hook: no git repo — auto-refresh skipped (run 'gtir refresh' manually)\n");
+        break;
+      }
       default:
-        process.stderr.write("usage: gtir <index|refresh|search|status|setup|hook> [--repo <path>] [--rebuild] [-k N] [--path-prefix P] [--language L] [--remove]\n");
+        process.stderr.write("usage: gtir <init|index|refresh|search|status|setup|hook> [--repo <path>] [--notes|--code] [--rebuild] [--no-index] [--no-hook] [-k N] [--path-prefix P] [--language L] [--remove]\n");
         process.exit(cmd ? 1 : 0);
     }
   } catch (e) {
