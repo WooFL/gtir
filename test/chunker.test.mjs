@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { chunkRecursive, stableId } from "../src/chunker.mjs";
 import { chunkFile } from "../src/chunker.mjs";
+import { contextualizeChunk } from "../src/contextualize.mjs";
 
 const cfg = { maxChars: 120, minChars: 20, overlapChars: 30 };
 
@@ -182,4 +183,96 @@ test("normal (under-maxChars) function still yields exactly one chunk (no regres
   ].join("\n");
   const chunks = await chunkFile("data/small.py", ".py", py, cfg);
   assert.equal(chunks.length, 1);
+});
+
+// --- Structural code prefixes (AST breadcrumb) ---
+
+test("method inside a class gets a relPath › Class › method breadcrumb prefix", async () => {
+  const cfg = { maxChars: 2000, minChars: 20, overlapChars: 0 };
+  const py = [
+    "class Repository:",
+    "    def find(self, identifier):",
+    "        # look up a stored item by its identifier and return it to the caller",
+    "        return self.store.get(identifier)",
+  ].join("\n");
+  const chunks = await chunkFile("data/repo.py", ".py", py, cfg);
+  const c = chunks.find((c) => c.text.includes("def find"));
+  assert.ok(c, "find method chunk missing");
+  assert.ok(c.prefix && c.prefix.startsWith("data/repo.py"), `prefix should start with relPath: ${c.prefix}`);
+  assert.ok(c.prefix.includes("Repository"), `prefix should name the class: ${c.prefix}`);
+  assert.ok(c.prefix.includes("find"), `prefix should name the method: ${c.prefix}`);
+});
+
+test("nested scope yields a breadcrumb with both container names in order", async () => {
+  const cfg = { maxChars: 2000, minChars: 20, overlapChars: 0 };
+  const py = [
+    "class Outer:",
+    "    class Inner:",
+    "        def deep_method(self, value):",
+    "            # a method nested two scopes deep to verify the full breadcrumb chain",
+    "            return value * 2",
+  ].join("\n");
+  const chunks = await chunkFile("m/nested.py", ".py", py, cfg);
+  const c = chunks.find((c) => c.text.includes("deep_method"));
+  assert.ok(c && c.prefix, "nested method chunk/prefix missing");
+  const iOuter = c.prefix.indexOf("Outer");
+  const iInner = c.prefix.indexOf("Inner");
+  assert.ok(iOuter >= 0 && iInner >= 0 && iOuter < iInner, `breadcrumb order wrong: ${c.prefix}`);
+  assert.ok(c.prefix.includes("deep_method"));
+});
+
+test("top-level function gets relPath › funcName (no spurious scope)", async () => {
+  const cfg = { maxChars: 2000, minChars: 20, overlapChars: 0 };
+  const py = [
+    "def standalone(x):",
+    "    # a module-level function with no enclosing class or module wrapper at all",
+    "    return x + 1",
+  ].join("\n");
+  const chunks = await chunkFile("m/top.py", ".py", py, cfg);
+  const c = chunks.find((c) => c.text.includes("standalone"));
+  assert.ok(c && c.prefix, "top-level chunk/prefix missing");
+  assert.ok(c.prefix.includes("standalone"), `prefix should name the function: ${c.prefix}`);
+  assert.ok(!c.prefix.includes("class"), "no spurious scope token");
+});
+
+test("oversize-leaf sub-chunks carry the function-name breadcrumb prefix", async () => {
+  const cfg = { maxChars: 150, minChars: 20, overlapChars: 0 };
+  const py = [
+    "def process_records(records):",
+    "    total = 0",
+    "    # accumulate every record value into a running total for the summary report",
+    "    for r in records:",
+    "        total += r.value  # add this record's value to the running accumulator",
+    "    # distinctive deep marker sits far inside this oversize leaf function body",
+    "    average = total / max(len(records), 1)",
+    "    return {\"total\": total, \"average\": average, \"count\": len(records)}",
+  ].join("\n");
+  const chunks = await chunkFile("data/report.py", ".py", py, cfg);
+  assert.ok(chunks.length >= 2, "expected oversize re-split");
+  for (const c of chunks) assert.ok(c.prefix && c.prefix.includes("process_records"), `sub-chunk prefix missing func name: ${c.prefix}`);
+});
+
+test("grammarless chunk has no structural prefix but contextualize still produces embedText", async () => {
+  const cfg = { maxChars: 2000, minChars: 20, overlapChars: 0 };
+  const body = "fn main() { let x = 1; }\n".repeat(6);
+  const chunks = await chunkFile("s.wgsl", ".wgsl", body, cfg);
+  assert.ok(chunks.length >= 1);
+  assert.equal(chunks[0].prefix, undefined, "grammarless chunk should not get a structural prefix");
+  const cx = await contextualizeChunk(chunks[0], cfg);
+  assert.ok(cx.embedText.includes(chunks[0].text), "synthetic fallback embedText must include the body");
+  assert.ok(cx.embedText.startsWith("s.wgsl"), "synthetic prefix should lead with the path");
+});
+
+test("contextualizeChunk prepends the structural prefix to the body", async () => {
+  const cfg = { maxChars: 2000, minChars: 20, overlapChars: 0 };
+  const py = [
+    "class Service:",
+    "    def run(self, job):",
+    "        # execute the given job and return its computed result to the caller now",
+    "        return job.execute()",
+  ].join("\n");
+  const chunks = await chunkFile("svc.py", ".py", py, cfg);
+  const c = chunks.find((c) => c.text.includes("def run"));
+  const cx = await contextualizeChunk(c, cfg);
+  assert.equal(cx.embedText, `${c.prefix}\n${c.text}`);
 });

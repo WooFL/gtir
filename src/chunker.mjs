@@ -3,6 +3,47 @@ import { getParser } from "./parser.mjs";
 import { langFor, targetTypes } from "./languages.mjs";
 import { chunkMarkdown } from "./markdown.mjs";
 
+const SEP = " › "; // breadcrumb separator (same glyph the markdown chunker uses)
+
+const CONTAINER_TYPES = new Set([
+  "class_declaration", "abstract_class_declaration", "class_definition",
+  "interface_declaration", "enum_declaration", "module_declaration",
+  "internal_module", "namespace_declaration",
+  "impl_item", "trait_item", "mod_item",
+]);
+
+// The declared name of a node: prefer the `name` field, else the first
+// identifier-like named child. null when none (anonymous).
+function nodeName(n) {
+  const f = n.childForFieldName ? n.childForFieldName("name") : null;
+  if (f && f.text) return f.text;
+  for (let i = 0; i < n.namedChildCount; i++) {
+    const c = n.namedChild(i);
+    if (/identifier/.test(c.type)) return c.text;
+  }
+  return null;
+}
+
+// Names of the container ancestors enclosing `node`, outermost first.
+function scopeBreadcrumb(node) {
+  const parts = [];
+  for (let p = node.parent; p; p = p.parent) {
+    if (CONTAINER_TYPES.has(p.type)) {
+      const nm = nodeName(p);
+      if (nm) parts.unshift(nm);
+    }
+  }
+  return parts;
+}
+
+// relPath > Container > ... > ownSymbol. null when nothing extractable, so the
+// caller leaves chunk.prefix unset and contextualize uses syntheticPrefix.
+function codePrefix(relPath, node) {
+  const own = nodeName(node);
+  const tail = [...scopeBreadcrumb(node), ...(own ? [own] : [])];
+  return tail.length ? `${relPath}${SEP}${tail.join(SEP)}` : null;
+}
+
 export function stableId(c) {
   const body = createHash("sha1").update(c.text, "utf8").digest("hex").slice(0, 8);
   return `${c.path}::${c.chunkStart}-${c.chunkEnd}::${body}`;
@@ -90,10 +131,12 @@ function mergeSiblings(nodes, text, langId, relPath, cfg) {
     if (!group) return;
     const body = text.slice(group.startIndex, group.endIndex).trim();
     if (body.length >= cfg.minChars) {
+      const prefix = codePrefix(relPath, group.node);
       out.push({
         path: relPath, language: langId,
         chunkStart: group.startIndex, chunkEnd: group.endIndex,
         lineStart: group.startRow + 1, lineEnd: group.endRow + 1, text: body,
+        ...(prefix ? { prefix } : {}),
       });
     }
     group = null;
@@ -121,23 +164,25 @@ function mergeSiblings(nodes, text, langId, relPath, cfg) {
           const absLineStart = s.chunkStart + n.startIndex;
           const leadTrim = text.slice(absLineStart).search(/\S/);
           const trimmedStart = absLineStart + (leadTrim >= 0 ? leadTrim : 0);
+          const leafPrefix = codePrefix(relPath, n);
           out.push({
             ...s,
             chunkStart: trimmedStart,
             chunkEnd: trimmedStart + s.text.length,
             lineStart: s.lineStart + n.startPosition.row,
             lineEnd: s.lineEnd + n.startPosition.row,
+            ...(leafPrefix ? { prefix: leafPrefix } : {}),
           });
         }
       }
       continue;
     }
     if (group && (n.endIndex - group.startIndex) <= cfg.maxChars) {
-      group.endIndex = n.endIndex; group.endRow = n.endPosition.row;
+      group.endIndex = n.endIndex; group.endRow = n.endPosition.row; group.node = n;
     } else {
       flush();
       group = { startIndex: n.startIndex, endIndex: n.endIndex,
-        startRow: n.startPosition.row, endRow: n.endPosition.row };
+        startRow: n.startPosition.row, endRow: n.endPosition.row, node: n };
     }
   }
   flush();
