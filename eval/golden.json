@@ -37,5 +37,11 @@
   { "query": "how are session tokens stored in the database schema", "path": "notes/data-model.md", "lines": [10, 13] },
   { "query": "find the shortest unweighted path in a graph using breadth-first search", "path": "graph/bfs.py", "lines": [20, 37] },
   { "query": "set up local development environment and run the test suite", "path": "notes/onboarding.md", "lines": [10, 17] },
-  { "query": "how is the monthly variance computed — moving average or year-to-date mean", "path": "data/aggregate_report.py", "lines": [27, 29] }
+  { "query": "how is the monthly variance computed — moving average or year-to-date mean", "path": "data/aggregate_report.py", "lines": [27, 29] },
+  { "query": "how does the retry policy decide whether to evaluate another attempt", "path": "policy/evaluators.py", "lines": [7, 9] },
+  { "query": "what does the cache policy evaluate to decide if a cached entry is valid", "path": "policy/evaluators.py", "lines": [19, 21] },
+  { "query": "how is the rate limit policy evaluated for an incoming request", "path": "policy/evaluators.py", "lines": [31, 33] },
+  { "query": "when does the circuit breaker policy evaluate the request as allowed", "path": "policy/evaluators.py", "lines": [43, 45] },
+  { "query": "what limit check does the retry policy perform internally", "path": "policy/evaluators.py", "lines": [11, 12] },
+  { "query": "how does the circuit breaker policy run its internal limit check", "path": "policy/evaluators.py", "lines": [47, 48] }
 ]
