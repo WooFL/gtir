@@ -80,7 +80,35 @@ export async function handleRequest(msg, ctx) {
   }
 }
 
-// TEMPORARY stub — replaced with the real implementation in the next task.
-async function dispatchToolCall() {
-  return { content: [{ type: "text", text: "(not implemented)" }], isError: true };
+function formatHits(results) {
+  if (!results.length) return "(no matches)";
+  return results.map((r) => {
+    const branch = [r.vec_rank ? `v${r.vec_rank}` : null, r.fts_rank ? `f${r.fts_rank}` : null].filter(Boolean).join("+") || "—";
+    return `### ${r.path}:${r.lines}  _(rrf=${r.score} · ${branch})_\n\`\`\`\n${r.snippet}\n\`\`\``;
+  }).join("\n\n");
+}
+
+async function dispatchToolCall(params, ctx) {
+  const { indexes, searchFn, statusFn } = ctx;
+  const name = params.name;
+  const args = params.arguments ?? {};
+  try {
+    if (name === "gtir_status") {
+      const status = await statusFn();
+      return { content: [{ type: "text", text: JSON.stringify(status, null, 2) }], structuredContent: { indexes: status } };
+    }
+    if (typeof name === "string" && name.startsWith("search_")) {
+      const label = name.slice("search_".length);
+      if (!indexes.some((ix) => ix.label === label)) {
+        return { content: [{ type: "text", text: `unknown index: ${label}` }], isError: true };
+      }
+      const results = await searchFn(label, {
+        query: args.query, k: args.k, pathPrefix: args.path_prefix, language: args.language,
+      });
+      return { content: [{ type: "text", text: formatHits(results) }], structuredContent: { results } };
+    }
+    return { content: [{ type: "text", text: `unknown tool: ${name}` }], isError: true };
+  } catch (e) {
+    return { content: [{ type: "text", text: `error: ${e.message}` }], isError: true };
+  }
 }

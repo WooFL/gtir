@@ -85,3 +85,38 @@ test("handleRequest: unknown method => JSON-RPC -32601", async () => {
   const r = await handleRequest({ jsonrpc: "2.0", id: 3, method: "bogus/x" }, baseCtx);
   assert.equal(r.error.code, -32601);
 });
+
+const hit = { path: "a.ts", lines: "1-2", language: "ts", score: 0.5, vec_rank: 1, fts_rank: 2, snippet: "code body" };
+
+test("tools/call search_<label> calls searchFn and wraps results", async () => {
+  let got = null;
+  const ctx = { ...baseCtx, searchFn: async (label, args) => { got = { label, args }; return [hit]; } };
+  const r = await handleRequest({ jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "search_code", arguments: { query: "find foo", k: 3, path_prefix: "src/" } } }, ctx);
+  assert.equal(got.label, "code");
+  assert.equal(got.args.query, "find foo");
+  assert.equal(got.args.k, 3);
+  assert.equal(got.args.pathPrefix, "src/"); // path_prefix mapped to pathPrefix
+  assert.deepEqual(r.result.structuredContent.results, [hit]);
+  assert.match(r.result.content[0].text, /a\.ts:1-2/);
+  assert.match(r.result.content[0].text, /v1\+f2/); // branch annotation
+});
+
+test("tools/call gtir_status calls statusFn", async () => {
+  const status = [{ label: "code", files: 3, dim: "896" }];
+  const ctx = { ...baseCtx, statusFn: async () => status };
+  const r = await handleRequest({ jsonrpc: "2.0", id: 5, method: "tools/call", params: { name: "gtir_status", arguments: {} } }, ctx);
+  assert.deepEqual(r.result.structuredContent.indexes, status);
+});
+
+test("tools/call unknown index => isError", async () => {
+  const r = await handleRequest({ jsonrpc: "2.0", id: 6, method: "tools/call", params: { name: "search_missing", arguments: { query: "x" } } }, baseCtx);
+  assert.equal(r.result.isError, true);
+  assert.match(r.result.content[0].text, /unknown index: missing/);
+});
+
+test("tools/call: a thrown searchFn error becomes a graceful isError result", async () => {
+  const ctx = { ...baseCtx, searchFn: async () => { throw new Error("ollama down"); } };
+  const r = await handleRequest({ jsonrpc: "2.0", id: 7, method: "tools/call", params: { name: "search_code", arguments: { query: "x" } } }, ctx);
+  assert.equal(r.result.isError, true);
+  assert.match(r.result.content[0].text, /ollama down/);
+});
