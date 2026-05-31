@@ -10,7 +10,7 @@ import { installHook, removeHook } from "../src/hook.mjs";
 import { probeDim } from "../src/embed.mjs";
 import { runInit } from "../src/init.mjs";
 import { resolveIndexes, serveStdio, printConfig } from "../src/mcp.mjs";
-import { evalGolden, flattenMetrics, compareBaseline } from "../src/eval.mjs";
+import { evalGolden, flattenMetrics, allRegressions } from "../src/eval.mjs";
 
 // --- programmatic entrypoints (used by tests and the dispatcher) ---
 
@@ -136,7 +136,7 @@ async function runEval(args) {
   if (baseline.model && baseline.model !== metrics.model) {
     process.stderr.write(`eval: WARNING baseline model (${baseline.model}) != current (${metrics.model}) — cross-model comparison\n`);
   }
-  const regressions = compareBaseline(metrics, baseline, 0.005);
+  const regressions = allRegressions(metrics, baseline, 0.005);
   if (regressions.length) {
     for (const r of regressions) {
       process.stderr.write(`eval: REGRESSION ${r.metric}: ${r.base} → ${r.cur} (${r.delta})\n`);
@@ -149,9 +149,9 @@ async function runEval(args) {
 
 function printMetricsTable(m, base) {
   const fb = base ? flattenMetrics(base) : {};
-  const line = (label, val) => {
+  const line = (label, val, baseFlat = fb) => {
     if (val === null || val === undefined) return `  ${label.padEnd(11)} n/a`;
-    const b = fb[label];
+    const b = baseFlat[label];
     if (b === undefined) return `  ${label.padEnd(11)} ${val.toFixed(4)}`;
     const d = val - b;
     const ds = Math.abs(d) <= 0.005 ? "~0" : (d > 0 ? "+" : "") + d.toFixed(4);
@@ -161,6 +161,15 @@ function printMetricsTable(m, base) {
   for (const k of Object.keys(m.recall)) out.push(line(`recall@${k}`, m.recall[k]));
   out.push(line("mrr", m.mrr));
   for (const k of Object.keys(m.sec_hit)) out.push(line(`sec_hit@${k}`, m.sec_hit[k]));
+  for (const tier of Object.keys(m.byTier || {})) {
+    const tm = m.byTier[tier];
+    const tb = base && base.byTier && base.byTier[tier] ? flattenMetrics(base.byTier[tier]) : {};
+    out.push(`  [${tier}] n=${tm.n} n_sec=${tm.n_sec}`);
+    out.push(line("recall@1", tm.recall[1], tb));
+    out.push(line("recall@5", tm.recall[5], tb));
+    out.push(line("mrr", tm.mrr, tb));
+    if (tm.sec_hit[1] !== null && tm.sec_hit[1] !== undefined) out.push(line("sec_hit@1", tm.sec_hit[1], tb));
+  }
   process.stderr.write(out.join("\n") + "\n");
 }
 
