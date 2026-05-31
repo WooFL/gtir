@@ -78,7 +78,7 @@ export async function buildIndex(cfg, { rebuild = false } = {}) {
     id: stableId(c), path: c.path, language: c.language,
     chunk_start: c.chunkStart, chunk_end: c.chunkEnd,
     line_start: c.lineStart, line_end: c.lineEnd,
-    text: c.text, fts_text: ctx[i].ftsText, context_text: ctx[i].embedText,
+    text: c.text, fts_text: ctx[i].ftsText,
     mtime_ms: c.mtimeMs, embedding: vecs[i],
     ...(writeHash ? { content_hash: hashes[i] } : {}),
   }));
