@@ -15,7 +15,10 @@ export function deriveLabel(repo, cfg, override) {
   return sanitizeLabel(basename(repo));
 }
 
-// overrides: { [repoArg]: label }. repos: raw --repo args (loadConfig resolves them).
+// overrides: { [repoArg]: label } — keyed by the SAME raw string passed in `repos`
+// (the CLI must pass identical strings for --repo and the --label <name>:<repo> target,
+// else the override silently misses and the label falls back to model-derived).
+// repos: raw --repo args (loadConfig resolves them internally).
 export function resolveIndexes(repos, overrides = {}) {
   const indexes = [];
   const seen = new Map(); // label -> repo
@@ -51,7 +54,7 @@ export function buildTools(indexes) {
   }));
   tools.push({
     name: "gtir_status",
-    description: "List the indexes this gtir MCP server serves, with model, dim, file count, and last-built time.",
+    description: "List the indexes this gtir MCP server serves, with model, dim, file/chunk count, and last-built time.",
     inputSchema: { type: "object", properties: {} },
   });
   return tools;

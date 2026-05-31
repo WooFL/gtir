@@ -120,3 +120,15 @@ test("tools/call: a thrown searchFn error becomes a graceful isError result", as
   assert.equal(r.result.isError, true);
   assert.match(r.result.content[0].text, /ollama down/);
 });
+
+test("tools/call gtir_status: a thrown statusFn error becomes a graceful isError result", async () => {
+  const ctx = { ...baseCtx, statusFn: async () => { throw new Error("store unreadable"); } };
+  const r = await handleRequest({ jsonrpc: "2.0", id: 8, method: "tools/call", params: { name: "gtir_status", arguments: {} } }, ctx);
+  assert.equal(r.result.isError, true);
+  assert.match(r.result.content[0].text, /store unreadable/);
+});
+
+test("handleRequest preserves a numeric id of 0 (JSON-RPC allows it)", async () => {
+  const r = await handleRequest({ jsonrpc: "2.0", id: 0, method: "tools/list" }, baseCtx);
+  assert.equal(r.id, 0);
+});
