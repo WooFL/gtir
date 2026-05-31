@@ -26,9 +26,10 @@ export async function runIndex({ repo, rebuild = false, noCache = false, embedIm
   return buildIndex(cfg, { rebuild });
 }
 
-export async function runSearch({ repo, query, k = 8, pathPrefix = null, language = null, embedImpl = null } = {}) {
+export async function runSearch({ repo, query, k = 8, pathPrefix = null, language = null, embedImpl = null, rerank = false } = {}) {
   const cfg = loadConfig(repo);
   if (embedImpl) cfg.embedImpl = embedImpl;
+  if (rerank) cfg.rerank = true;
   return search(query, cfg, { k, pathPrefix, language });
 }
 
@@ -78,6 +79,7 @@ function parseArgs(argv) {
     else if (a === "--save") args.save = true;
     else if (a === "--no-build") args.noBuild = true;
     else if (a === "--json") args.json = true;
+    else if (a === "--rerank") args.rerank = true;
     else if (a === "--golden") args.golden = argv[++i];
     else if (a === "--baseline") args.baseline = argv[++i];
     else args._.push(a);
@@ -88,6 +90,7 @@ function parseArgs(argv) {
 async function runEval(args) {
   const repo = args.repo || process.cwd();
   const cfg = loadConfig(repo);
+  if (args.rerank) cfg.rerank = true;
   const goldenPath = args.golden || path.join(repo, "eval", "golden.json");
   if (!existsSync(goldenPath)) {
     process.stderr.write(`eval: no golden file at ${goldenPath} — pass --golden <file>\n`);
@@ -204,7 +207,7 @@ async function main() {
       }
       case "search": {
         const query = args._.join(" ");
-        const hits = await runSearch({ repo, query, k: args.k || 8, pathPrefix: args.pathPrefix, language: args.language });
+        const hits = await runSearch({ repo, query, k: args.k || 8, pathPrefix: args.pathPrefix, language: args.language, rerank: args.rerank });
         process.stdout.write(JSON.stringify(hits, null, 2) + "\n");
         break;
       }
