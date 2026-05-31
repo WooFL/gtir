@@ -34,3 +34,25 @@ export function scoreGolden(results, entry) {
   }
   return { pageRank, secRank, hasLines };
 }
+
+// Aggregate per-query records into metrics. ks selects the reported cutoffs.
+export function aggregate(records, ks = { recall: [1, 5, 10], sec: [1, 5] }) {
+  const n = records.length;
+  const recall = {};
+  for (const k of ks.recall) {
+    const hits = records.filter((r) => r.pageRank !== null && r.pageRank <= k).length;
+    recall[k] = n ? round(hits / n) : 0;
+  }
+  const mrr = n
+    ? round(records.reduce((s, r) => s + (r.pageRank ? 1 / r.pageRank : 0), 0) / n)
+    : 0;
+  const secRecords = records.filter((r) => r.hasLines);
+  const nSec = secRecords.length;
+  const sec_hit = {};
+  for (const k of ks.sec) {
+    sec_hit[k] = nSec
+      ? round(secRecords.filter((r) => r.secRank !== null && r.secRank <= k).length / nSec)
+      : null;
+  }
+  return { n, n_sec: nSec, recall, mrr, sec_hit };
+}

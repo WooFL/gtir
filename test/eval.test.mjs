@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parseLines, overlaps } from "../src/eval.mjs";
 import { scoreGolden } from "../src/eval.mjs";
+import { aggregate } from "../src/eval.mjs";
 
 test("parseLines: 'start-end' string", () => {
   assert.deepEqual(parseLines("12-40"), [12, 40]);
@@ -56,4 +57,37 @@ test("scoreGolden: path as array (any-match)", () => {
   const results = [R("x.ts", "1-9"), R("b.ts", "1-9")];
   const s = scoreGolden(results, { query: "q", path: ["a.ts", "b.ts"] });
   assert.equal(s.pageRank, 2);
+});
+
+test("aggregate: recall, mrr, sec_hit", () => {
+  const records = [
+    { pageRank: 1, secRank: 1, hasLines: true },
+    { pageRank: 3, secRank: null, hasLines: true },
+    { pageRank: null, secRank: null, hasLines: false },
+    { pageRank: 2, secRank: 4, hasLines: true },
+  ];
+  const m = aggregate(records);
+  assert.equal(m.n, 4);
+  assert.equal(m.n_sec, 3);
+  assert.equal(m.recall[1], 0.25);
+  assert.equal(m.recall[5], 0.75);
+  assert.equal(m.recall[10], 0.75);
+  assert.equal(m.mrr, 0.4583);
+  assert.equal(m.sec_hit[1], 0.3333);
+  assert.equal(m.sec_hit[5], 0.6667);
+});
+
+test("aggregate: no sec entries → sec_hit null (n/a)", () => {
+  const records = [{ pageRank: 1, secRank: null, hasLines: false }];
+  const m = aggregate(records);
+  assert.equal(m.n_sec, 0);
+  assert.equal(m.sec_hit[1], null);
+  assert.equal(m.sec_hit[5], null);
+});
+
+test("aggregate: empty records", () => {
+  const m = aggregate([]);
+  assert.equal(m.n, 0);
+  assert.equal(m.recall[1], 0);
+  assert.equal(m.mrr, 0);
 });
