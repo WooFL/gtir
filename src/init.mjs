@@ -18,7 +18,7 @@ export const NOTES_PRESET = {
 
 // Immediate subdirectories that look like Obsidian vaults (contain .obsidian/).
 // When indexing CODE, these get excluded so a nested vault isn't double-indexed
-// with the code model (mirrors the manual "wiki" skipDir we set for MediaTraktor).
+// with the code model (e.g. a "wiki/" folder living inside a code repo).
 function detectNestedVaults(repo) {
   try {
     return readdirSync(repo, { withFileTypes: true })

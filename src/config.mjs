@@ -28,9 +28,8 @@ export const DEFAULTS = {
   version: 1,
   skipDirs: [
     "node_modules", ".git", "dist", "build", ".next", ".turbo", ".cache",
-    "target", "coverage", ".obsidian", ".vault-meta", ".trash",
-    ".worktrees", ".raw", ".archive", ".command-center", ".venv", ".gtir",
-    "test-results", "playwright-report", "src-tauri",
+    "target", "coverage", ".obsidian", ".trash", ".worktrees", ".venv",
+    ".gtir", "test-results", "playwright-report", "src-tauri",
   ],
   skipSuffixes: [".excalidraw.md", ".lock", ".min.js", ".min.css", ".map"],
 };

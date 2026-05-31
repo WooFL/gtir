@@ -116,8 +116,3 @@ export function compareTiers(cur, base, tol = 0.005) {
   }
   return out;
 }
-
-// All regressions the CLI gates on: overall metrics plus every shared tier.
-export function allRegressions(cur, base, tol = 0.005) {
-  return [...compareBaseline(cur, base, tol), ...compareTiers(cur, base, tol)];
-}

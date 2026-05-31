@@ -160,7 +160,7 @@ test("compareBaseline: a real drop in a shared metric is still flagged", () => {
   assert.deepEqual(regs.map((r) => r.metric), ["recall@1"]);
 });
 
-import { compareTiers, allRegressions } from "../src/eval.mjs";
+import { compareTiers } from "../src/eval.mjs";
 
 test("evalGolden: splits records into byTier (gate/hard), overall unchanged", async () => {
   const golden = [
@@ -201,11 +201,4 @@ test("compareTiers: a tier missing from baseline is skipped (no false regression
   const cur =  { byTier: { hard: M({ 1: 0.4, 5: 0.8, 10: 0.9 }, 0.5, { 1: 0.3, 5: 0.5 }) } };
   const base = { byTier: {} };
   assert.equal(compareTiers(cur, base, 0.005).length, 0);
-});
-
-test("allRegressions: combines overall + per-tier regressions", () => {
-  const cur =  { recall: { 1: 0.40 }, mrr: 0.5, sec_hit: {}, byTier: { hard: M({ 1: 0.40, 5: 0.8, 10: 0.9 }, 0.5, { 1: 0.3, 5: 0.5 }) } };
-  const base = { recall: { 1: 0.55 }, mrr: 0.5, sec_hit: {}, byTier: { hard: M({ 1: 0.55, 5: 0.8, 10: 0.9 }, 0.5, { 1: 0.3, 5: 0.5 }) } };
-  const keys = allRegressions(cur, base, 0.005).map((r) => r.metric).sort();
-  assert.deepEqual(keys, ["hard:recall@1", "recall@1"]);
 });

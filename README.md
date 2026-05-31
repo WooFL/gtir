@@ -2,7 +2,7 @@
 
 **gtir** (Armenian *գտնել*, "to find") — a portable, install-once CLI for semantic **code and notes** retrieval over any repository or note vault. It chunks code with tree-sitter (AST-aware, with a cAST sibling-merge refinement), embeds chunks via a local **Ollama** model (`jina-code-embeddings-0.5b`), stores vectors + a BM25 index in **LanceDB**, and answers queries with hybrid (vector + BM25 + RRF) search.
 
-**Scope:** code *and* notes. gtir indexes a codebase (`jina-code-embeddings`) or an Obsidian-style note vault (`nomic-embed-text`) — `gtir init` auto-detects which, and the MCP server exposes `search_code` / `search_notes` accordingly. (claude-obsidian's `wiki-retrieve` is an alternative for notes, but its scripts are Unix-only; gtir runs natively on Windows.)
+**Scope:** code *and* notes. gtir indexes a codebase (`jina-code-embeddings`) or an Obsidian-style note vault (`nomic-embed-text`) — `gtir init` auto-detects which, and the MCP server exposes `search_code` / `search_notes` accordingly. It runs natively on Windows, macOS, and Linux (no Unix-only shell scripts).
 
 ## How it works
 
@@ -145,8 +145,8 @@ needs a separate `llama-server` runtime, so it's opt-in.
 
 **Setup (once):**
 
-1. Download a reranker GGUF (~600 MB), e.g. `bge-reranker-v2-m3-Q8_0.gguf`, into
-   `G:\demon\llamacpp\models\`.
+1. Download a reranker GGUF (~600 MB), e.g. `bge-reranker-v2-m3-Q8_0.gguf`, into a local
+   models directory.
 2. Run llama.cpp's server with the reranking endpoint:
 
        llama-server.exe -m models\bge-reranker-v2-m3-Q8_0.gguf --reranking --pooling rank --host 127.0.0.1 --port 8088
@@ -212,14 +212,9 @@ Default model tag (in `src/config.mjs`): `hf.co/jinaai/jina-code-embeddings-0.5b
 - **Max recall:** use the 1.5B sibling — `hf.co/jinaai/jina-code-embeddings-1.5b-GGUF:<quant>`.
 - Changing the model changes the embedding dimension, so a full `gtir index --rebuild` is required (the old vectors are incompatible).
 
-## Migration from the MediaTraktor pipelines
-
-- **Notes:** point gtir at the wiki with a `nomic-embed-text` config (`gtir init` does this automatically). **Retire `G:\mediaTraktor\tools\vault-index`** — gtir supersedes it (vault-index was cosine-only on a custom binary store; gtir adds BM25 + RRF, runs on Windows, and shares one tool with code search).
-- **Code:** replace `tools\code-index` + `tools\code-mcp` with `gtir`. The embedding model changed (old `jina-v2-base-code` was 768-dim; this is ~896-dim), so run `gtir index --rebuild` once. tree-sitter chunking, LanceDB, and hybrid RRF search are carried over; the Python/torch/uv embed stack is gone.
-
 ## Known limitations
 
-- **FTS index rebuilds fully on every upsert.** Correct, but O(corpus) per write — fine for solo-dev repos, noticeable on very large monorepos during incremental refresh. (Faithful to the original Python pipeline.)
+- **FTS index rebuilds fully on every upsert.** Correct, but O(corpus) per write — fine for solo-dev repos, noticeable on very large monorepos during incremental refresh.
 - **Oversize *leaf* nodes are re-split, not dropped.** A function/struct larger than `maxChars`
   (2000) with no nested target nodes is split into line-aware windows (same fallback as
   grammarless files), so its content stays searchable. Oversize *containers* (class/impl/mod)
