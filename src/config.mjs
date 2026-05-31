@@ -2,10 +2,13 @@ import { readFileSync, existsSync } from "node:fs";
 import { resolve, join } from "node:path";
 
 // Defaults ported from flow.py (MAX_CHARS/MIN_CHARS/OVERLAP_CHARS, SKIP_DIRS,
-// MAX_FILE_BYTES) and the spec's model decision. The Ollama model TAG is
-// resolved/pulled by `gtir setup`; this is the logical name stored in meta.
+// MAX_FILE_BYTES) and the spec's model decision. `model` is the Ollama tag
+// served via /api/embed; pull it with `ollama pull <model>` (or `gtir setup`).
+// jina-code-embeddings-0.5b has no official Ollama-library tag, so we use the
+// HuggingFace GGUF that Ollama 0.24+ can pull directly. Switch to the 1.5b GGUF
+// or a smaller quant (e.g. :Q8_0) via a per-repo .gtir/config.json override.
 export const DEFAULTS = {
-  model: "jina-code-embeddings-0.5b",
+  model: "hf.co/jinaai/jina-code-embeddings-0.5b-GGUF:F16",
   ollamaUrl: process.env.OLLAMA_URL || "http://localhost:11434",
   maxChars: 2000,
   minChars: 100,
