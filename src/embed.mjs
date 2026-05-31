@@ -10,7 +10,7 @@ async function embedBatch(texts, cfg) {
   const res = await fetchImpl(`${cfg.ollamaUrl}/api/embed`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ model: cfg.model, input: texts }),
+    body: JSON.stringify({ model: cfg.model, input: texts.map((t) => t.slice(0, cfg.maxEmbedChars ?? 6000)) }),
   });
   if (!res.ok) {
     const detail = (await res.text?.().catch(() => "")) || res.status;

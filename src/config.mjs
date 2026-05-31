@@ -15,6 +15,7 @@ export const DEFAULTS = {
   overlapChars: 400,
   maxFileBytes: 256 * 1024,
   embedBatch: 32,
+  maxEmbedChars: 6000,           // hard cap on per-input embed length (avoids model context overflow)
   contextPrefix: true,            // synthetic prefix on by default
   contextTier: "synthetic",       // "synthetic" | "claude-cli"
   version: 1,

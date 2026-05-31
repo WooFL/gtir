@@ -24,3 +24,15 @@ test("embedTexts batches and normalizes via injected fetch", async () => {
   assert.equal(vecs.length, 3);
   for (const v of vecs) assert.ok(Math.abs(Math.hypot(...v) - 1) < 1e-9);
 });
+
+test("embedTexts truncates inputs to maxEmbedChars before sending", async () => {
+  let seen = null;
+  const captureFetch = async (_url, opts) => {
+    seen = JSON.parse(opts.body).input;
+    return { ok: true, json: async () => ({ embeddings: seen.map(() => [1, 0, 0]) }) };
+  };
+  const cfg = { model: "m", ollamaUrl: "http://x", embedBatch: 32, maxEmbedChars: 50, fetchImpl: captureFetch };
+  const long = "x".repeat(5000);
+  await embedTexts([long], cfg);
+  assert.equal(seen[0].length, 50, "input must be truncated to maxEmbedChars");
+});
