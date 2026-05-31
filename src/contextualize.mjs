@@ -9,23 +9,25 @@ function firstSignificantLine(text) {
   return "";
 }
 
-export function syntheticPrefix(chunk) {
+export function syntheticPrefix(chunk, cfg) {
   // Prepend the AST scope breadcrumb (enclosing class/module names, set by the
   // chunker) to the informative first line. Additive: never drops the first line.
-  const scope = chunk.scope?.length ? ` › ${chunk.scope.join(" › ")}` : "";
+  // Gated by cfg.contextScope (default on); set it false to disable per-repo.
+  const useScope = cfg?.contextScope !== false;
+  const scope = useScope && chunk.scope?.length ? ` › ${chunk.scope.join(" › ")}` : "";
   return `${chunk.path}${scope} — ${firstSignificantLine(chunk.text)}`;
 }
 
 // Opt-in claude-cli tier; never throws (falls back to synthetic).
-function claudeCliPrefix(chunk) {
+function claudeCliPrefix(chunk, cfg) {
   try {
     const prompt = `In one short sentence, describe what this code does. ` +
       `Reply with only the sentence.\n\nFile: ${chunk.path}\n\n${chunk.text.slice(0, 1500)}`;
     const out = execFileSync("claude", ["-p", prompt], { encoding: "utf8", timeout: 20000 });
     const line = out.trim().split("\n")[0].slice(0, 200);
-    return line || syntheticPrefix(chunk);
+    return line || syntheticPrefix(chunk, cfg);
   } catch {
-    return syntheticPrefix(chunk);
+    return syntheticPrefix(chunk, cfg);
   }
 }
 
@@ -33,6 +35,6 @@ export async function contextualizeChunk(chunk, cfg) {
   // A chunk may carry a precomputed context prefix (e.g. the markdown chunker's
   // heading breadcrumb + tags). Honor it; otherwise fall back to the synthetic /
   // claude-cli prefix used for code chunks.
-  const prefix = chunk.prefix ?? (cfg.contextTier === "claude-cli" ? claudeCliPrefix(chunk) : syntheticPrefix(chunk));
+  const prefix = chunk.prefix ?? (cfg.contextTier === "claude-cli" ? claudeCliPrefix(chunk, cfg) : syntheticPrefix(chunk, cfg));
   return { ...chunk, embedText: `${prefix}\n${chunk.text}` };
 }

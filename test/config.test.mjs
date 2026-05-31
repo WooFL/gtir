@@ -29,3 +29,12 @@ test("noCache defaults to false", () => {
   const repo = mkdtempSync(join(tmpdir(), "gtir-cfg-"));
   assert.equal(loadConfig(repo).noCache, false);
 });
+
+test("contextScope defaults to true; overridable to false", () => {
+  const on = mkdtempSync(join(tmpdir(), "gtir-cfg-"));
+  assert.equal(loadConfig(on).contextScope, true);
+  const off = mkdtempSync(join(tmpdir(), "gtir-cfg-"));
+  mkdirSync(join(off, ".gtir"), { recursive: true });
+  writeFileSync(join(off, ".gtir", "config.json"), JSON.stringify({ contextScope: false }));
+  assert.equal(loadConfig(off).contextScope, false);
+});

@@ -278,3 +278,18 @@ test("contextualizeChunk builds 'path › scope — firstline' then the body", a
   assert.ok(cx.embedText.startsWith("svc.py › Service — "), `embedText: ${cx.embedText.slice(0, 60)}`);
   assert.ok(cx.embedText.endsWith(c.text), "body follows the prefix");
 });
+
+test("contextScope: false suppresses the code scope breadcrumb (plain synthetic)", async () => {
+  const py = [
+    "class Service:",
+    "    def run(self, job):",
+    "        # execute the given job and return its computed result to the caller now",
+    "        return job.execute()",
+  ].join("\n");
+  const chunks = await chunkFile("svc.py", ".py", py, { maxChars: 2000, minChars: 20, overlapChars: 0 });
+  const c = chunks.find((c) => c.text.includes("def run"));
+  assert.ok(c.scope && c.scope.includes("Service"), "chunker still attaches scope (cheap, always)");
+  const cx = await contextualizeChunk(c, { contextScope: false });
+  assert.ok(!cx.embedText.includes("› Service"), `scope must be suppressed: ${cx.embedText.slice(0, 60)}`);
+  assert.ok(cx.embedText.startsWith("svc.py — "), `should be plain synthetic: ${cx.embedText.slice(0, 60)}`);
+});

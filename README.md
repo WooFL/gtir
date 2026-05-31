@@ -25,6 +25,8 @@ informative first line rather than replacing it. It restores the context a metho
 sliced out of a large class: on a scope-ambiguous fixture (two big classes with identically-named
 methods), it lifted Recall@1 and Sec-hit@1 by ~6 points each via `gtir eval`, with no regression on
 the rest of the corpus. (No LLM, no second model — it reuses structure tree-sitter already parsed.)
+The gain is corpus-dependent — it helps codebases with large classes and method-name ambiguity,
+and is neutral elsewhere. Disable it per-repo with `{ "contextScope": false }` in `.gtir/config.json`.
 
 ## Install
 
