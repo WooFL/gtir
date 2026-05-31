@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { fileURLToPath } from "node:url";
+import { realpathSync } from "node:fs";
 import { loadConfig } from "../src/config.mjs";
 import { buildIndex } from "../src/indexer.mjs";
 import { search } from "../src/search.mjs";
@@ -43,7 +44,13 @@ function parseArgs(argv) {
     const a = argv[i];
     if (a === "--rebuild") args.rebuild = true;
     else if (a === "--repo") args.repo = argv[++i];
-    else if (a === "-k" || a === "--k") args.k = Number(argv[++i]);
+    else if (a === "-k" || a === "--k") {
+      const next = argv[i + 1];
+      if (next !== undefined && !next.startsWith("-") && Number.isFinite(Number(next))) {
+        args.k = Number(next); i++;
+      }
+      // missing/non-numeric value: leave args.k unset; search falls back to default
+    }
     else if (a === "--path-prefix") args.pathPrefix = argv[++i];
     else if (a === "--language") args.language = argv[++i];
     else if (a === "--remove") args.remove = true;
@@ -100,8 +107,15 @@ async function main() {
   }
 }
 
-// Windows-robust main-guard: run main() only when executed directly, not when
-// imported by tests. fileURLToPath normalizes the file:// URL to a native path.
-const invokedDirectly = process.argv[1] &&
-  fileURLToPath(import.meta.url) === process.argv[1];
-if (invokedDirectly) main();
+// Run main() only when executed directly (not when imported by tests).
+// Resolve symlinks on BOTH sides so a globally-linked `gtir` bin (npm link /
+// npm i -g, where argv[1] is a symlink) still matches the real module path.
+function invokedDirectly() {
+  if (!process.argv[1]) return false;
+  try {
+    return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1]);
+  } catch {
+    return fileURLToPath(import.meta.url) === process.argv[1];
+  }
+}
+if (invokedDirectly()) main();

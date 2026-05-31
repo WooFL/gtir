@@ -4,7 +4,7 @@ import { cpSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { runIndex, runSearch } from "../bin/gtir.mjs";
+import { runIndex, runSearch, runStatus } from "../bin/gtir.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -30,6 +30,9 @@ test("index then search finds the session manager; gitignored file excluded", as
   const repo = freshRepo();
   const res = await runIndex({ repo, rebuild: true, embedImpl: fakeEmbed });
   assert.ok(res.chunks >= 2);
+
+  const status = await runStatus({ repo });
+  assert.equal(status.files, 2); // auth.py + README.md only; secret.py is gitignored, never indexed
 
   const hits = await runSearch({ repo, query: "create a session token", k: 5, embedImpl: fakeEmbed });
   assert.ok(hits.length >= 1);
