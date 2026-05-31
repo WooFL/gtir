@@ -118,3 +118,68 @@ test("chunkFile routes .md through chunkMarkdown (chunks carry a prefix)", async
   assert.ok(chunks[0].prefix, "markdown chunk should carry a breadcrumb prefix");
   assert.match(chunks[0].prefix, /notes\/p\.md › p › Title/);
 });
+
+// --- Oversize-leaf re-split (recall hole fix) ---
+
+const OVERSIZE_LEAF_PY = [
+  "# header comment line one",
+  "# header comment line two",
+  "def process_records(records):",
+  "    total = 0",
+  "    # accumulate every record value into a running total for the summary report",
+  "    for r in records:",
+  "        total += r.value  # add this record's value to the running accumulator",
+  "    # distinctive deep marker sits far inside this oversize leaf function body",
+  "    average = total / max(len(records), 1)",
+  "    return {\"total\": total, \"average\": average, \"count\": len(records)}",
+].join("\n");
+
+test("oversize leaf function is re-split, not dropped, with file-relative lines", async () => {
+  const cfg = { maxChars: 150, minChars: 20, overlapChars: 0 };
+  const chunks = await chunkFile("data/report.py", ".py", OVERSIZE_LEAF_PY, cfg);
+  assert.ok(chunks.length >= 2, `expected re-split into >=2 windows, got ${chunks.length}`);
+  assert.ok(chunks.some((c) => c.text.includes("distinctive deep marker")), "deep passage missing");
+  assert.equal(chunks[0].lineStart, 3, "lineStart must be file-relative");
+  for (const c of chunks) assert.ok(c.text.length >= cfg.minChars);
+});
+
+const OVERSIZE_CONTAINER_PY = [
+  "class Repository:",
+  "    def find(self, identifier):",
+  "        # look up a stored item by its identifier and return it to the caller",
+  "        return self.store.get(identifier)",
+  "",
+  "    def save(self, item):",
+  "        # persist the given item into the backing store keyed by its identifier",
+  "        self.store[item.identifier] = item",
+].join("\n");
+
+test("oversize container class is NOT re-split (members surface, no duplication)", async () => {
+  const cfg = { maxChars: 150, minChars: 20, overlapChars: 0 };
+  const chunks = await chunkFile("data/repo.py", ".py", OVERSIZE_CONTAINER_PY, cfg);
+  assert.ok(!chunks.some((c) => c.text.includes("class Repository")), "container was wrongly re-split");
+  assert.ok(chunks.some((c) => c.text.includes("def find")), "find method missing");
+  assert.ok(chunks.some((c) => c.text.includes("def save")), "save method missing");
+  const spans = chunks.map((c) => `${c.chunkStart}:${c.chunkEnd}`);
+  assert.equal(new Set(spans).size, spans.length, "duplicate spans emitted");
+});
+
+test("oversize leaf coordinate offset: text is found at chunkStart in the source", async () => {
+  const cfg = { maxChars: 150, minChars: 20, overlapChars: 0 };
+  const chunks = await chunkFile("data/report.py", ".py", OVERSIZE_LEAF_PY, cfg);
+  for (const c of chunks) {
+    const at = OVERSIZE_LEAF_PY.slice(c.chunkStart, c.chunkStart + c.text.length);
+    assert.equal(at, c.text, `chunk text not located at chunkStart=${c.chunkStart}`);
+  }
+});
+
+test("normal (under-maxChars) function still yields exactly one chunk (no regression)", async () => {
+  const cfg = { maxChars: 2000, minChars: 20, overlapChars: 0 };
+  const py = [
+    "def small(n):",
+    "    # a short helper well under the maxChars threshold so it stays one chunk",
+    "    return n * 2 + 1",
+  ].join("\n");
+  const chunks = await chunkFile("data/small.py", ".py", py, cfg);
+  assert.equal(chunks.length, 1);
+});

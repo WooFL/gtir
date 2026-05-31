@@ -73,6 +73,13 @@ function collectNodes(root, typeSet) {
   return [...found.values()].sort((a, b) => a.startIndex - b.startIndex);
 }
 
+// A collected node is a leaf iff no OTHER collected node is nested inside its
+// span. Oversize leaves get re-split; oversize containers (which have nested
+// target nodes) are dropped so their members surface as their own chunks.
+function isLeaf(n, nodes) {
+  return !nodes.some((m) => m !== n && m.startIndex >= n.startIndex && m.endIndex <= n.endIndex);
+}
+
 // cAST refinement: greedily merge adjacent nodes (source order) whose combined
 // span stays within maxChars. Replaces the "drop everything < minChars" rule
 // for small declarations so consecutive helpers index as one coherent unit.
@@ -98,7 +105,33 @@ function mergeSiblings(nodes, text, langId, relPath, cfg) {
     // their own nodes and surface separately. KNOWN LIMITATION: an oversize
     // *leaf* node (e.g. one >maxChars function with no nested target nodes) is
     // dropped here, not re-split. Matches the original Python chunker.
-    if (span > cfg.maxChars) { flush(); continue; }
+    if (span > cfg.maxChars) {
+      flush();
+      // Oversize *leaf* (no nested target node): re-split into line-aware windows
+      // via chunkRecursive and offset its positions back to the file, instead of
+      // dropping it. Oversize *containers* are still dropped here — their members
+      // were collected separately and surface as their own chunks.
+      if (isLeaf(n, nodes)) {
+        const slice = text.slice(n.startIndex, n.endIndex);
+        for (const s of chunkRecursive(relPath, langId, slice, cfg)) {
+          // chunkRecursive stores chunkStart at the line-start in the slice, but
+          // the stored text is trimmed. Adjust chunkStart forward by the number
+          // of leading whitespace characters that trim() removed so that
+          // text.slice(chunkStart, chunkStart + text.length) === text holds.
+          const absLineStart = s.chunkStart + n.startIndex;
+          const leadTrim = text.slice(absLineStart).search(/\S/);
+          const trimmedStart = absLineStart + (leadTrim >= 0 ? leadTrim : 0);
+          out.push({
+            ...s,
+            chunkStart: trimmedStart,
+            chunkEnd: trimmedStart + s.text.length,
+            lineStart: s.lineStart + n.startPosition.row,
+            lineEnd: s.lineEnd + n.startPosition.row,
+          });
+        }
+      }
+      continue;
+    }
     if (group && (n.endIndex - group.startIndex) <= cfg.maxChars) {
       group.endIndex = n.endIndex; group.endRow = n.endPosition.row;
     } else {
