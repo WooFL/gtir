@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { fileURLToPath } from "node:url";
-import { realpathSync, readFileSync } from "node:fs";
+import { realpathSync, readFileSync, existsSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import { loadConfig } from "../src/config.mjs";
 import { buildIndex } from "../src/indexer.mjs";
 import { search } from "../src/search.mjs";
@@ -9,6 +10,7 @@ import { installHook, removeHook } from "../src/hook.mjs";
 import { probeDim } from "../src/embed.mjs";
 import { runInit } from "../src/init.mjs";
 import { resolveIndexes, serveStdio, printConfig } from "../src/mcp.mjs";
+import { evalGolden, flattenMetrics, compareBaseline } from "../src/eval.mjs";
 
 // --- programmatic entrypoints (used by tests and the dispatcher) ---
 
@@ -73,9 +75,93 @@ function parseArgs(argv) {
     else if (a === "--no-cache") args.noCache = true;
     else if (a === "--no-index") args.noIndex = true;
     else if (a === "--no-hook") args.noHook = true;
+    else if (a === "--save") args.save = true;
+    else if (a === "--no-build") args.noBuild = true;
+    else if (a === "--json") args.json = true;
+    else if (a === "--golden") args.golden = argv[++i];
+    else if (a === "--baseline") args.baseline = argv[++i];
     else args._.push(a);
   }
   return args;
+}
+
+async function runEval(args) {
+  const repo = args.repo || process.cwd();
+  const cfg = loadConfig(repo);
+  const goldenPath = args.golden || path.join(repo, "eval", "golden.json");
+  if (!existsSync(goldenPath)) {
+    process.stderr.write(`eval: no golden file at ${goldenPath} — pass --golden <file>\n`);
+    return 2;
+  }
+  let golden;
+  try { golden = JSON.parse(readFileSync(goldenPath, "utf8")); }
+  catch (e) { process.stderr.write(`eval: cannot parse ${goldenPath}: ${e.message}\n`); return 2; }
+  if (!Array.isArray(golden) || golden.length === 0) {
+    process.stderr.write("eval: golden set is empty\n"); return 2;
+  }
+
+  const store = await openStore(cfg);
+  const hasIndex = !!(await store.chunksTable());
+  if (!args.noBuild) {
+    await buildIndex(cfg, { rebuild: false });
+  } else if (!hasIndex) {
+    process.stderr.write(`eval: no index at ${cfg.indexDir} — run: gtir index\n`); return 2;
+  }
+
+  const maxK = Math.max(1, Math.min(50, (args.k | 0) || 10));
+  const searchFn = (q, k) => search(q, cfg, { k });
+  const metrics = await evalGolden(golden, searchFn, { maxK });
+  metrics.model = (await store.readMeta()).model || cfg.model;
+
+  const baselinePath = args.baseline || path.join(repo, "eval", "baseline.json");
+
+  if (args.save) {
+    writeFileSync(baselinePath, JSON.stringify(metrics, null, 2) + "\n");
+    process.stderr.write(`eval: saved baseline → ${baselinePath} (n=${metrics.n}, model=${metrics.model})\n`);
+    if (args.json) process.stdout.write(JSON.stringify(metrics) + "\n");
+    return 0;
+  }
+
+  let baseline = null;
+  if (existsSync(baselinePath)) {
+    try { baseline = JSON.parse(readFileSync(baselinePath, "utf8")); } catch { /* treat as none */ }
+  }
+  printMetricsTable(metrics, baseline);
+  if (args.json) process.stdout.write(JSON.stringify(metrics) + "\n");
+
+  if (!baseline) {
+    process.stderr.write("eval: no baseline to compare (run with --save to set one)\n");
+    return 0;
+  }
+  if (baseline.model && baseline.model !== metrics.model) {
+    process.stderr.write(`eval: WARNING baseline model (${baseline.model}) != current (${metrics.model}) — cross-model comparison\n`);
+  }
+  const regressions = compareBaseline(metrics, baseline, 0.005);
+  if (regressions.length) {
+    for (const r of regressions) {
+      process.stderr.write(`eval: REGRESSION ${r.metric}: ${r.base} → ${r.cur} (${r.delta})\n`);
+    }
+    return 1;
+  }
+  process.stderr.write("eval: no regressions\n");
+  return 0;
+}
+
+function printMetricsTable(m, base) {
+  const fb = base ? flattenMetrics(base) : {};
+  const line = (label, val) => {
+    if (val === null || val === undefined) return `  ${label.padEnd(11)} n/a`;
+    const b = fb[label];
+    if (b === undefined) return `  ${label.padEnd(11)} ${val.toFixed(4)}`;
+    const d = val - b;
+    const ds = Math.abs(d) <= 0.005 ? "~0" : (d > 0 ? "+" : "") + d.toFixed(4);
+    return `  ${label.padEnd(11)} ${val.toFixed(4)}  (base ${b.toFixed(4)}, ${ds})`;
+  };
+  const out = [`eval: n=${m.n} n_sec=${m.n_sec} model=${m.model}`];
+  for (const k of Object.keys(m.recall)) out.push(line(`recall@${k}`, m.recall[k]));
+  out.push(line("mrr", m.mrr));
+  for (const k of Object.keys(m.sec_hit)) out.push(line(`sec_hit@${k}`, m.sec_hit[k]));
+  process.stderr.write(out.join("\n") + "\n");
 }
 
 async function main() {
@@ -124,6 +210,9 @@ async function main() {
         serveStdio(indexes, { version: pkgVersion() });
         return; // keep the process alive on stdin; do not fall through to exit
       }
+      case "eval": {
+        process.exit(await runEval(args));
+      }
       case "init": {
         const mode = args.notes ? "notes" : args.code ? "code" : null;
         const r = await runInit({ repo, mode, index: !args.noIndex, hook: !args.noHook });
@@ -141,7 +230,18 @@ async function main() {
         break;
       }
       default:
-        process.stderr.write("usage: gtir <init|index|refresh|search|status|setup|hook|mcp> [--repo <path>] [--notes|--code] [--label name:<repo>] [--print-config] [--rebuild] [--no-cache] [--no-index] [--no-hook] [-k N] [--path-prefix P] [--language L] [--remove]\n");
+        process.stderr.write([
+          "usage: gtir <command> [options]",
+          "  gtir init    --repo <project> [--notes|--code] [--no-index] [--no-hook]",
+          "  gtir index   --repo <project> [--rebuild] [--no-cache]",
+          "  gtir refresh --repo <project> [--no-cache]",
+          "  gtir search  --repo <project> <query> [-k N] [--path-prefix P] [--language L]",
+          "  gtir status  --repo <project>",
+          "  gtir setup   --repo <project>",
+          "  gtir hook    --repo <project> [--remove]",
+          "  gtir mcp     --repo <project> [--label name:<repo>] [--print-config]",
+          "  gtir eval    --repo <project> [--golden <f>] [-k 10] [--save] [--no-build] [--json]",
+        ].join("\n") + "\n");
         process.exit(cmd ? 1 : 0);
     }
   } catch (e) {
