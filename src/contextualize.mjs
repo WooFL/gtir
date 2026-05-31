@@ -10,7 +10,10 @@ function firstSignificantLine(text) {
 }
 
 export function syntheticPrefix(chunk) {
-  return `${chunk.path} — ${firstSignificantLine(chunk.text)}`;
+  // Prepend the AST scope breadcrumb (enclosing class/module names, set by the
+  // chunker) to the informative first line. Additive: never drops the first line.
+  const scope = chunk.scope?.length ? ` › ${chunk.scope.join(" › ")}` : "";
+  return `${chunk.path}${scope} — ${firstSignificantLine(chunk.text)}`;
 }
 
 // Opt-in claude-cli tier; never throws (falls back to synthetic).

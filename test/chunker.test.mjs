@@ -185,9 +185,9 @@ test("normal (under-maxChars) function still yields exactly one chunk (no regres
   assert.equal(chunks.length, 1);
 });
 
-// --- Structural code prefixes (AST breadcrumb) ---
+// --- Structural code prefixes (AST scope breadcrumb, additive to the first line) ---
 
-test("method inside a class gets a relPath › Class › method breadcrumb prefix", async () => {
+test("a method's chunk carries its enclosing class in `scope`", async () => {
   const cfg = { maxChars: 2000, minChars: 20, overlapChars: 0 };
   const py = [
     "class Repository:",
@@ -198,12 +198,12 @@ test("method inside a class gets a relPath › Class › method breadcrumb prefi
   const chunks = await chunkFile("data/repo.py", ".py", py, cfg);
   const c = chunks.find((c) => c.text.includes("def find"));
   assert.ok(c, "find method chunk missing");
-  assert.ok(c.prefix && c.prefix.startsWith("data/repo.py"), `prefix should start with relPath: ${c.prefix}`);
-  assert.ok(c.prefix.includes("Repository"), `prefix should name the class: ${c.prefix}`);
-  assert.ok(c.prefix.includes("find"), `prefix should name the method: ${c.prefix}`);
+  assert.deepEqual(c.scope, ["Repository"]);
+  const cx = await contextualizeChunk(c, cfg);
+  assert.ok(cx.embedText.startsWith("data/repo.py › Repository — "), `embedText: ${cx.embedText.slice(0, 80)}`);
 });
 
-test("nested scope yields a breadcrumb with both container names in order", async () => {
+test("nested scope yields scope [Outer, Inner] in order", async () => {
   const cfg = { maxChars: 2000, minChars: 20, overlapChars: 0 };
   const py = [
     "class Outer:",
@@ -214,14 +214,11 @@ test("nested scope yields a breadcrumb with both container names in order", asyn
   ].join("\n");
   const chunks = await chunkFile("m/nested.py", ".py", py, cfg);
   const c = chunks.find((c) => c.text.includes("deep_method"));
-  assert.ok(c && c.prefix, "nested method chunk/prefix missing");
-  const iOuter = c.prefix.indexOf("Outer");
-  const iInner = c.prefix.indexOf("Inner");
-  assert.ok(iOuter >= 0 && iInner >= 0 && iOuter < iInner, `breadcrumb order wrong: ${c.prefix}`);
-  assert.ok(c.prefix.includes("deep_method"));
+  assert.ok(c, "nested method chunk missing");
+  assert.deepEqual(c.scope, ["Outer", "Inner"]);
 });
 
-test("top-level function gets relPath › funcName (no spurious scope)", async () => {
+test("top-level function has no scope; synthetic prefix keeps the first line", async () => {
   const cfg = { maxChars: 2000, minChars: 20, overlapChars: 0 };
   const py = [
     "def standalone(x):",
@@ -230,12 +227,14 @@ test("top-level function gets relPath › funcName (no spurious scope)", async (
   ].join("\n");
   const chunks = await chunkFile("m/top.py", ".py", py, cfg);
   const c = chunks.find((c) => c.text.includes("standalone"));
-  assert.ok(c && c.prefix, "top-level chunk/prefix missing");
-  assert.ok(c.prefix.includes("standalone"), `prefix should name the function: ${c.prefix}`);
-  assert.ok(!c.prefix.includes("class"), "no spurious scope token");
+  assert.ok(c, "top-level chunk missing");
+  assert.equal(c.scope, undefined, "no enclosing container → no scope");
+  const cx = await contextualizeChunk(c, cfg);
+  assert.ok(cx.embedText.startsWith("m/top.py — "), `embedText: ${cx.embedText.slice(0, 60)}`);
+  assert.ok(cx.embedText.includes("standalone"), "first line (signature) is retained");
 });
 
-test("oversize-leaf sub-chunks carry the function-name breadcrumb prefix", async () => {
+test("oversize-leaf sub-chunks carry the function name in scope", async () => {
   const cfg = { maxChars: 150, minChars: 20, overlapChars: 0 };
   const py = [
     "def process_records(records):",
@@ -249,21 +248,23 @@ test("oversize-leaf sub-chunks carry the function-name breadcrumb prefix", async
   ].join("\n");
   const chunks = await chunkFile("data/report.py", ".py", py, cfg);
   assert.ok(chunks.length >= 2, "expected oversize re-split");
-  for (const c of chunks) assert.ok(c.prefix && c.prefix.includes("process_records"), `sub-chunk prefix missing func name: ${c.prefix}`);
+  for (const c of chunks) {
+    assert.ok(c.scope && c.scope.includes("process_records"), `sub-chunk scope missing func name: ${JSON.stringify(c.scope)}`);
+  }
 });
 
-test("grammarless chunk has no structural prefix but contextualize still produces embedText", async () => {
+test("grammarless chunk has no scope; synthetic embedText still produced", async () => {
   const cfg = { maxChars: 2000, minChars: 20, overlapChars: 0 };
   const body = "fn main() { let x = 1; }\n".repeat(6);
   const chunks = await chunkFile("s.wgsl", ".wgsl", body, cfg);
   assert.ok(chunks.length >= 1);
-  assert.equal(chunks[0].prefix, undefined, "grammarless chunk should not get a structural prefix");
+  assert.equal(chunks[0].scope, undefined, "grammarless chunk should not get a scope");
   const cx = await contextualizeChunk(chunks[0], cfg);
   assert.ok(cx.embedText.includes(chunks[0].text), "synthetic fallback embedText must include the body");
   assert.ok(cx.embedText.startsWith("s.wgsl"), "synthetic prefix should lead with the path");
 });
 
-test("contextualizeChunk prepends the structural prefix to the body", async () => {
+test("contextualizeChunk builds 'path › scope — firstline' then the body", async () => {
   const cfg = { maxChars: 2000, minChars: 20, overlapChars: 0 };
   const py = [
     "class Service:",
@@ -274,5 +275,6 @@ test("contextualizeChunk prepends the structural prefix to the body", async () =
   const chunks = await chunkFile("svc.py", ".py", py, cfg);
   const c = chunks.find((c) => c.text.includes("def run"));
   const cx = await contextualizeChunk(c, cfg);
-  assert.equal(cx.embedText, `${c.prefix}\n${c.text}`);
+  assert.ok(cx.embedText.startsWith("svc.py › Service — "), `embedText: ${cx.embedText.slice(0, 60)}`);
+  assert.ok(cx.embedText.endsWith(c.text), "body follows the prefix");
 });

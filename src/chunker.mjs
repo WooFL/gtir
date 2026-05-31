@@ -3,8 +3,6 @@ import { getParser } from "./parser.mjs";
 import { langFor, targetTypes } from "./languages.mjs";
 import { chunkMarkdown } from "./markdown.mjs";
 
-const SEP = " › "; // breadcrumb separator (same glyph the markdown chunker uses)
-
 const CONTAINER_TYPES = new Set([
   "class_declaration", "abstract_class_declaration", "class_definition",
   "interface_declaration", "enum_declaration", "module_declaration",
@@ -36,13 +34,6 @@ function scopeBreadcrumb(node) {
   return parts;
 }
 
-// relPath > Container > ... > ownSymbol. null when nothing extractable, so the
-// caller leaves chunk.prefix unset and contextualize uses syntheticPrefix.
-function codePrefix(relPath, node) {
-  const own = nodeName(node);
-  const tail = [...scopeBreadcrumb(node), ...(own ? [own] : [])];
-  return tail.length ? `${relPath}${SEP}${tail.join(SEP)}` : null;
-}
 
 export function stableId(c) {
   const body = createHash("sha1").update(c.text, "utf8").digest("hex").slice(0, 8);
@@ -131,12 +122,12 @@ function mergeSiblings(nodes, text, langId, relPath, cfg) {
     if (!group) return;
     const body = text.slice(group.startIndex, group.endIndex).trim();
     if (body.length >= cfg.minChars) {
-      const prefix = codePrefix(relPath, group.node);
+      const scope = scopeBreadcrumb(group.node);
       out.push({
         path: relPath, language: langId,
         chunkStart: group.startIndex, chunkEnd: group.endIndex,
         lineStart: group.startRow + 1, lineEnd: group.endRow + 1, text: body,
-        ...(prefix ? { prefix } : {}),
+        ...(scope.length ? { scope } : {}),
       });
     }
     group = null;
@@ -164,14 +155,17 @@ function mergeSiblings(nodes, text, langId, relPath, cfg) {
           const absLineStart = s.chunkStart + n.startIndex;
           const leadTrim = text.slice(absLineStart).search(/\S/);
           const trimmedStart = absLineStart + (leadTrim >= 0 ? leadTrim : 0);
-          const leafPrefix = codePrefix(relPath, n);
+          // Windows of an oversize leaf: include the leaf's own name in the scope,
+          // since each window's first line is an interior line, not the declaration.
+          const own = nodeName(n);
+          const leafScope = [...scopeBreadcrumb(n), ...(own ? [own] : [])];
           out.push({
             ...s,
             chunkStart: trimmedStart,
             chunkEnd: trimmedStart + s.text.length,
             lineStart: s.lineStart + n.startPosition.row,
             lineEnd: s.lineEnd + n.startPosition.row,
-            ...(leafPrefix ? { prefix: leafPrefix } : {}),
+            ...(leafScope.length ? { scope: leafScope } : {}),
           });
         }
       }
