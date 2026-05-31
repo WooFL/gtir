@@ -109,3 +109,12 @@ test("chunkRecursive does not emit an oversize overlap blob for adjacent long li
   // No chunk should exceed maxChars by carrying a whole prior line forward.
   for (const c of chunks) assert.ok(c.text.length <= 200 + 1, "no merged oversize overlap blob");
 });
+
+test("chunkFile routes .md through chunkMarkdown (chunks carry a prefix)", async () => {
+  const md = "# Title\n\nSome real markdown content under a heading, long enough to be a chunk here.";
+  const chunks = await chunkFile("notes/p.md", ".md", md, { maxChars: 2000, minChars: 20, overlapChars: 100 });
+  assert.ok(chunks.length >= 1);
+  assert.equal(chunks[0].language, "markdown");
+  assert.ok(chunks[0].prefix, "markdown chunk should carry a breadcrumb prefix");
+  assert.match(chunks[0].prefix, /notes\/p\.md › p › Title/);
+});

@@ -16,3 +16,17 @@ test("contextualizeChunk (synthetic) returns prefix + raw body, body unchanged",
   assert.ok(r.embedText.includes(c.text));
   assert.equal(r.text, c.text); // raw body preserved for snippets
 });
+
+test("contextualizeChunk honors a precomputed prefix (markdown chunks)", async () => {
+  const c = { path: "p.md", text: "body text", prefix: "p.md › Title › Section" };
+  const r = await contextualizeChunk(c, { contextTier: "synthetic" });
+  assert.ok(r.embedText.startsWith("p.md › Title › Section\n"));
+  assert.ok(r.embedText.includes("body text"));
+  assert.equal(r.text, "body text"); // snippet stays raw
+});
+
+test("contextualizeChunk without prefix uses synthetic (code chunks unaffected)", async () => {
+  const c = { path: "a.ts", text: "export function f() { return 1; }" };
+  const r = await contextualizeChunk(c, { contextTier: "synthetic" });
+  assert.ok(r.embedText.startsWith(syntheticPrefix(c)));
+});

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { getParser } from "./parser.mjs";
 import { langFor, targetTypes } from "./languages.mjs";
+import { chunkMarkdown } from "./markdown.mjs";
 
 export function stableId(c) {
   const body = createHash("sha1").update(c.text, "utf8").digest("hex").slice(0, 8);
@@ -127,6 +128,7 @@ export async function chunkWithTreesitter(relPath, langId, text, cfg) {
 
 export async function chunkFile(relPath, ext, text, cfg) {
   const langId = langFor(ext);
+  if (langId === "markdown") return chunkMarkdown(relPath, text, cfg);
   if (langId === null) return chunkRecursive(relPath, ext.replace(/^\./, ""), text, cfg);
   return chunkWithTreesitter(relPath, langId, text, cfg);
 }

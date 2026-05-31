@@ -27,6 +27,9 @@ function claudeCliPrefix(chunk) {
 }
 
 export async function contextualizeChunk(chunk, cfg) {
-  const prefix = cfg.contextTier === "claude-cli" ? claudeCliPrefix(chunk) : syntheticPrefix(chunk);
+  // A chunk may carry a precomputed context prefix (e.g. the markdown chunker's
+  // heading breadcrumb + tags). Honor it; otherwise fall back to the synthetic /
+  // claude-cli prefix used for code chunks.
+  const prefix = chunk.prefix ?? (cfg.contextTier === "claude-cli" ? claudeCliPrefix(chunk) : syntheticPrefix(chunk));
   return { ...chunk, embedText: `${prefix}\n${chunk.text}` };
 }
