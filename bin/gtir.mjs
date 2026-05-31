@@ -109,7 +109,8 @@ async function main() {
         process.stderr.write(`  mode: ${r.mode}${mode ? " (forced)" : " (detected)"}\n`);
         process.stderr.write(`  config: ${r.config.written ? "wrote .gtir/config.json" : `kept existing (${r.config.reason})`}\n`);
         process.stderr.write(`  gitignore: ${r.gitignore.added ? ".gtir/ added" : "already ignored"}\n`);
-        process.stderr.write(`  index: ${r.indexed ? `${r.indexed.chunks} chunks, dim=${r.indexed.dim}` : "skipped (--no-index)"}\n`);
+        if (args.noIndex) process.stderr.write("  index: skipped (--no-index)\n");
+        else process.stderr.write(`  index: ${r.indexed.chunks} chunks, dim=${r.indexed.dim}\n`);
         if (args.noHook) process.stderr.write("  hook: skipped (--no-hook)\n");
         else if (r.hookInstalled) process.stderr.write("  hook: post-commit auto-refresh installed\n");
         else if (r.lefthookSnippet) process.stderr.write(`  hook: lefthook detected — add to lefthook.yml:\n\n${r.lefthookSnippet}\n\n`);

@@ -29,6 +29,16 @@ test("detectMode: markdown-majority => notes; code-majority => code", () => {
   assert.equal(detectMode(c), "code");
 });
 
+test("detectMode: empty repo defaults to code", () => {
+  assert.equal(detectMode(tmp()), "code");
+});
+
+test("detectMode: exact 50/50 markdown split => notes (>= 0.5 boundary)", () => {
+  const r = tmp();
+  for (const f of ["a.md", "b.md", "c.ts", "d.ts"]) put(r, f);
+  assert.equal(detectMode(r), "notes");
+});
+
 test("writeConfig: notes preset = nomic + maxEmbedChars 2000; no clobber", () => {
   const r = tmp();
   assert.equal(writeConfig(r, "notes").written, true);
