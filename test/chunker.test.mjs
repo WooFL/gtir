@@ -50,12 +50,46 @@ test("chunkFile falls back to recursive for grammarless ext", async () => {
 });
 
 test("cAST merge: many tiny adjacent functions coalesce into fewer chunks", async () => {
-  // Six one-line functions, each individually below minChars=80.
+  // Six one-line functions separated by blank lines.
+  // Source layout (0-indexed rows):
+  //   row 0:  "def f0(): return 0"  startIndex=0   endIndex=18
+  //   row 2:  "def f1(): return 1"  startIndex=20  endIndex=38
+  //   row 4:  "def f2(): return 2"  startIndex=40  endIndex=58
+  //   row 6:  "def f3(): return 3"  startIndex=60  endIndex=78
+  //   row 8:  "def f4(): return 4"  startIndex=80  endIndex=98
+  //   row 10: "def f5(): return 5"  startIndex=100 endIndex=118
+  //
+  // With maxChars=60, minChars=20:
+  //   - f0+f1+f2 combined span = 58 <= 60  -> group 1 (startIndex=0..58)
+  //   - adding f3 would reach span 78 > 60  -> flush group 1, start group 2 at f3
+  //   - f3+f4+f5 combined span = 58 <= 60  -> group 2 (startIndex=60..118)
+  //   -> exactly 2 chunks from the MERGE path
+  //
+  // The recursive FALLBACK with these same settings flushes at the blank line after f2
+  // (bucketChars hits 60 on line 6, a blank line), so fallback chunk1.lineEnd === 6.
+  // The MERGE path anchors lineEnd to the AST node's endRow, giving chunk1.lineEnd === 5.
+  // These assertions would FAIL on the fallback path, proving the merge path fired.
   const tiny = Array.from({ length: 6 }, (_, i) => `def f${i}(): return ${i}`).join("\n\n");
-  const merged = await chunkFile("tiny.py", ".py", tiny, { maxChars: 200, minChars: 80, overlapChars: 0 });
-  assert.ok(merged.length >= 1, "small siblings should not all be dropped");
-  // Each emitted chunk respects the size budget.
-  for (const c of merged) assert.ok(c.text.length <= 200);
-  // At least one chunk contains two merged functions.
-  assert.ok(merged.some((c) => /f0/.test(c.text) && /f1/.test(c.text)));
+  const merged = await chunkFile("tiny.py", ".py", tiny, { maxChars: 60, minChars: 20, overlapChars: 0 });
+
+  // 1. Exact chunk count predicted by greedy merge (would be 1 on maxChars=200 fallback-identical case).
+  assert.equal(merged.length, 2, "greedy merge must produce exactly 2 chunks for maxChars=60");
+
+  // 2. Each emitted chunk respects the size budget.
+  for (const c of merged) assert.ok(c.text.length <= 60, `chunk text exceeds maxChars: ${c.text.length}`);
+
+  // 3. Content grouping: first chunk covers f0-f2, second covers f3-f5.
+  assert.match(merged[0].text, /f0/);
+  assert.match(merged[0].text, /f2/);
+  assert.match(merged[1].text, /f3/);
+  assert.match(merged[1].text, /f5/);
+
+  // 4. AST-anchored line numbers — the key distinguisher from the recursive fallback.
+  //    Merge: chunk1.lineEnd = f2's endRow+1 = 5.  Fallback: lineEnd = 6 (blank-line flush).
+  //    Merge: chunk2.lineStart = f3's startRow+1 = 7. Fallback: lineStart = 7 (coincidence, but
+  //    chunk2.lineEnd = 11 for merge vs 11 for fallback — so lineEnd check on chunk1 is the real pin).
+  assert.equal(merged[0].lineStart, 1,  "chunk1 lineStart must be 1 (f0 row 0)");
+  assert.equal(merged[0].lineEnd,   5,  "chunk1 lineEnd must be 5 (f2 row 4) — fallback gives 6");
+  assert.equal(merged[1].lineStart, 7,  "chunk2 lineStart must be 7 (f3 row 6)");
+  assert.equal(merged[1].lineEnd,   11, "chunk2 lineEnd must be 11 (f5 row 10)");
 });
