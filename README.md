@@ -397,6 +397,34 @@ code** without leaving the conversation. Register the server by pasting the snip
 into your project's `.mcp.json` (`mcpServers`). It's stdio JSON-RPC with zero extra deps; `search` and
 `similar` reuse the same hybrid retrieval as the CLI, and `read`/`outline` are plain lookups over the index.
 
+**Example — one agent, one session** (the tool calls it makes; results abbreviated to `file:line`):
+
+```text
+1. search_code  { "query": "where do we verify a JWT and reject expired tokens" }
+      → src/auth/token.ts:48-79      top hit — verifyToken(), matched by meaning
+
+2. read_code    { "path": "src/auth/token.ts", "lines": "48-79", "context": 5 }
+      → the source span (returns lines 43-84)
+
+3. find_code    { "symbol": "verifyToken", "kind": "references" }
+      → src/auth/token.ts:48 (definition) · http/middleware.ts:12 · test/auth.test.ts:30
+
+4. find_code    { "symbol": "ExpiredTokenError" }            // kind defaults to "definition"
+      → src/auth/errors.ts:7
+
+5. similar_code { "path": "src/auth/token.ts", "line": 50 }
+      → src/auth/refresh.ts:20-41 · src/auth/middleware.ts:12-26
+
+   outline_code { "path": "src/auth/token.ts" }
+      → 12-26 signToken · 48-79 verifyToken · 81-93 decodeToken
+
+   search_code  { "query": "token refresh", "compact": true }   // path/lines/score, no snippet bodies
+      → src/auth/refresh.ts:20-41 · src/auth/token.ts:48-79
+```
+
+Every result carries `file:line`, so each call feeds the next — *find by meaning → read more → trace a
+symbol → jump to a definition → pivot to neighbors → map the file* — without the agent leaving the chat.
+
 ## Model
 
 Default model tag (in `src/config.mjs`): `hf.co/jinaai/jina-code-embeddings-0.5b-GGUF:F16` (994 MB, ~896-dim).
