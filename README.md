@@ -1,8 +1,51 @@
 # gtir
 
-**gtir** (Armenian *գտնել*, "to find") — a portable, install-once CLI for semantic **code and notes** retrieval over any repository or note vault. It chunks code with tree-sitter (AST-aware, with a cAST sibling-merge refinement), embeds chunks via a local **Ollama** model (`jina-code-embeddings-0.5b`), stores vectors + a BM25 index in **LanceDB**, and answers queries with hybrid (vector + BM25 + RRF) search.
+**Find your code and notes by *meaning*, not exact words.** Ask *"where do we retry failed
+requests?"* and gtir finds the function — even when it's called `backoffFetch` and never says the
+word "retry." It's a small, install-once command-line tool that searches your own repositories and
+note vaults, and it runs **entirely on your machine** — no cloud, no API keys, nothing leaves your
+laptop.
 
-**Scope:** code *and* notes. gtir indexes a codebase (`jina-code-embeddings`) or an Obsidian-style note vault (`nomic-embed-text`) — `gtir init` auto-detects which, and the MCP server exposes `search_code` / `search_notes` accordingly. It runs natively on Windows, macOS, and Linux (no Unix-only shell scripts).
+> *gtir* — Armenian *գտնել*, "to find."
+
+### Why you'd want it
+
+- **`grep` finds the word; gtir finds the thing.** Keyword search misses code that *means* what you
+  asked but doesn't *say* it. gtir matches the intent of your question to the intent of your code.
+- **Ask in plain English** — *"evict the least-recently-used cache entry"*, *"sign a session token
+  with an expiry"*, *"rotate a 3D vector"*. You don't need to remember what the function was named.
+- **One install, any project.** Run `gtir init` in a code repo or an Obsidian vault — it auto-detects
+  which, configures itself, and indexes. After that, re-indexing on each commit is incremental (only
+  changed files re-embed), so it stays fast on big repos.
+- **Private by default.** Everything runs through a local **Ollama** model — no API keys, nothing sent
+  to a server. Native on Windows, macOS, and Linux (no Unix-only shell scripts).
+- **Works inside your AI editor.** gtir ships an MCP server, so tools like Claude and Cursor can search
+  your codebase for you (`search_code` for repos, `search_notes` for vaults).
+
+Under the hood it splits files into meaningful chunks (tree-sitter for code, headings for Markdown),
+embeds each with a local model (a code model for repos, a prose one for notes), and answers a query by
+blending **semantic** (vector) and **keyword** (BM25) search. The details are below.
+
+### Why it saves tokens
+
+If you point an AI coding agent (Claude Code, Cursor, …) at a large repo, the expensive part is
+*finding* the right code. Without retrieval the agent guesses a `grep`, gets a pile of matches, and
+reads whole files into its context to see which one is right — most of those tokens pay for code it
+didn't need.
+
+gtir turns that hunt into a single call. A semantic query returns just the handful of relevant
+**chunks** — each a focused span with its `file:line` — so the agent loads only what actually matters
+instead of dumping whole files. The shape of the saving:
+
+| Find *"where do we verify a JWT?"* | Tokens pulled into context |
+| --- | --- |
+| `grep` → read 3–4 candidate files | ~10,000–20,000 |
+| `gtir search` → top 5 chunks | ~2,000–3,000 |
+
+So a find-the-code step costs on the order of **5–10× fewer tokens**, and indexing is incremental, so
+the next query is just as cheap. Smaller context is also *sharper* context — less haystack means the
+model spends its attention on the lines that matter. (Numbers are illustrative and depend on your
+files; the point is the shape — targeted chunks, not whole-file dumps.)
 
 ## How it works
 
