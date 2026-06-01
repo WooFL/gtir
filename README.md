@@ -31,7 +31,7 @@ Under the hood it splits files into meaningful chunks (tree-sitter for code, hea
 embeds each with a local model (a code model for repos, a prose one for notes), and answers a query by
 blending **semantic** (vector) and **keyword** (BM25) search. The details are below.
 
-### Why it saves tokens
+### Why it saves tokens — and time
 
 Finding the right code is the expensive part of an agent's work. With `grep`, the agent searches a
 guess, gets a pile of matches, and **reads candidate files into its context to judge which one is
@@ -51,6 +51,12 @@ keyword if the code calls it `backoffFetch`. So the saving grows exactly where g
 repos, vocabulary mismatch, multi-guess hunts. The two are complementary — grep for an exact string you
 already know, gtir for finding by meaning. (Numbers illustrative; and a smaller, cleaner context is also
 a *sharper* one.)
+
+**Same lever, for latency.** The *search itself* isn't faster than `grep` — gtir embeds your query
+first, so one lookup is slower than millisecond-fast ripgrep. But the agent's bottleneck isn't the tool,
+it's the **model turns** (seconds each). Folding several guess→grep→read round-trips into one ranked
+answer means fewer turns, and a smaller context is quicker for the model to process — so the *answer*
+lands sooner even though the *search* is slower. Tokens and time are the same win: fewer, lighter turns.
 
 ## How it works
 
