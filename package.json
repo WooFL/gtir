@@ -1,9 +1,18 @@
 {
   "name": "gtir",
   "version": "0.1.0",
-  "description": "Portable code retrieval CLI: tree-sitter + jina-code-embeddings (Ollama) + LanceDB hybrid search.",
+  "description": "Find code and notes by meaning — a local, hybrid semantic-search CLI + MCP server (vector + BM25 + tree-sitter, via Ollama; no cloud, no API keys).",
   "license": "MIT",
+  "author": "WooFL",
   "type": "module",
+  "repository": { "type": "git", "url": "git+https://github.com/WooFL/gtir.git" },
+  "homepage": "https://github.com/WooFL/gtir#readme",
+  "bugs": "https://github.com/WooFL/gtir/issues",
+  "keywords": [
+    "semantic-search", "code-search", "retrieval", "rag", "mcp",
+    "embeddings", "tree-sitter", "ollama", "lancedb", "bm25",
+    "vector-search", "notes", "obsidian", "cli", "local-first"
+  ],
   "bin": { "gtir": "bin/gtir.mjs" },
   "files": ["bin/", "src/", "grammars/", "eval/"],
   "scripts": {
