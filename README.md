@@ -126,13 +126,66 @@ gtir setup --repo <project>
 # → gtir: Ollama OK — model=hf.co/jinaai/jina-code-embeddings-0.5b-GGUF:F16 dim=896
 ```
 
-## Quick start — `gtir init`
+## Quick start
 
-One command sets up a repo or vault end-to-end:
+Already installed gtir and pulled the model (see **Install** / **Setup** above)? Point it at any
+project and ask a question in plain English:
 
 ```bash
-gtir init --repo <path>          # auto-detects notes vs code
+cd ~/my-project
+gtir init --repo .     # auto-detect code vs notes, index, install a post-commit refresh hook
 ```
+
+```text
+gtir init: /home/me/my-project
+  mode: code (detected)
+  config: wrote .gtir/config.json
+  gitignore: .gtir/ added
+  index: 1284 chunks, dim=896
+  hook: post-commit auto-refresh installed
+```
+
+Now search. The query never says `verifyToken` — but that's the top hit, matched by *meaning*:
+
+```bash
+gtir search "where do we verify a JWT and reject expired tokens" --repo .
+```
+
+```json
+[
+  {
+    "path": "src/auth/token.ts",
+    "lines": "48-79",
+    "language": "typescript",
+    "score": 0.0309,
+    "vec_rank": 1,
+    "fts_rank": 2,
+    "snippet": "export function verifyToken(raw: string): Session {\n  const claims = jwt.verify(raw, SECRET)\n  if (claims.exp < now()) throw new ExpiredTokenError()\n  ..."
+  },
+  {
+    "path": "src/auth/middleware.ts",
+    "lines": "12-26",
+    "language": "typescript",
+    "score": 0.0190,
+    "vec_rank": 3,
+    "fts_rank": null,
+    "snippet": "export const requireAuth = (req, res, next) => { /* ... verifyToken(req.headers.authorization) ... */ }"
+  }
+]
+```
+
+Results are JSON on **stdout** (logs go to stderr), so pipe to `jq` for just the locations:
+
+```bash
+gtir search "verify a JWT" --repo . | jq -r '.[] | "\(.path):\(.lines)"'
+#   src/auth/token.ts:48-79
+#   src/auth/middleware.ts:12-26
+```
+
+That's the whole loop: `init` once, then `search` as often as you like — the post-commit hook keeps
+the index fresh as the code changes.
+
+### What `gtir init` does
 
 It detects whether the target is a **note vault** (has `.obsidian/` or is markdown-dominant → `nomic-embed-text` + prose chunk sizes) or a **codebase** (→ `jina-code` defaults), then:
 1. writes the right `.gtir/config.json` (never clobbers an existing one),
