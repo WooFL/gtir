@@ -19,6 +19,14 @@ test("installHook writes a post-commit hook with the gtir marker", () => {
   assert.match(readFileSync(hook, "utf8"), new RegExp(MARKER));
 });
 
+test("installHook embeds an ABSOLUTE repo path in the refresh command (not a relative arg)", () => {
+  const repo = gitRepo();   // absolute temp dir
+  installHook(repo);
+  const body = readFileSync(join(repo, ".git", "hooks", "post-commit"), "utf8");
+  // The hook runs from the repo root, so a relative "--repo vault" would miss; require the abs path.
+  assert.ok(body.includes(`--repo "${repo.split("\\").join("/")}"`), `hook should embed the absolute repo path; got:\n${body}`);
+});
+
 test("installHook is idempotent (no duplicate gtir block)", () => {
   const repo = gitRepo();
   installHook(repo); installHook(repo);
