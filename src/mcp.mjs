@@ -355,7 +355,9 @@ export function defaultFindFn(indexes) {
     const tbl = await store.chunksTable();
     if (!tbl) throw new Error(`no index at ${ix.cfg.indexDir} — run: gtir index --repo ${ix.repo}`);
     const k = Math.max(1, Math.min(100, (limit | 0) || 25));
-    const fan = Math.max(k * 2, 50);
+    // Scan a wide BM25 candidate pool: a definition can rank below many mention/call chunks for a
+    // heavily-referenced symbol, so a narrow fan would miss it. Scanning is a cheap regex per chunk.
+    const fan = Math.min(1000, Math.max(k * 4, ix.cfg.findCandidates ?? 200));
     let cand;
     try { cand = await tbl.query().nearestToText(symbol, ["fts_text"]).limit(fan).toArray(); }
     catch {
