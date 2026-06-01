@@ -95,6 +95,23 @@ export async function openStore(cfg) {
     } catch { return false; }
   }
 
+  // Column names of the existing chunks table (null if there's no table). Used to detect
+  // schema drift across gtir upgrades. Reads the Arrow schema directly (works on empty
+  // tables); falls back to sampling a row if schema() is unavailable in this lancedb build.
+  async function chunkColumns() {
+    const tbl = await chunksTable();
+    if (!tbl) return null;
+    try {
+      const schema = await tbl.schema();
+      return new Set(schema.fields.map((f) => f.name));
+    } catch {
+      try {
+        const rows = await tbl.query().limit(1).toArray();
+        return rows.length ? new Set(Object.keys(rows[0])) : null;
+      } catch { return null; }
+    }
+  }
+
   async function loadEmbedCache() {
     const tbl = await chunksTable();
     if (!tbl) return new Map();
@@ -134,5 +151,5 @@ export async function openStore(cfg) {
     return rows.find((r) => Number(r.line_start) <= line && line <= Number(r.line_end)) || rows[0];
   }
 
-  return { chunksTable, upsertRows, loadManifest, evictPaths, writeMeta, readMeta, hasContentHash, loadEmbedCache, dropChunks, chunksByPath, chunkAt };
+  return { chunksTable, upsertRows, loadManifest, evictPaths, writeMeta, readMeta, hasContentHash, chunkColumns, loadEmbedCache, dropChunks, chunksByPath, chunkAt };
 }

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as lancedb from "@lancedb/lancedb";
 import { loadConfig } from "../src/config.mjs";
 import { buildIndex } from "../src/indexer.mjs";
 import { openStore } from "../src/store.mjs";
@@ -146,6 +147,24 @@ test("pre-feature index: refresh on a column-less table runs legacy without sche
   assert.ok(r.chunks > 0, "refresh produced rows");
   assert.equal(await (await openStore(loadConfig(repo))).hasContentHash(), false, "still legacy after refresh (no column added)");
   assert.equal(r.reused, 0, "legacy refresh reuses nothing (no cache)");
+});
+
+test("self-heal: refresh on a table missing fts_text rebuilds instead of erroring", async () => {
+  const repo = repoWith({ "a.ts": CODE });
+  const cfg = { ...loadConfig(repo), embedImpl: fakeEmbed };
+  // Forge a pre-FTS chunks table: rows WITHOUT the fts_text column current code always writes.
+  const db = await lancedb.connect(cfg.indexDir);
+  await db.createTable("chunks", [{
+    id: "x", path: "a.ts", language: "typescript",
+    chunk_start: 0, chunk_end: 10, line_start: 1, line_end: 2,
+    text: "old", mtime_ms: 1, embedding: [0, 0, 0],
+  }]);
+  assert.ok(!(await openStore(cfg).then((s) => s.chunkColumns())).has("fts_text"), "forged table lacks fts_text");
+  // A refresh must NOT throw a LanceDB schema mismatch — it self-heals by rebuilding.
+  const r = await buildIndex(cfg, { rebuild: false });
+  assert.ok(r.chunks > 0, "refresh produced rows");
+  assert.ok((r.warnings || []).some((w) => /schema/i.test(w)), "surfaces a schema-heal notice");
+  assert.ok((await openStore(cfg).then((s) => s.chunkColumns())).has("fts_text"), "rebuilt table has fts_text");
 });
 
 test("prefix-sensitivity: retitling a page changes the hash and forces re-embed", async () => {

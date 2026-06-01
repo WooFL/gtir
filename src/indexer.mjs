@@ -8,9 +8,24 @@ import { contextualizeChunk } from "./contextualize.mjs";
 import { embedTexts, contentHash } from "./embed.mjs";
 import { openStore } from "./store.mjs";
 
+// Columns the current row shape ALWAYS writes. content_hash is deliberately excluded — it's
+// optional: a pre-cache table runs in legacy (no-reuse) mode rather than being force-rebuilt.
+const REQUIRED_CHUNK_COLUMNS = ["id", "path", "language", "chunk_start", "chunk_end",
+  "line_start", "line_end", "text", "fts_text", "mtime_ms", "embedding"];
+
 export async function buildIndex(cfg, { rebuild = false } = {}) {
   const store = await openStore(cfg);
   const embed = cfg.embedImpl ?? ((texts) => embedTexts(texts, cfg));
+
+  // Self-heal across schema upgrades: an index built by an older gtir may lack a column the
+  // current row shape always writes (e.g. fts_text). Appending to it fails mid-refresh
+  // ("Found field not in schema"), which would also break the post-commit hook on every
+  // commit. Detect the drift up front and promote the whole run to a rebuild (drop+recreate).
+  let schemaHealed = false;
+  if (!rebuild) {
+    const cols = await store.chunkColumns();
+    if (cols && REQUIRED_CHUNK_COLUMNS.some((c) => !cols.has(c))) { rebuild = true; schemaHealed = true; }
+  }
 
   const manifest = rebuild ? {} : await store.loadManifest();
   const files = walkRepo(cfg);
@@ -26,6 +41,7 @@ export async function buildIndex(cfg, { rebuild = false } = {}) {
     if (lang && OPTIONAL_GRAMMARS.has(lang)) optionalCounts.set(lang, (optionalCounts.get(lang) ?? 0) + 1);
   }
   const warnings = [];
+  if (schemaHealed) warnings.push("index schema was out of date — rebuilt it (one-time, after a gtir upgrade).");
   for (const [lang, n] of optionalCounts) {
     if (grammarMissing(lang)) {
       warnings.push(`${n} ${lang.toUpperCase()} file${n > 1 ? "s" : ""} indexed as line-windows — `
