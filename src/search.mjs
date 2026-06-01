@@ -4,6 +4,13 @@ import { rerankDocs } from "./rerank.mjs";
 
 const RRF_K = 60; // canonical default (Cormack et al.), as in the original server.mjs
 
+// A "symbol-like" query is a single bare identifier (fetchWithRetry, LRUCache,
+// grid_shortest_path) — an exact-lookup intent where BM25 should lead. Natural-language
+// queries are multi-word and never match. Used to pick the fusion weight per query.
+export function isSymbolQuery(query) {
+  return /^[A-Za-z_$][\w$]*$/.test(String(query).trim());
+}
+
 // Pure fusion — unit-tested without a DB. Port of server.mjs bump()/RRF loop.
 // ftsWeight scales the BM25 branch's RRF contribution relative to the vector branch
 // (1 = equal/classic RRF; <1 favors the embedder). The dense branch is the stronger
@@ -79,7 +86,9 @@ export async function search(query, cfg, { k = 8, pathPrefix = null, language = 
     catch (err) { process.stderr.write(`[gtir] FTS unavailable, vector-only: ${err.message}\n`); }
   }
 
-  const fused = fuseRRF(vecRows, ftsRows, cfg.rerank ? rcand : limit, cfg.ftsWeight ?? 1);
+  // Query-adaptive fusion: exact-symbol lookups let BM25 lead; conceptual queries let the embedder lead.
+  const ftsW = isSymbolQuery(query) ? (cfg.ftsWeightSymbol ?? 1) : (cfg.ftsWeight ?? 1);
+  const fused = fuseRRF(vecRows, ftsRows, cfg.rerank ? rcand : limit, ftsW);
   if (!cfg.rerank) return fused;
   const rerankImpl = cfg.rerankImpl ?? ((q, docs) => rerankDocs(q, docs, cfg));
   const ranked = await rerankImpl(query, fused.map((r) => r.snippet));

@@ -1,6 +1,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { fuseRRF } from "../src/search.mjs";
+import { fuseRRF, isSymbolQuery } from "../src/search.mjs";
+
+test("isSymbolQuery: a single bare identifier is symbol-like; multi-word/NL queries are not", () => {
+  assert.equal(isSymbolQuery("fetchWithRetry"), true);
+  assert.equal(isSymbolQuery("LRUCache"), true);
+  assert.equal(isSymbolQuery("grid_shortest_path"), true);
+  assert.equal(isSymbolQuery("  slugify  "), true);                 // trimmed
+  assert.equal(isSymbolQuery("how do I verify a JWT"), false);
+  assert.equal(isSymbolQuery("verify token"), false);                // two tokens
+  assert.equal(isSymbolQuery(""), false);
+});
 
 test("fuseRRF ranks a doc appearing in both branches above single-branch docs", () => {
   const vec = [{ id: "x", path: "x.py", line_start: 1, line_end: 2, language: "python", text: "x" },
