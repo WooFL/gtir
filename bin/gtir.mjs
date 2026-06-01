@@ -204,11 +204,13 @@ async function main() {
       case "index": {
         const r = await runIndex({ repo, rebuild: !!args.rebuild, noCache: args.noCache ?? false });
         process.stderr.write(`gtir: indexed ${r.chunks} chunks (${r.reused ?? 0} reused, ${r.embedded ?? 0} embedded, ${r.skipped} skipped, ${r.evicted} evicted), dim=${r.dim}\n`);
+        for (const w of r.warnings ?? []) process.stderr.write(`gtir: note: ${w}\n`);
         break;
       }
       case "refresh": {
         const r = await runIndex({ repo, rebuild: false, noCache: args.noCache ?? false });
         process.stderr.write(`gtir: refresh — ${r.chunks} chunks updated (${r.reused ?? 0} reused, ${r.embedded ?? 0} embedded, ${r.skipped} skipped, ${r.evicted} evicted)\n`);
+        for (const w of r.warnings ?? []) process.stderr.write(`gtir: note: ${w}\n`);
         break;
       }
       case "search": {

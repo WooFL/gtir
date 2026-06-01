@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { extname } from "node:path";
 import { walkRepo } from "./walker.mjs";
+import { langFor } from "./languages.mjs";
+import { grammarMissing, OPTIONAL_GRAMMARS } from "./parser.mjs";
 import { chunkFile, stableId } from "./chunker.mjs";
 import { contextualizeChunk } from "./contextualize.mjs";
 import { embedTexts, contentHash } from "./embed.mjs";
@@ -13,6 +15,23 @@ export async function buildIndex(cfg, { rebuild = false } = {}) {
   const manifest = rebuild ? {} : await store.loadManifest();
   const files = walkRepo(cfg);
   const live = new Set(files.map((f) => f.relPath));
+
+  // Detect optional (build-on-demand) grammars this repo needs but doesn't have installed —
+  // e.g. the gitignored HLSL/GLSL wasm on a fresh clone. Those files are still indexed (via
+  // line-windows); we just return a notice so the caller can point the user at the fix.
+  // Lives in the index path (not init) so shaders added later are caught on the next run.
+  const optionalCounts = new Map();
+  for (const f of files) {
+    const lang = langFor(extname(f.absPath));
+    if (lang && OPTIONAL_GRAMMARS.has(lang)) optionalCounts.set(lang, (optionalCounts.get(lang) ?? 0) + 1);
+  }
+  const warnings = [];
+  for (const [lang, n] of optionalCounts) {
+    if (grammarMissing(lang)) {
+      warnings.push(`${n} ${lang.toUpperCase()} file${n > 1 ? "s" : ""} indexed as line-windows — `
+        + `the ${lang} grammar isn't installed. Run \`npm run build:shaders\` for function-aligned chunking.`);
+    }
+  }
 
   const toIndex = [];
   let skipped = 0;
@@ -42,7 +61,7 @@ export async function buildIndex(cfg, { rebuild = false } = {}) {
     // a git commit is common and must preserve the dim recorded by the last real
     // build. Report the existing dim if the index already exists.
     const meta = await store.readMeta();
-    return { scanned: files.length, skipped, evicted, chunks: 0, dim: Number(meta.dim) || 0, reused: 0, embedded: 0 };
+    return { scanned: files.length, skipped, evicted, chunks: 0, dim: Number(meta.dim) || 0, reused: 0, embedded: 0, warnings };
   }
 
   // Contextualize, then embed — reusing cached embeddings for unchanged content.
@@ -85,5 +104,5 @@ export async function buildIndex(cfg, { rebuild = false } = {}) {
   await store.upsertRows(rows);
   await store.writeMeta({ model: cfg.model, dim, version: cfg.version });
 
-  return { scanned: files.length, skipped, evicted, chunks: rows.length, dim, reused, embedded };
+  return { scanned: files.length, skipped, evicted, chunks: rows.length, dim, reused, embedded, warnings };
 }

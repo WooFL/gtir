@@ -29,6 +29,20 @@ function grammarPath(name) {
   return join(dirname(require.resolve("tree-sitter-wasms/package.json")), "out", file);
 }
 
+// Grammars that are NOT in tree-sitter-wasms and aren't bundled at publish: the shader
+// grammars, built on demand (npm run build:shaders) and therefore possibly absent. When a
+// repo contains files for one of these but the wasm isn't on disk, gtir still indexes them
+// (line-window fallback) — the indexer surfaces a notice so AST chunking can be enabled.
+export const OPTIONAL_GRAMMARS = new Set(["glsl", "hlsl"]);
+
+// True when langId maps to a grammar whose wasm can't be found on disk. Pure filesystem
+// check — no WASM load — so the indexer can cheaply detect a missing optional grammar.
+export function grammarMissing(langId) {
+  const name = WASM_NAME[langId];
+  if (!name) return false;
+  try { return !existsSync(grammarPath(name)); } catch { return true; }
+}
+
 export async function getParser(langId) {
   if (!initPromise) initPromise = Parser.init();
   await initPromise;
