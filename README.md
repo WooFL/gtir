@@ -95,7 +95,7 @@ RRF weight scales the BM25 branch relative to the vector branch. On the eval set
 both with no compromise — overall Recall@1 **0.85 → 0.90**, the conceptual *hard* tier matches
 vector-only (0.90) and the exact-symbol tier matches BM25 (0.92) — beating both a fixed weight (0.85)
 and vector-only (0.86). Detection is exact on the fixture (12/12 symbol queries, zero false positives
-on 81 NL queries). Override either weight per-repo in `.gtir/config.json`.
+on the 91 multi-word queries). Override either weight per-repo in `.gtir/config.json`.
 
 There's a third case between those two: a **natural-language query that *names* a symbol** — *"how does
 `fetchWithRetry` back off?"*. It isn't a bare identifier (so it's not BM25-led), but treating it as
@@ -304,13 +304,14 @@ point `--repo` at a tree that contains your golden file, that JSON gets indexed 
 and can surface in results — pass `--golden`/`--baseline` to files kept outside `--repo`, or add
 them to the index's skip list.
 
-**Tiers — gate vs meter:** golden entries carry a `tier`. The **`gate`** tier (51 near-saturated
-queries) is the strict regression floor; the **`hard`** tier (~30 queries over realistic decoys —
-near-duplicate implementations, test-file/doc-copy shadows, method-name ambiguity, and
-cross-vocabulary phrasings) is the improvement meter; the **`symbol`** tier (12 bare-identifier
-lookups like `LRUCache`) covers exact-symbol search, where BM25 carries the weight. The hard and
-symbol tiers pull in opposite directions (dense vs lexical), which is what makes them useful for
-tuning the fusion weight rather than overfitting to one query style. `gtir eval` prints overall **and** per-tier metrics, and **exits
+**Tiers — gate vs meter:** the **103** golden entries each carry a `tier`. The **`gate`** tier (51
+near-saturated queries) is the strict regression floor; the **`hard`** tier (30 queries over realistic
+decoys — near-duplicate implementations, test-file/doc-copy shadows, method-name ambiguity, and
+cross-vocabulary phrasings) is the improvement meter; the **`symbol`** tier (12 bare-identifier lookups
+like `LRUCache`) covers exact-symbol search, where BM25 carries the weight; and the **`mixed`** tier (10
+natural-language queries that *name* a symbol, e.g. *"how does `fetchWithRetry` back off"*) covers the
+identifier-boost case. The hard and symbol tiers pull in opposite directions (dense vs lexical), which
+is what makes them useful for tuning the fusion weight rather than overfitting to one query style. `gtir eval` prints overall **and** per-tier metrics, and **exits
 non-zero on a regression in the overall or `gate` metrics** (`tol = 0.02`). The `hard` tier is the
 *meter*, not a gate: it's small enough that one borderline query flipping rank 1↔2 between runs moves
 its recall by ~1/30 ≈ 0.03 (Ollama's embedding inference isn't bit-exact), so gating on it would
