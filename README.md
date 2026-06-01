@@ -14,9 +14,14 @@ laptop.
   asked but doesn't *say* it. gtir matches the intent of your question to the intent of your code.
 - **Ask in plain English** — *"evict the least-recently-used cache entry"*, *"sign a session token
   with an expiry"*, *"rotate a 3D vector"*. You don't need to remember what the function was named.
-- **One install, any project.** Run `gtir init` in a code repo or an Obsidian vault — it auto-detects
-  which, configures itself, and indexes. After that, re-indexing on each commit is incremental (only
-  changed files re-embed), so it stays fast on big repos.
+- **Your code *and* your notes — one tool.** Point `gtir init` at a codebase or an Obsidian vault; it
+  auto-detects which and picks the right model (a code embedder for repos, a prose one for notes). Most
+  semantic-search tools commit to one domain — gtir puts both behind the same query. Re-indexing stays
+  incremental (only changed files re-embed), so it's fast on big repos.
+- **Measured, not vibes.** gtir ships a committed eval harness — a golden query set, a saved baseline,
+  and a regression gate that fails CI when a change makes search worse. Most tools in this space embed
+  and hope; gtir can tell you its own Recall@1 and *prove* a change helped (or catch one that quietly
+  hurt). See [Measuring retrieval quality](#measuring-retrieval-quality--gtir-eval).
 - **Private by default.** Everything runs through a local **Ollama** model — no API keys, nothing sent
   to a server. Native on Windows, macOS, and Linux (no Unix-only shell scripts).
 - **Works inside your AI editor.** gtir ships an MCP server, so tools like Claude and Cursor can search
@@ -231,7 +236,9 @@ The stats line reports the split: `gtir: indexed N chunks (R reused, K embedded)
 
 ## Measuring retrieval quality — `gtir eval`
 
-gtir ships a committed eval harness so retrieval changes are measurable, not vibes:
+Most semantic-search tools give you no way to know whether a change improved retrieval or quietly
+regressed it — they embed and hope. gtir treats retrieval quality as a first-class, *measured* concern.
+It ships a committed eval harness so changes are provable, not vibes:
 
     gtir eval --repo eval/corpus --golden eval/golden.json --baseline eval/baseline.json            # score the golden set, compare to baseline
     gtir eval --repo eval/corpus --golden eval/golden.json --baseline eval/baseline.json --save     # set the current metrics as the new baseline
