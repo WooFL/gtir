@@ -229,6 +229,21 @@ test("declaredSymbols extracts all declared names across languages, de-duped", (
   assert.deepEqual(declaredSymbols("// fuseRRF is called here\nfuseRRF()"), []);  // a mention, not a declaration
 });
 
+test("declaredSymbols detects C-family function/method definitions (body brace, not calls)", () => {
+  // free function with no declaring keyword — the gap this fixes
+  assert.deepEqual(declaredSymbols("DiskCache& disk_cache() {\n  static DiskCache d;\n  return d;\n}"), ["disk_cache"]);
+  // qualified method definition → captures the method name, not the class
+  assert.deepEqual(declaredSymbols("void DiskCache::write(int x) const {\n  buf_ = x;\n}"), ["write"]);
+  // const method inside a class body (+ the class keyword)
+  assert.deepEqual(declaredSymbols("struct Vec {\n  float length() const { return 0; }\n}"), ["Vec", "length"]);
+  // a CALL is not a definition (no body brace)
+  assert.deepEqual(declaredSymbols("feedback::disk_cache().write(buf);"), []);
+  // a prototype is not a definition
+  assert.deepEqual(declaredSymbols("int compute(int n);"), []);
+  // control flow is not a definition
+  assert.deepEqual(declaredSymbols("if (ready) {\n  while (busy) {}\n}"), []);
+});
+
 test("parseToolName splits a verb prefix off, keeping underscores in the label", () => {
   assert.deepEqual(parseToolName("search_code"), { verb: "search", label: "code" });
   assert.deepEqual(parseToolName("read_my_wiki"), { verb: "read", label: "my_wiki" });
