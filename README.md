@@ -137,14 +137,24 @@ no `darwin-x64` prebuilt, so `npm install` resolves no native binary and gtir fa
 
 ## Setup (once per machine)
 
-```bash
-# Pull the embedding model (HuggingFace GGUF — Ollama has no official tag for it):
-ollama pull hf.co/jinaai/jina-code-embeddings-0.5b-GGUF:F16
+One command checks Ollama, **pulls the embedding model if it's missing**, and verifies embeddings work:
 
-# Verify Ollama serves it and record the embedding dimension:
-gtir setup --repo <project>
-# → gtir: Ollama OK — model=hf.co/jinaai/jina-code-embeddings-0.5b-GGUF:F16 dim=896
+```bash
+gtir doctor
 ```
+
+```text
+gtir doctor — ready ✓
+  ✓  Node 26.1.0
+  ✓  Ollama reachable at http://localhost:11434
+  ✓  model hf.co/jinaai/jina-code-embeddings-0.5b-GGUF:F16
+  ✓  embeddings (dim=896)
+```
+
+The first run pulls the model (HuggingFace GGUF, ~1 GB, one-time — Ollama has no official tag for it).
+Flags: `--no-pull` to only diagnose (prints the `ollama pull …` to run yourself), `--repo <project>`
+to check that repo's configured model (e.g. `nomic-embed-text` for a notes vault). It exits non-zero if
+anything's not ready, so it's usable as a preflight in scripts. (`gtir setup` remains as a bare probe.)
 
 ## Quick start
 

@@ -12,6 +12,7 @@ import { runInit } from "../src/init.mjs";
 import { resolveIndexes, serveStdio, printConfig } from "../src/mcp.mjs";
 import { evalGolden, flattenMetrics, compareBaseline, compareTiers } from "../src/eval.mjs";
 import { runDemo, formatDemo } from "../src/demo.mjs";
+import { runDoctor } from "../src/doctor.mjs";
 
 // --- programmatic entrypoints (used by tests and the dispatcher) ---
 
@@ -65,6 +66,7 @@ function parseArgs(argv) {
     else if (a === "--query") args.query = argv[++i];
     else if (a === "--grep-term") args.grepTerm = argv[++i];
     else if (a === "--no-color") args.noColor = true;
+    else if (a === "--no-pull") args.noPull = true;
     else if (a === "-k" || a === "--k") {
       const next = argv[i + 1];
       if (next !== undefined && !next.startsWith("-") && Number.isFinite(Number(next))) {
@@ -231,6 +233,13 @@ async function main() {
         process.stderr.write(`gtir: Ollama OK — model=${r.model} dim=${r.dim}\n`);
         break;
       }
+      case "doctor": {
+        const cfg = loadConfig(repo);
+        const r = await runDoctor(cfg, { pull: !args.noPull, log: (m) => process.stderr.write(`gtir: ${m}\n`) });
+        process.stderr.write(`gtir doctor — ${r.ready ? "ready ✓" : "NOT ready ✗"}\n${r.report}\n`);
+        process.exitCode = r.ready ? 0 : 1;  // set, don't process.exit() — let fetch sockets close (avoids a libuv exit assert on Windows)
+        break;
+      }
       case "hook": {
         if (args.remove) { removeHook(repo); process.stderr.write("gtir: hook removed\n"); }
         else { installHook(repo); process.stderr.write("gtir: post-commit refresh hook installed\n"); }
@@ -272,6 +281,7 @@ async function main() {
           "  gtir search  --repo <project> <query> [-k N] [--path-prefix P] [--language L]",
           "  gtir demo    [--repo <project>] [--query <q>]   # see meaning-match vs grep, on a sample corpus",
           "  gtir status  --repo <project>",
+          "  gtir doctor  [--repo <project>] [--no-pull]   # check Ollama, pull the model, verify readiness",
           "  gtir setup   --repo <project>",
           "  gtir hook    --repo <project> [--remove]",
           "  gtir mcp     --repo <project> [--label name:<repo>] [--print-config]",

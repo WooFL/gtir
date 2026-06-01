@@ -16,7 +16,7 @@ async function embedBatch(texts, cfg) {
   });
   if (!res.ok) {
     const detail = (await res.text?.().catch(() => "")) || res.status;
-    throw new Error(`Ollama embed failed (${detail}). Is Ollama running and the model pulled? Run: gtir setup`);
+    throw new Error(`Ollama embed failed (${detail}). Is Ollama running and the model pulled? Run: gtir doctor`);
   }
   const data = await res.json();
   if (!data.embeddings) throw new Error("Ollama returned no embeddings array");
