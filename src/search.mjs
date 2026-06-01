@@ -73,21 +73,26 @@ export async function search(query, cfg, { k = 8, pathPrefix = null, language = 
   if (where) vq = vq.where(where);
   const vecRows = await vq.toArray();
 
+  // Query-adaptive fusion weight: exact-symbol lookups let BM25 lead; conceptual queries let the
+  // embedder lead. A 0 weight contributes nothing to the fused score, so skip the FTS query entirely
+  // — the result is identical to vector-only, and the common (natural-language) path saves a query.
+  const ftsW = isSymbolQuery(query) ? (cfg.ftsWeightSymbol ?? 1) : (cfg.ftsWeight ?? 1);
+
   let ftsRows = [];
-  const ftsSearch = async (cols) => {
-    let fq = tbl.query().nearestToText(query, cols).limit(fanout);
-    if (where) fq = fq.where(where);
-    return fq.toArray();
-  };
-  try {
-    ftsRows = await ftsSearch(["fts_text"]);          // boosted FTS column (current schema)
-  } catch {
-    try { ftsRows = await ftsSearch(undefined); }      // fall back to the default/single FTS index (old schema)
-    catch (err) { process.stderr.write(`[gtir] FTS unavailable, vector-only: ${err.message}\n`); }
+  if (ftsW > 0) {
+    const ftsSearch = async (cols) => {
+      let fq = tbl.query().nearestToText(query, cols).limit(fanout);
+      if (where) fq = fq.where(where);
+      return fq.toArray();
+    };
+    try {
+      ftsRows = await ftsSearch(["fts_text"]);          // boosted FTS column (current schema)
+    } catch {
+      try { ftsRows = await ftsSearch(undefined); }      // fall back to the default/single FTS index (old schema)
+      catch (err) { process.stderr.write(`[gtir] FTS unavailable, vector-only: ${err.message}\n`); }
+    }
   }
 
-  // Query-adaptive fusion: exact-symbol lookups let BM25 lead; conceptual queries let the embedder lead.
-  const ftsW = isSymbolQuery(query) ? (cfg.ftsWeightSymbol ?? 1) : (cfg.ftsWeight ?? 1);
   const fused = fuseRRF(vecRows, ftsRows, cfg.rerank ? rcand : limit, ftsW);
   if (!cfg.rerank) return fused;
   const rerankImpl = cfg.rerankImpl ?? ((q, docs) => rerankDocs(q, docs, cfg));
