@@ -429,10 +429,22 @@ Default model tag (in `src/config.mjs`): `hf.co/jinaai/jina-code-embeddings-0.5b
 ## Development
 
 ```bash
-npm test        # node --test — full suite, hermetic (embedder is injected; no Ollama needed)
+npm test        # node --test — full hermetic suite (embedder + HTTP client injected; no network)
 ```
 
-Tests never hit the network: the Ollama client and embedder are injectable (`cfg.fetchImpl` / `cfg.embedImpl`), so unit and integration tests run offline against a fake embedder.
+The embedder and Ollama client are injectable (`cfg.embedImpl` / `cfg.fetchImpl`), so the chunker,
+fusion, eval math, and MCP layer all test offline against fakes — only the corpus eval needs a live Ollama.
+
+**The one rule: if you touch retrieval, measure it.** Snapshot a baseline with `gtir eval … --save`, make
+your change, then re-run — the eval prints per-tier deltas and **exits non-zero on a regression** in the
+overall or `gate` metrics. Every refinement in [How it works](#how-it-works) earned its place that way,
+and several candidates were measured and dropped. The exact command and the tier breakdown are under
+[Measuring retrieval quality](#measuring-retrieval-quality--gtir-eval).
+
+**Layout** (`src/`, one job per file): `walker` → `chunker` (+ `languages` / `parser`) → `contextualize`
+→ `embed` (Ollama) → `store` (LanceDB) → `search` (fusion); plus `mcp` (server), `eval` (metrics), and
+`bin/gtir.mjs` (the CLI). The 6 bundled tree-sitter grammars live in `grammars/` — gitignored, generated
+by `scripts/bundle-grammars.mjs` at `prepack`.
 
 ## License
 
