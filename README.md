@@ -41,6 +41,32 @@ turns, so the answer lands sooner. For the other big token sink — verbose comm
 runs, builds) — pair gtir with an output-compression proxy like [RTK](https://github.com/rtk-ai/rtk).
 (Token numbers above are illustrative.)
 
+## What makes it different
+
+Semantic code search isn't new. What gtir combines, that most tools don't:
+
+- **Code and notes behind one query.** Most tools pick a lane — code *or* documents — and embed
+  everything with a single model. gtir runs a code model on repos and a prose model on vaults, detects
+  which per project, and serves both through the same CLI and the same MCP server. The function and the
+  note explaining why it works are one `search` apart.
+- **Retrieval you can measure.** gtir ships a committed eval harness — a golden query set, a saved
+  baseline, and a regression gate that fails when a change makes search worse. Most tools give you no
+  way to tell whether a tweak helped or quietly hurt; gtir reports its own Recall@1 and proves the
+  delta.
+- **Ranking that adapts to the question.** Instead of one fixed blend of vector and keyword search,
+  gtir routes by intent: a bare identifier lets keyword search lead, a plain-English question lets the
+  embedder lead, and a question that names a symbol gets both. Each rule is in the tree because it moved
+  the eval numbers — a cross-encoder reranker and a bigger model were tried and dropped.
+- **Local, one runtime, every OS.** A single local Ollama model does the embedding: no Python, no
+  torch, no API keys, nothing leaves the machine. It runs natively on Windows instead of assuming a
+  Unix shell.
+- **Chunks that follow the code.** Files are split along the syntax tree — whole functions, classes,
+  structs — not fixed-size windows, so a hit comes back as a complete unit with its signature. That
+  extends to shaders, which most code search skips entirely.
+- **Made to be traversed.** In an editor it's more than a search box: search, read a span, outline a
+  file, find similar chunks, and jump to a symbol's definition or references — enough to navigate a
+  codebase, not just match strings against it.
+
 ## How it works
 
 ```
