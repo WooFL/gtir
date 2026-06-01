@@ -40,6 +40,8 @@ export const DEFAULTS = {
     "node_modules", ".git", "dist", "build", ".next", ".turbo", ".cache",
     "target", "coverage", ".obsidian", ".trash", ".worktrees", ".venv",
     ".gtir", "test-results", "playwright-report", "src-tauri",
+    "vendor", "third_party", "thirdparty", "external",           // vendored dependencies
+    "Debug", "debug", "Release", "release", "x64", ".vs", "obj",  // common C/C++/C# build output
   ],
   skipSuffixes: [".excalidraw.md", ".lock", ".min.js", ".min.css", ".map"],
 };
