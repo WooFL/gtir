@@ -26,6 +26,7 @@ export const DEFAULTS = {
   rerankCandidates: 24,                   // hybrid candidates to rerank before slicing to k
   rerankMaxChars: 2000,                   // per-document char cap (~512 tokens, bge context)
   bm25Boost: 3,                           // repeat the path+scope+decl head N times in the FTS text so BM25 weights symbol/path matches above incidental body hits (0 = index raw text)
+  ftsWeight: 0.1,                         // BM25 branch weight in RRF fusion relative to the vector branch (1 = classic RRF). 0.1 favors the embedder on conceptual/cross-vocab queries while keeping BM25's exact-symbol wins; tuned on the eval set (hard tier +6.7pp, symbol tier retained). Set 1 for classic RRF, 0 for vector-only.
   version: 1,
   skipDirs: [
     "node_modules", ".git", "dist", "build", ".next", ".turbo", ".cache",

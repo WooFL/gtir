@@ -79,5 +79,17 @@
   {"query":"where do we keep user session records","path":"notes/data-model.md","lines":[10,13],"tier":"hard"},
   {"query":"how is the event bus structured in our architecture","path":"notes/architecture.md","lines":[11,14],"tier":"hard"},
   {"query":"split a sentence into individual words","path":"text/tokenizer.py","lines":[8,10],"tier":"hard"},
-  {"query":"find words within an edit distance of a query","path":"text/levenshtein.py","lines":[13,16],"tier":"hard"}
+  {"query":"find words within an edit distance of a query","path":"text/levenshtein.py","lines":[13,16],"tier":"hard"},
+  {"query":"fetchWithRetry","path":"http/retry.ts","lines":[9,23],"tier":"symbol"},
+  {"query":"isRetryable","path":"http/retry.ts","lines":[25,27],"tier":"symbol"},
+  {"query":"verifyToken","path":"auth/jwt.ts","lines":[9,15],"tier":"symbol"},
+  {"query":"signToken","path":"auth/jwt.ts","lines":[2,7],"tier":"symbol"},
+  {"query":"LRUCache","path":"cache/lru.py","lines":[1,18],"tier":"symbol"},
+  {"query":"LFUCache","path":"cache/lfu.py","lines":[4,21],"tier":"symbol"},
+  {"query":"IngressThrottleStrategy","path":"edge/node_a.py","lines":[3,40],"tier":"symbol"},
+  {"query":"EgressThrottleStrategy","path":"edge/node_b.py","lines":[3,39],"tier":"symbol"},
+  {"query":"PeerThrottleStrategy","path":"edge/node_c.py","lines":[3,40],"tier":"symbol"},
+  {"query":"grid_shortest_path","path":"graph/bfs_grid.py","lines":[5,18],"tier":"symbol"},
+  {"query":"slugify","path":"text/slugify.ts","lines":[3,10],"tier":"symbol"},
+  {"query":"levenshtein","path":"text/levenshtein.py","lines":[1,10],"tier":"symbol"}
 ]

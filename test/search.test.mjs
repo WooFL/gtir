@@ -13,6 +13,14 @@ test("fuseRRF ranks a doc appearing in both branches above single-branch docs", 
   assert.ok(ranked[0].vec_rank === 1 && ranked[0].fts_rank === 1);
 });
 
+test("fuseRRF ftsWeight scales the BM25 branch (1 = classic RRF, 0 = vector-only order)", () => {
+  const vec = [{ id: "a", path: "a.ts", line_start: 1, line_end: 2, language: "ts", text: "a" },
+               { id: "b", path: "b.ts", line_start: 1, line_end: 2, language: "ts", text: "b" }];
+  const fts = [{ id: "b", path: "b.ts", line_start: 1, line_end: 2, language: "ts", text: "b" }]; // b also ranks #1 in BM25
+  assert.equal(fuseRRF(vec, fts, 5, 1)[0].path, "b.ts");   // BM25 lifts b above the vector-#1 a
+  assert.equal(fuseRRF(vec, fts, 5, 0)[0].path, "a.ts");   // BM25 ignored → vector order (a first)
+});
+
 import { applyRerank } from "../src/search.mjs";
 
 const F = (p) => ({ path: p, snippet: p, score: 0 });

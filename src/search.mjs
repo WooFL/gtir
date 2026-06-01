@@ -5,16 +5,20 @@ import { rerankDocs } from "./rerank.mjs";
 const RRF_K = 60; // canonical default (Cormack et al.), as in the original server.mjs
 
 // Pure fusion — unit-tested without a DB. Port of server.mjs bump()/RRF loop.
-export function fuseRRF(vecRows, ftsRows, limit) {
+// ftsWeight scales the BM25 branch's RRF contribution relative to the vector branch
+// (1 = equal/classic RRF; <1 favors the embedder). The dense branch is the stronger
+// signal on conceptual/cross-vocabulary queries; BM25 still wins exact-symbol lookups
+// even at a low weight because its rank-1 signal there is unambiguous.
+export function fuseRRF(vecRows, ftsRows, limit, ftsWeight = 1) {
   const fused = new Map();
-  const bump = (rows, key) => rows.forEach((r, i) => {
+  const bump = (rows, key, weight) => rows.forEach((r, i) => {
     const cur = fused.get(r.id) ?? { row: r, rrf: 0, vec_rank: null, fts_rank: null };
-    cur.rrf += 1 / (RRF_K + i + 1);
+    cur.rrf += weight / (RRF_K + i + 1);
     cur[key] = i + 1;
     fused.set(r.id, cur);
   });
-  bump(vecRows, "vec_rank");
-  bump(ftsRows, "fts_rank");
+  bump(vecRows, "vec_rank", 1);
+  bump(ftsRows, "fts_rank", ftsWeight);
   return [...fused.values()]
     .sort((a, b) => b.rrf - a.rrf)
     .slice(0, limit)
@@ -75,7 +79,7 @@ export async function search(query, cfg, { k = 8, pathPrefix = null, language = 
     catch (err) { process.stderr.write(`[gtir] FTS unavailable, vector-only: ${err.message}\n`); }
   }
 
-  const fused = fuseRRF(vecRows, ftsRows, cfg.rerank ? rcand : limit);
+  const fused = fuseRRF(vecRows, ftsRows, cfg.rerank ? rcand : limit, cfg.ftsWeight ?? 1);
   if (!cfg.rerank) return fused;
   const rerankImpl = cfg.rerankImpl ?? ((q, docs) => rerankDocs(q, docs, cfg));
   const ranked = await rerankImpl(query, fused.map((r) => r.snippet));
