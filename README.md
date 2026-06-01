@@ -222,7 +222,10 @@ Default model tag (in `src/config.mjs`): `hf.co/jinaai/jina-code-embeddings-0.5b
 
 ## Known limitations
 
-- **FTS index rebuilds fully on every upsert.** Correct, but O(corpus) per write — fine for solo-dev repos, noticeable on very large monorepos during incremental refresh.
+- **FTS index is maintained incrementally.** First build (and `gtir index --rebuild`) build the BM25
+  index in full; each `gtir refresh` then folds only the changed fragments in via LanceDB `optimize()`
+  (O(changed), not O(corpus)). Deleted rows are filtered from results immediately and physically pruned
+  on the next refresh that adds rows.
 - **Oversize *leaf* nodes are re-split, not dropped.** A function/struct larger than `maxChars`
   (2000) with no nested target nodes is split into line-aware windows (same fallback as
   grammarless files), so its content stays searchable. Oversize *containers* (class/impl/mod)
