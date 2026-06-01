@@ -33,24 +33,24 @@ blending **semantic** (vector) and **keyword** (BM25) search. The details are be
 
 ### Why it saves tokens
 
-If you point an AI coding agent (Claude Code, Cursor, …) at a large repo, the expensive part is
-*finding* the right code. Without retrieval the agent guesses a `grep`, gets a pile of matches, and
-reads whole files into its context to see which one is right — most of those tokens pay for code it
-didn't need.
-
-gtir turns that hunt into a single call. A semantic query returns just the handful of relevant
-**chunks** — each a focused span with its `file:line` — so the agent loads only what actually matters
-instead of dumping whole files. The shape of the saving:
+Finding the right code is the expensive part of an agent's work. With `grep`, the agent searches a
+guess, gets a pile of matches, and **reads candidate files into its context to judge which one is
+right** — most of those tokens pay for code it then throws away. gtir does the relevance-ranking
+*outside* the context window (a local embedding compare — **zero tokens** in the model's context) and
+hands back just the top few **chunks**, each a focused `file:line` span. The agent reads the winner,
+not the rejects.
 
 | Find *"where do we verify a JWT?"* | Tokens pulled into context |
 | --- | --- |
 | `grep` → read 3–4 candidate files | ~10,000–20,000 |
-| `gtir search` → top 5 chunks | ~2,000–3,000 |
+| `gtir search` → top hits | ~2,000–3,000 |
 
-So a find-the-code step costs on the order of **5–10× fewer tokens**, and indexing is incremental, so
-the next query is just as cheap. Smaller context is also *sharper* context — less haystack means the
-model spends its attention on the lines that matter. (Numbers are illustrative and depend on your
-files; the point is the shape — targeted chunks, not whole-file dumps.)
+That gap is **structural, not a quirk of today's grep.** Even a perfect grep returns text the agent
+still has to read to rank, and you can't grep a *concept* — *"give up on a flaky dependency"* has no
+keyword if the code calls it `backoffFetch`. So the saving grows exactly where grep gets expensive: big
+repos, vocabulary mismatch, multi-guess hunts. The two are complementary — grep for an exact string you
+already know, gtir for finding by meaning. (Numbers illustrative; and a smaller, cleaner context is also
+a *sharper* one.)
 
 ## How it works
 
@@ -66,59 +66,22 @@ walk repo (.gitignore-aware)
 search: query → embed → vector branch + BM25 branch → query-adaptive Reciprocal Rank Fusion (k=60)
 ```
 
-Everything runs through **one runtime — Ollama** (the same daemon that serves `nomic-embed-text` for your notes). No Python, no sentence-transformers, no torch.
+Everything runs through **one runtime — Ollama** (no Python, no sentence-transformers, no torch).
 
-The AST scope breadcrumb is **additive** — it prepends the enclosing class/module to the chunk's
-informative first line rather than replacing it. It restores the context a method loses when it is
-sliced out of a large class: on a scope-ambiguous fixture (two big classes with identically-named
-methods), it lifted Recall@1 and Sec-hit@1 by ~6 points each via `gtir eval`, with no regression on
-the rest of the corpus. (No LLM, no second model — it reuses structure tree-sitter already parsed.)
-The gain is corpus-dependent — it helps codebases with large classes and method-name ambiguity,
-and is neutral elsewhere. Disable it per-repo with `{ "contextScope": false }` in `.gtir/config.json`.
+Search blends a **dense** (vector) branch with a **lexical** (BM25) branch, plus a few small
+refinements — each kept only because it moved the numbers on the
+[eval harness](#measuring-retrieval-quality--gtir-eval), and each tunable per-repo in `.gtir/config.json`:
 
-The BM25 branch indexes a **field-weighted** text rather than the raw chunk body: the tokenized file
-path, enclosing scope, and declaration line are repeated `bm25Boost` (=3) times ahead of the body, so
-a lexical match on a *symbol or path* outweighs an incidental mention of it in some other file's body.
-This is the main defense against shadowing — a test or doc that merely references a symbol no longer
-outranks the source that defines it. Measured on the fixture via `gtir eval` (embeddings unchanged, so
-the gain is purely BM25): overall Recall@1 0.77 → ~0.82, gate tier 0.84 → 0.90. Tune or disable it with
-`{ "bm25Boost": 0 }` in `.gtir/config.json` (0 indexes the raw body, as before).
+- **Field-weighted BM25** (`bm25Boost`) — indexes the path / scope / declaration ahead of the body, so a
+  symbol match beats an incidental mention. The main defense against a test or doc outranking the source it references.
+- **Query-adaptive fusion** (`ftsWeight` / `ftsWeightSymbol`) — routes by intent: a bare-identifier lookup lets BM25 lead, a natural-language query lets the embedder lead. Avoids the compromise a single fixed weight forces.
+- **Identifier boost** (`ftsWeightMixed`) — a natural-language query that *names* a symbol (`fetchWithRetry`) gets a lexical nudge instead of being treated as purely conceptual.
+- **Test-file demotion** (`testPenalty`) — in a code repo, a query for an implementation won't surface its test at #1 (unless you're actually asking about tests).
+- **Scope breadcrumb** (`contextScope`) — prepends the enclosing class/module to each chunk, restoring context a method loses when it's sliced out of a large class.
 
-**Query-adaptive fusion (`ftsWeight` / `ftsWeightSymbol`).** The two branches have opposite strengths:
-the dense embedder wins conceptual and cross-vocabulary queries, while BM25 wins exact-symbol lookups
-(searching `fetchWithRetry` by name). An ablation showed *any* single fusion weight is a compromise —
-it trades one for the other. So gtir routes by query intent instead: `isSymbolQuery()` flags a query
-that is a single bare identifier (`fetchWithRetry`, `LRUCache`, `grid_shortest_path`) as an
-exact-lookup, and those get `ftsWeightSymbol` (default `1` — classic equal-weight RRF, BM25 leads);
-every natural-language query gets `ftsWeight` (default `0` — vector-only, the embedder leads). Each
-RRF weight scales the BM25 branch relative to the vector branch. On the eval set this is the best of
-both with no compromise — overall Recall@1 **0.85 → 0.90**, the conceptual *hard* tier matches
-vector-only (0.90) and the exact-symbol tier matches BM25 (0.92) — beating both a fixed weight (0.85)
-and vector-only (0.86). Detection is exact on the fixture (12/12 symbol queries, zero false positives
-on the 91 multi-word queries). Override either weight per-repo in `.gtir/config.json`.
-
-There's a third case between those two: a **natural-language query that *names* a symbol** — *"how does
-`fetchWithRetry` back off?"*. It isn't a bare identifier (so it's not BM25-led), but treating it as
-purely conceptual throws away the exact token. So when a query carries an identifier-shaped token
-(camelCase / snake_case / PascalCase-with-acronym — *not* plain words or bare acronyms like `JWT`),
-gtir mixes in a lexical boost at `ftsWeightMixed` (default `0.3`). Measured on a dedicated `mixed` tier
-of such queries: Recall@1 **0.90 → 1.00**, with **zero change** to the gate / hard / symbol tiers
-(the boost is gated on identifier presence, so the conceptual path is untouched). The win is the
-near-twin case — `IngressThrottleStrategy` vs `EgressThrottleStrategy` — where the exact name
-disambiguates files the embedder confuses. Set `ftsWeightMixed: 0` to disable.
-
-**Test-file demotion (`testPenalty`, code repos only).** Field-weighting handles *incidental*
-mentions, but a *test* for an implementation is a strong, legitimate match — `config.test.mjs`
-genuinely is about config — so it can still outrank the source you actually want. In a code repo a
-query for an implementation almost never wants its test, so gtir multiplies the fused score of
-conventional test paths (`*.test.*`, `*_test.go`, `test_*.py`, `tests/`, `spec/`) by `testPenalty`
-(default `0.5`), sinking them below comparably-ranked source. Two guards keep it honest: it is skipped
-when the query is itself test-seeking (mentions tests / specs / mocks / fixtures — so *"test that a
-retry succeeds"* still finds the test), and it is disabled entirely in notes mode, where `.md` *is* the
-content. Measured on gtir's own source with its real tests as decoys (one shared index, so the prior is
-the only variable): overall Recall@1 **0.70 → 0.76**, the exact-symbol tier **0.75 → 1.00**, with
-provably zero change on the fixture (no fixture golden target is a test file). Set `{ "testPenalty": 1 }`
-to disable.
+That "kept only if measured" rule cuts both ways: several plausible tricks — a cross-encoder reranker, a
+structural-centrality prior, a bigger embedding model — were tried, measured as no better, and dropped.
+The retrieval is tuned against evidence, not guessed.
 
 ## Install
 
