@@ -50,6 +50,25 @@ test("chunkFile falls back to recursive for grammarless ext", async () => {
   assert.equal(chunks[0].language, "wgsl");
 });
 
+test("chunkFile (cpp) AST-chunks methods with a class/namespace scope breadcrumb", async () => {
+  // The class exceeds maxChars (container → dropped), so its methods surface as their own chunks.
+  // `scope` is only ever set on the AST path, so finding it proves the cpp grammar actually loaded
+  // (a silent recursive fallback would label language "cpp" too, but never produce a scope).
+  const cpp = [
+    "namespace geo {",
+    "class Widget {",
+    "public:",
+    "  void build() { configure(); warmUp(); /* a long-ish body so this method comfortably clears minChars */ }",
+    "  int render() const { drawFrame(); /* another padded body so this method also clears the minimum size */ return 0; }",
+    "};",
+    "}",
+  ].join("\n");
+  const chunks = await chunkFile("w.cpp", ".cpp", cpp, { maxChars: 150, minChars: 20, overlapChars: 20 });
+  assert.equal(chunks[0].language, "cpp");
+  const scoped = chunks.filter((c) => c.scope && c.scope.includes("Widget"));
+  assert.ok(scoped.length >= 1, `expected a chunk scoped to Widget, got: ${JSON.stringify(chunks.map((c) => c.scope))}`);
+});
+
 test("cAST merge: many tiny adjacent functions coalesce into fewer chunks", async () => {
   // Six one-line functions separated by blank lines.
   // Source layout (0-indexed rows):

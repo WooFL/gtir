@@ -12,14 +12,16 @@ const langCache = new Map();
 // getParser is only ever reached for these (chunkWithTreesitter recurses for the rest), so the
 // other ~30 grammars in tree-sitter-wasms are never used. Keep in sync with scripts/bundle-grammars.mjs.
 const WASM_NAME = { typescript: "typescript", tsx: "tsx", javascript: "javascript",
-  python: "python", rust: "rust", go: "go" };
+  python: "python", rust: "rust", go: "go", c: "c", cpp: "cpp", objc: "objc" };
 
-function wasmsDir() {
-  // Prefer the grammars bundled into the package (grammars/, populated at prepack). Fall back to
-  // the tree-sitter-wasms devDependency for a fresh git clone before anything's been bundled.
-  const bundled = fileURLToPath(new URL("../grammars", import.meta.url));
-  if (existsSync(join(bundled, "tree-sitter-typescript.wasm"))) return bundled;
-  return join(dirname(require.resolve("tree-sitter-wasms/package.json")), "out");
+function grammarPath(name) {
+  // Prefer the grammar bundled into the package (grammars/, populated at prepack), checked PER
+  // grammar so a partial bundle still works; fall back to the tree-sitter-wasms devDependency
+  // (present in a git clone). A published install has the full bundle; a clone has the devDep.
+  const file = `tree-sitter-${name}.wasm`;
+  const bundled = fileURLToPath(new URL(`../grammars/${file}`, import.meta.url));
+  if (existsSync(bundled)) return bundled;
+  return join(dirname(require.resolve("tree-sitter-wasms/package.json")), "out", file);
 }
 
 export async function getParser(langId) {
@@ -29,7 +31,7 @@ export async function getParser(langId) {
   const name = WASM_NAME[langId];
   if (!name) { langCache.set(langId, null); return null; }
   try {
-    const lang = await Language.load(join(wasmsDir(), `tree-sitter-${name}.wasm`));
+    const lang = await Language.load(grammarPath(name));
     const parser = new Parser();
     parser.setLanguage(lang);
     langCache.set(langId, parser);

@@ -8,6 +8,8 @@ const CONTAINER_TYPES = new Set([
   "interface_declaration", "enum_declaration", "module_declaration",
   "internal_module", "namespace_declaration",
   "impl_item", "trait_item", "mod_item",
+  "namespace_definition", "class_specifier", "struct_specifier",   // C++
+  "class_interface", "class_implementation",                       // Objective-C
 ]);
 
 // The declared name of a node: prefer the `name` field, else the first

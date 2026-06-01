@@ -8,7 +8,7 @@ import { mkdirSync, copyFileSync, existsSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const NEEDED = ["typescript", "tsx", "javascript", "python", "rust", "go"];
+const NEEDED = ["typescript", "tsx", "javascript", "python", "rust", "go", "c", "cpp", "objc"];
 
 const require = createRequire(import.meta.url);
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");

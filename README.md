@@ -80,6 +80,11 @@ search: query → embed → vector branch + BM25 branch → query-adaptive Recip
 
 Everything runs through **one runtime — Ollama** (no Python, no sentence-transformers, no torch).
 
+**Languages:** AST-aware chunking for TypeScript/JS, Python, Rust, Go, **C, C++, and Objective-C**; **Metal
+and C-style shaders (HLSL / GLSL / Slang)** borrow the C++ grammar (best-effort — tree-sitter is
+error-tolerant); Markdown is split by heading. Everything else — and WGSL — falls back to line-window
+chunking, so it's still fully searchable, just not function-aligned.
+
 Search blends a **dense** (vector) branch with a **lexical** (BM25) branch, plus a few small
 refinements — each kept only because it moved the numbers on the
 [eval harness](#measuring-retrieval-quality--gtir-eval), and each tunable per-repo in `.gtir/config.json`:
@@ -450,7 +455,7 @@ and several candidates were measured and dropped. The exact command and the tier
 
 **Layout** (`src/`, one job per file): `walker` → `chunker` (+ `languages` / `parser`) → `contextualize`
 → `embed` (Ollama) → `store` (LanceDB) → `search` (fusion); plus `mcp` (server), `eval` (metrics), and
-`bin/gtir.mjs` (the CLI). The 6 bundled tree-sitter grammars live in `grammars/` — gitignored, generated
+`bin/gtir.mjs` (the CLI). The 9 bundled tree-sitter grammars live in `grammars/` — gitignored, generated
 by `scripts/bundle-grammars.mjs` at `prepack`.
 
 ## License
