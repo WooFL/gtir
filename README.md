@@ -15,7 +15,7 @@ walk repo (.gitignore-aware)
     grammarless files use path + first line (opt-in claude-cli tier still available)
   → embed via Ollama /api/embed  (jina-code-embeddings-0.5b)
   → LanceDB upsert (vectors + BM25 FTS over a path/scope/decl-weighted text)
-search: query → embed → vector branch + BM25 branch → Reciprocal Rank Fusion (k=60)
+search: query → embed → vector branch + BM25 branch → weighted Reciprocal Rank Fusion (k=60)
 ```
 
 Everything runs through **one runtime — Ollama** (the same daemon that serves `nomic-embed-text` for your notes). No Python, no sentence-transformers, no torch.
@@ -35,6 +35,16 @@ This is the main defense against shadowing — a test or doc that merely referen
 outranks the source that defines it. Measured on the fixture via `gtir eval` (embeddings unchanged, so
 the gain is purely BM25): overall Recall@1 0.77 → ~0.82, gate tier 0.84 → 0.90. Tune or disable it with
 `{ "bm25Boost": 0 }` in `.gtir/config.json` (0 indexes the raw body, as before).
+
+**Weighted fusion (`ftsWeight`, default 0.1).** The two branches have opposite strengths: the dense
+embedder wins conceptual and cross-vocabulary queries, while BM25 wins exact-symbol lookups (searching
+`fetchWithRetry` by name). An ablation on the eval set showed classic equal-weight RRF *over-trusts*
+BM25 on conceptual queries (it surfaces keyword-sharing decoys), while dropping BM25 entirely abandons
+symbol search. So the BM25 branch is down-weighted in the fusion: `ftsWeight` scales its RRF
+contribution relative to the vector branch (`1` = classic RRF, `0` = vector-only). The default `0.1`
+lets the embedder lead on conceptual queries while BM25 still wins exact-symbol matches (its rank-1
+signal there is unambiguous). On the eval set this lifted the hard tier 0.70 → 0.77 and held the
+symbol tier at 0.92. Override per-repo in `.gtir/config.json`.
 
 ## Install
 
@@ -132,8 +142,10 @@ them to the index's skip list.
 **Tiers — gate vs meter:** golden entries carry a `tier`. The **`gate`** tier (51 near-saturated
 queries) is the strict regression floor; the **`hard`** tier (~30 queries over realistic decoys —
 near-duplicate implementations, test-file/doc-copy shadows, method-name ambiguity, and
-cross-vocabulary phrasings) is the improvement meter, sitting at Recall@1 ≈ 0.63 so a real
-retrieval gain has room to register. `gtir eval` prints overall **and** per-tier metrics, and **exits
+cross-vocabulary phrasings) is the improvement meter; the **`symbol`** tier (12 bare-identifier
+lookups like `LRUCache`) covers exact-symbol search, where BM25 carries the weight. The hard and
+symbol tiers pull in opposite directions (dense vs lexical), which is what makes them useful for
+tuning the fusion weight rather than overfitting to one query style. `gtir eval` prints overall **and** per-tier metrics, and **exits
 non-zero on a regression in the overall or `gate` metrics** (`tol = 0.02`). The `hard` tier is the
 *meter*, not a gate: it's small enough that one borderline query flipping rank 1↔2 between runs moves
 its recall by ~1/30 ≈ 0.03 (Ollama's embedding inference isn't bit-exact), so gating on it would
