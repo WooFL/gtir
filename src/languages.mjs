@@ -20,12 +20,11 @@ const EXT_TO_TS_LANG = {
   ".cpp": "cpp", ".cc": "cpp", ".cxx": "cpp", ".hpp": "cpp", ".hh": "cpp", ".hxx": "cpp",
   // Objective-C / Objective-C++ — real grammar.
   ".m": "objc", ".mm": "objc",
-  // Shaders: Metal is C++-based; HLSL/GLSL/Slang are C-style. No dedicated grammars ship, so they
-  // borrow the C++ grammar — tree-sitter is error-tolerant and still finds functions/structs, and the
-  // chunker falls back to line-windows when it can't. WGSL is Rust-like, so it stays grammarless.
-  ".metal": "cpp", ".hlsl": "cpp", ".hlsli": "cpp", ".fx": "cpp", ".fxh": "cpp",
-  ".glsl": "cpp", ".vert": "cpp", ".frag": "cpp", ".comp": "cpp", ".geom": "cpp", ".tesc": "cpp", ".tese": "cpp",
-  ".slang": "cpp", ".wgsl": null,
+  // Shaders: HLSL and GLSL have first-class grammars (vendored). Slang is HLSL-derived → hlsl.
+  // Metal is C++14-based → cpp (no Metal grammar). WGSL is Rust-like → grammarless (recursive).
+  ".hlsl": "hlsl", ".hlsli": "hlsl", ".fx": "hlsl", ".fxh": "hlsl", ".slang": "hlsl",
+  ".glsl": "glsl", ".vert": "glsl", ".frag": "glsl", ".comp": "glsl", ".geom": "glsl", ".tesc": "glsl", ".tese": "glsl",
+  ".metal": "cpp", ".wgsl": null,
   ".json": "json", ".toml": "toml", ".yml": "yaml", ".yaml": "yaml",
   ".css": "css", ".html": "html", ".md": "markdown", ".mdx": "markdown",
 };
@@ -50,6 +49,8 @@ const CHUNK_TARGET_TYPES_BY_LANG = {
   cpp: ["function_definition", "class_specifier", "struct_specifier", "enum_specifier",
     "union_specifier", "namespace_definition", "template_declaration", "type_definition"],
   objc: ["class_interface", "class_implementation", "method_definition", "function_definition"],
+  glsl: ["function_definition", "struct_specifier", "enum_specifier", "type_definition"],
+  hlsl: ["function_definition", "struct_specifier", "enum_specifier", "type_definition"],
 };
 
 export function langFor(ext) {
