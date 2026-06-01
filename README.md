@@ -80,13 +80,19 @@ search: query → embed → vector branch + BM25 branch → query-adaptive Recip
 
 Everything runs through **one runtime — Ollama** (no Python, no sentence-transformers, no torch).
 
-**Languages:** AST-aware chunking for TypeScript/JS, Python, Rust, Go, **C, C++, and Objective-C**, plus
-**first-class HLSL and GLSL shaders** (real grammars — they parse `register()`/`SV_TARGET` semantics
-cleanly, where the old C++ approximation choked). Slang borrows the HLSL grammar; Metal borrows C++.
-Markdown is split by heading. Everything else — and WGSL — falls back to line-window chunking, so it's
-still fully searchable, just not function-aligned. (The shader grammar wasm aren't in the bundle —
-when gtir sees `.hlsl`/`.glsl` files without them it says so; run `gtir fetch-grammars` to download
-them, prebuilt and ~5 MB, no toolchain. Until then shaders fall back to line-windows.)
+**Supported languages.** gtir chunks by AST wherever it has a tree-sitter grammar, and falls back to
+line-window chunking everywhere else — *grammarless files are still fully indexed and searchable, just
+not function-aligned*:
+
+- **AST-aware** (function/class/struct-level chunks): TypeScript/JS/TSX, Python, Rust, Go, **C, C++,
+  Objective-C**, and — once installed — **HLSL and GLSL shaders**.
+- **Shaders:** `.hlsl`/`.glsl` get real grammars that parse `register()`/`SV_TARGET` semantics cleanly
+  (the old C++ approximation choked on them). `.slang` borrows the HLSL grammar, `.metal` borrows C++,
+  `.wgsl` falls back to line-windows. The shader grammars aren't bundled — run
+  [`gtir fetch-grammars`](#shader-grammars-gtir-fetch-grammars) once (~5 MB, no toolchain); until then
+  gtir says so and indexes shaders as line-windows.
+- **Markdown** is split by heading, each chunk carrying its heading breadcrumb + frontmatter tags.
+- **Everything else** (JSON/YAML/TOML/HTML/CSS and any unlisted extension) → line-window chunking.
 
 Search blends a **dense** (vector) branch with a **lexical** (BM25) branch, plus a few small
 refinements — each kept only because it moved the numbers on the
@@ -241,6 +247,16 @@ For a code repo with a **nested vault** (e.g. `wiki/`), it auto-adds that folder
 
 Flags: `--notes` / `--code` to force the mode, `--no-index`, `--no-hook`.
 
+### What gets indexed (and skipped)
+
+The walk is **`.gitignore`-aware** — anything your `.gitignore` excludes, gtir skips too. On top of that it skips:
+
+- **Noise / build / vendored directories** (`skipDirs`): `node_modules`, `.git`, `dist`, `build`, `target`, `coverage`, `.next`, `.turbo`, `.cache`, `.venv`, `.obsidian`, `.gtir`, … plus common C/C++/C# build output (`Debug`, `Release`, `x64`, `obj`, `.vs`) and vendored-dependency folders (`vendor`, `third_party`, `thirdparty`, `external`).
+- **Generated suffixes** (`skipSuffixes`): `.min.js`, `.min.css`, `.map`, `.lock`, `.excalidraw.md`.
+- **Large files**: anything over `maxFileBytes` (256 KB default).
+
+Both lists live in your `.gtir/config.json` (written by `gtir init`) — edit `skipDirs` / `skipSuffixes` to add or remove entries. Note these keys **replace** the defaults rather than merging, so keep the entries you still want when you customize them.
+
 ## Use
 
 ```bash
@@ -249,11 +265,25 @@ gtir refresh --repo <project> [--no-cache]              # incremental (changed f
 gtir search  "how are sessions created" --repo <project> [-k 8] [--language python] [--path-prefix src/]
 gtir status  --repo <project>                          # model, dim, file count
 gtir hook    --repo <project> [--remove]               # install/remove post-commit auto-refresh
+gtir fetch-grammars                                    # download prebuilt HLSL/GLSL shader grammars (~5 MB)
 ```
 
 - `search` prints JSON to **stdout** (pipe to `jq`); all human-readable logs go to stderr.
 - The index lives in `<project>/.gtir/` — regenerable, add it to `.gitignore`.
 - `gtir hook` installs a git `post-commit` hook so the index refreshes itself as you commit; it's idempotent and preserves any existing hook.
+
+### Shader grammars (`gtir fetch-grammars`)
+
+gtir bundles AST grammars for ~9 languages, but the **HLSL and GLSL** shader grammars can't ride along the same way: they aren't published in the upstream grammar package, and rebuilding them from source needs a heavy compiler toolchain (a ~510 MB wasi-sdk). So they're distributed as a small **prebuilt download** instead:
+
+```bash
+gtir fetch-grammars          # ~5 MB, no toolchain — then: gtir index --rebuild
+```
+
+- When gtir indexes a repo containing `.hlsl`/`.glsl` files and the grammar isn't installed, it **prints a notice** and indexes those files as line-windows (still searchable) for now.
+- `gtir fetch-grammars` downloads the prebuilt wasm (**~5 MB total** — WebAssembly is OS/CPU-independent, so one artifact works on every machine), **verifies each against a pinned SHA-256**, and installs them into `vendor/grammars/`. Re-run `gtir index --rebuild` and your shaders chunk function-by-function.
+
+You only need the 510 MB toolchain if you're a *maintainer regenerating* a grammar (`npm run build:shaders`) — never just to use one.
 
 ### Embedding cache (content-addressed)
 
@@ -459,7 +489,13 @@ and several candidates were measured and dropped. The exact command and the tier
 **Layout** (`src/`, one job per file): `walker` → `chunker` (+ `languages` / `parser`) → `contextualize`
 → `embed` (Ollama) → `store` (LanceDB) → `search` (fusion); plus `mcp` (server), `eval` (metrics), and
 `bin/gtir.mjs` (the CLI). The 9 bundled tree-sitter grammars live in `grammars/` — gitignored, generated
-by `scripts/bundle-grammars.mjs` at `prepack`.
+by `scripts/bundle-grammars.mjs` at `prepack`. The two shader grammars (HLSL/GLSL) are the exception:
+not in the upstream package, so they're built by `scripts/build-shader-grammars.mjs` into
+`vendor/grammars/` (also gitignored) and shipped as a prebuilt release asset that `gtir fetch-grammars`
+pulls — see [Shader grammars](#shader-grammars-gtir-fetch-grammars).
+
+To run the quality eval: **`npm run eval`** (wraps the canonical `--repo eval/corpus --golden eval/golden.json`
+invocation); add `-- --save` to snapshot a new baseline.
 
 ## License
 
