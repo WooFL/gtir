@@ -57,9 +57,10 @@ Semantic code search isn't new. What gtir combines, that most tools don't:
   gtir routes by intent: a bare identifier lets keyword search lead, a plain-English question lets the
   embedder lead, and a question that names a symbol gets both. Each rule is in the tree because it moved
   the eval numbers — a cross-encoder reranker and a bigger model were tried and dropped.
-- **Local, one runtime, every OS.** A single local Ollama model does the embedding: no Python, no
-  torch, no API keys, nothing leaves the machine. It runs natively on Windows instead of assuming a
-  Unix shell.
+- **Local, one runtime, every OS.** A single local Ollama model does the embedding — no Python, no
+  torch, no API keys, and no native build step (the vector store ships prebuilt binaries). That stack
+  is usually where cross-platform pain lives, so gtir installs and runs the same on Windows as on Linux
+  or macOS.
 - **Chunks that follow the code.** Files are split along the syntax tree — whole functions, classes,
   structs — not fixed-size windows, so a hit comes back as a complete unit with its signature. That
   extends to shaders, which most code search skips entirely.
