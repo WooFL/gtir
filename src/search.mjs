@@ -11,6 +11,19 @@ export function isSymbolQuery(query) {
   return /^[A-Za-z_$][\w$]*$/.test(String(query).trim());
 }
 
+// Identifier-shaped tokens inside a (multi-word) query — camelCase, PascalCase-with-acronym,
+// snake_case, alphanumeric, or dotted. Plain English words and bare ALL-CAPS acronyms (JWT, HTTP,
+// API) are intentionally NOT matched. Lets a natural-language query that NAMES a symbol
+// ("how does fetchWithRetry back off") get a lexical boost it would otherwise skip (ftsWeight=0).
+export function queryIdentifiers(query) {
+  const toks = String(query).match(/[A-Za-z_$][\w$.]*/g) || [];
+  return toks.filter((t) =>
+    /[a-z][A-Z]/.test(t) || /[A-Z]{2,}[a-z]/.test(t) ||
+    /[A-Za-z]_[A-Za-z0-9]/.test(t) || /[A-Za-z]\d|\d[A-Za-z]/.test(t) || /\w\.\w/.test(t),
+  );
+}
+export function hasIdentifierToken(query) { return queryIdentifiers(query).length > 0; }
+
 // In a CODE repo, a query for an implementation should not surface that implementation's
 // TEST file above the source — the dominant real-world miss (a query for "default config
 // values" returning config.test.mjs at #1). Demote conventional test paths in fusion, UNLESS
@@ -104,7 +117,9 @@ export async function search(query, cfg, { k = 8, pathPrefix = null, language = 
   // Query-adaptive fusion weight: exact-symbol lookups let BM25 lead; conceptual queries let the
   // embedder lead. A 0 weight contributes nothing to the fused score, so skip the FTS query entirely
   // — the result is identical to vector-only, and the common (natural-language) path saves a query.
-  const ftsW = isSymbolQuery(query) ? (cfg.ftsWeightSymbol ?? 1) : (cfg.ftsWeight ?? 1);
+  const ftsW = isSymbolQuery(query) ? (cfg.ftsWeightSymbol ?? 1)
+    : hasIdentifierToken(query) ? (cfg.ftsWeightMixed ?? 0)   // NL query that names a symbol: optional lexical boost
+    : (cfg.ftsWeight ?? 0);
 
   let ftsRows = [];
   if (ftsW > 0) {

@@ -97,6 +97,16 @@ vector-only (0.90) and the exact-symbol tier matches BM25 (0.92) — beating bot
 and vector-only (0.86). Detection is exact on the fixture (12/12 symbol queries, zero false positives
 on 81 NL queries). Override either weight per-repo in `.gtir/config.json`.
 
+There's a third case between those two: a **natural-language query that *names* a symbol** — *"how does
+`fetchWithRetry` back off?"*. It isn't a bare identifier (so it's not BM25-led), but treating it as
+purely conceptual throws away the exact token. So when a query carries an identifier-shaped token
+(camelCase / snake_case / PascalCase-with-acronym — *not* plain words or bare acronyms like `JWT`),
+gtir mixes in a lexical boost at `ftsWeightMixed` (default `0.3`). Measured on a dedicated `mixed` tier
+of such queries: Recall@1 **0.90 → 1.00**, with **zero change** to the gate / hard / symbol tiers
+(the boost is gated on identifier presence, so the conceptual path is untouched). The win is the
+near-twin case — `IngressThrottleStrategy` vs `EgressThrottleStrategy` — where the exact name
+disambiguates files the embedder confuses. Set `ftsWeightMixed: 0` to disable.
+
 **Test-file demotion (`testPenalty`, code repos only).** Field-weighting handles *incidental*
 mentions, but a *test* for an implementation is a strong, legitimate match — `config.test.mjs`
 genuinely is about config — so it can still outrank the source you actually want. In a code repo a

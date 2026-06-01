@@ -12,6 +12,23 @@ test("isSymbolQuery: a single bare identifier is symbol-like; multi-word/NL quer
   assert.equal(isSymbolQuery(""), false);
 });
 
+import { hasIdentifierToken, queryIdentifiers } from "../src/search.mjs";
+
+test("hasIdentifierToken: identifier-shaped tokens yes; plain words and bare acronyms no", () => {
+  assert.equal(hasIdentifierToken("how does fetchWithRetry back off"), true);      // camelCase
+  assert.equal(hasIdentifierToken("how does grid_shortest_path route"), true);     // snake_case
+  assert.equal(hasIdentifierToken("how does LRUCache evict"), true);               // acronym+word
+  assert.equal(hasIdentifierToken("evict the least recently used entry"), false);  // plain English
+  assert.equal(hasIdentifierToken("how do I verify a JWT"), false);                // bare acronym is not an identifier
+  assert.equal(hasIdentifierToken("split text into word tokens"), false);
+});
+
+test("queryIdentifiers returns the identifier-shaped tokens only", () => {
+  assert.deepEqual(queryIdentifiers("how does PeerThrottleStrategy admit a request"), ["PeerThrottleStrategy"]);
+  assert.deepEqual(queryIdentifiers("compare LRUCache and LFUCache"), ["LRUCache", "LFUCache"]);
+  assert.deepEqual(queryIdentifiers("a plain english query"), []);
+});
+
 test("fuseRRF ranks a doc appearing in both branches above single-branch docs", () => {
   const vec = [{ id: "x", path: "x.py", line_start: 1, line_end: 2, language: "python", text: "x" },
                { id: "y", path: "y.py", line_start: 1, line_end: 2, language: "python", text: "y" }];

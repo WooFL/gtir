@@ -91,5 +91,15 @@
   {"query":"PeerThrottleStrategy","path":"edge/node_c.py","lines":[3,40],"tier":"symbol"},
   {"query":"grid_shortest_path","path":"graph/bfs_grid.py","lines":[5,18],"tier":"symbol"},
   {"query":"slugify","path":"text/slugify.ts","lines":[3,10],"tier":"symbol"},
-  {"query":"levenshtein","path":"text/levenshtein.py","lines":[1,10],"tier":"symbol"}
+  {"query":"levenshtein","path":"text/levenshtein.py","lines":[1,10],"tier":"symbol"},
+  {"query":"how does fetchWithRetry back off between attempts","path":"http/retry.ts","lines":[9,23],"tier":"mixed"},
+  {"query":"what makes isRetryable return true for a status code","path":"http/retry.ts","lines":[25,27],"tier":"mixed"},
+  {"query":"how does verifyToken reject an expired token","path":"auth/jwt.ts","lines":[9,15],"tier":"mixed"},
+  {"query":"what claims does signToken put in the payload","path":"auth/jwt.ts","lines":[2,7],"tier":"mixed"},
+  {"query":"how does LRUCache choose which entry to evict","path":"cache/lru.py","lines":[13,17],"tier":"mixed"},
+  {"query":"how does LFUCache track access frequency","path":"cache/lfu.py","lines":[13,21],"tier":"mixed"},
+  {"query":"how does grid_shortest_path route around blocked cells","path":"graph/bfs_grid.py","lines":[5,18],"tier":"mixed"},
+  {"query":"how does IngressThrottleStrategy admit an inbound request","path":"edge/node_a.py","lines":[15,22],"tier":"mixed"},
+  {"query":"how does EgressThrottleStrategy reset its accounting window","path":"edge/node_b.py","lines":[23,30],"tier":"mixed"},
+  {"query":"how does PeerThrottleStrategy admit a request","path":"edge/node_c.py","lines":[15,22],"tier":"mixed"}
 ]

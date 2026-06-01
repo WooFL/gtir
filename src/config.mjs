@@ -33,6 +33,8 @@ export const DEFAULTS = {
   // queries (exact-symbol lookups) let BM25 lead (ftsWeightSymbol, ~classic RRF). See isSymbolQuery.
   ftsWeight: 0,                           // conceptual queries: vector-led (0 = vector-only)
   ftsWeightSymbol: 1,                     // bare-identifier queries: classic equal-weight RRF (BM25 leads)
+  ftsWeightMixed: 0.3,                    // NL query that NAMES a symbol (camelCase/snake/etc.): lexical boost weight. Measured: mixed-tier R@1 0.90→1.00, zero regression on gate/hard/symbol; saturates at 0.3
+
   version: 1,
   skipDirs: [
     "node_modules", ".git", "dist", "build", ".next", ".turbo", ".cache",
