@@ -120,6 +120,11 @@ npm link            # exposes `gtir` globally
 
 Prereqs: **Node ≥20**, **Ollama ≥0.24** running locally.
 
+**Platforms:** the embedded vector store (LanceDB) installs a prebuilt native binary, so there's no
+compile step — on **Windows** (x64/arm64), **Linux** (x64/arm64, glibc + musl), and **Apple Silicon**
+macOS it just works. **Intel Macs (`darwin-x64`) are not supported** — the current LanceDB build ships
+no `darwin-x64` prebuilt, so `npm install` resolves no native binary and gtir fails to load there.
+
 ## Setup (once per machine)
 
 ```bash
