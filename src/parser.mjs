@@ -1,22 +1,25 @@
 import { Parser, Language } from "web-tree-sitter";
 import { createRequire } from "node:module";
+import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
 let initPromise = null;
 const langCache = new Map();
 
-// tree-sitter-wasms ships prebuilt grammar wasm at out/tree-sitter-<name>.wasm.
-// Our lang ids mostly match; map the exceptions.
+// The grammars gtir loads — exactly the languages that have AST target types in languages.mjs.
+// getParser is only ever reached for these (chunkWithTreesitter recurses for the rest), so the
+// other ~30 grammars in tree-sitter-wasms are never used. Keep in sync with scripts/bundle-grammars.mjs.
 const WASM_NAME = { typescript: "typescript", tsx: "tsx", javascript: "javascript",
-  python: "python", rust: "rust", go: "go", bash: "bash", json: "json",
-  toml: "toml", yaml: "yaml", css: "css", html: "html", markdown: "markdown" };
+  python: "python", rust: "rust", go: "go" };
 
 function wasmsDir() {
-  // Resolve the installed package.json (its broken `main` is irrelevant here),
-  // then its out/ dir.
-  const pkg = require.resolve("tree-sitter-wasms/package.json");
-  return join(dirname(pkg), "out");
+  // Prefer the grammars bundled into the package (grammars/, populated at prepack). Fall back to
+  // the tree-sitter-wasms devDependency for a fresh git clone before anything's been bundled.
+  const bundled = fileURLToPath(new URL("../grammars", import.meta.url));
+  if (existsSync(join(bundled, "tree-sitter-typescript.wasm"))) return bundled;
+  return join(dirname(require.resolve("tree-sitter-wasms/package.json")), "out");
 }
 
 export async function getParser(langId) {

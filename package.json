@@ -5,15 +5,19 @@
   "license": "MIT",
   "type": "module",
   "bin": { "gtir": "bin/gtir.mjs" },
+  "files": ["bin/", "src/", "grammars/", "eval/"],
   "scripts": {
     "test": "node --test test/*.test.mjs",
-    "gtir": "node bin/gtir.mjs"
+    "gtir": "node bin/gtir.mjs",
+    "prepack": "node scripts/bundle-grammars.mjs"
   },
   "engines": { "node": ">=20" },
   "dependencies": {
     "@lancedb/lancedb": "^0.27.0",
     "web-tree-sitter": "^0.25.0",
-    "tree-sitter-wasms": "^0.1.12",
     "ignore": "^5.3.0"
+  },
+  "devDependencies": {
+    "tree-sitter-wasms": "^0.1.12"
   }
 }
