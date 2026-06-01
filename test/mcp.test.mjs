@@ -48,16 +48,18 @@ import { buildTools } from "../src/mcp.mjs";
 test("buildTools emits search/read/outline/similar per index + gtir_status", () => {
   const tools = buildTools([{ label: "code", repo: "/r/code", cfg: {} }, { label: "notes", repo: "/r/wiki", cfg: {} }]);
   assert.deepEqual(tools.map((t) => t.name), [
-    "search_code", "read_code", "outline_code", "similar_code",
-    "search_notes", "read_notes", "outline_notes", "similar_notes",
+    "search_code", "read_code", "outline_code", "similar_code", "find_code",
+    "search_notes", "read_notes", "outline_notes", "similar_notes", "find_notes",
     "gtir_status",
   ]);
-  assert.deepEqual(tools[0].inputSchema.required, ["query"]);  // search
-  assert.ok(tools[0].inputSchema.properties.compact);          // search gained compact
-  assert.deepEqual(tools[1].inputSchema.required, ["path"]);   // read
-  assert.deepEqual(tools[2].inputSchema.required, ["path"]);   // outline
-  assert.deepEqual(tools[3].inputSchema.required, ["path"]);   // similar
-  assert.deepEqual(tools.at(-1).inputSchema.properties, {});   // status takes no args
+  assert.deepEqual(tools[0].inputSchema.required, ["query"]);   // search
+  assert.ok(tools[0].inputSchema.properties.compact);           // search gained compact
+  assert.deepEqual(tools[1].inputSchema.required, ["path"]);    // read
+  assert.deepEqual(tools[2].inputSchema.required, ["path"]);    // outline
+  assert.deepEqual(tools[3].inputSchema.required, ["path"]);    // similar
+  assert.deepEqual(tools[4].inputSchema.required, ["symbol"]);  // find
+  assert.deepEqual(tools[4].inputSchema.properties.kind.enum, ["definition", "references"]);
+  assert.deepEqual(tools.at(-1).inputSchema.properties, {});    // status takes no args
 });
 
 import { handleRequest } from "../src/mcp.mjs";
@@ -84,7 +86,7 @@ test("handleRequest: notifications/initialized returns null (no reply)", async (
 test("handleRequest: tools/list returns the tool set", async () => {
   const r = await handleRequest({ jsonrpc: "2.0", id: 2, method: "tools/list" }, baseCtx);
   assert.deepEqual(r.result.tools.map((t) => t.name),
-    ["search_code", "read_code", "outline_code", "similar_code", "gtir_status"]);
+    ["search_code", "read_code", "outline_code", "similar_code", "find_code", "gtir_status"]);
 });
 
 test("handleRequest: unknown method => JSON-RPC -32601", async () => {
@@ -161,6 +163,24 @@ test("tools/call read_<label> on an unknown index => isError (before readFn runs
   assert.match(r.result.content[0].text, /unknown index: missing/);
 });
 
+test("tools/call find_<label> defaults kind to definition and passes it through", async () => {
+  let got = null;
+  const ctx = { ...baseCtx, findFn: async (label, a) => { got = a; return [{ path: "src/s.mjs", lines: "19-36", language: "js", kind: "definition", snippet: "export function fuseRRF()" }]; } };
+  const r = await handleRequest({ jsonrpc: "2.0", id: 25, method: "tools/call", params: { name: "find_code", arguments: { symbol: "fuseRRF" } } }, ctx);
+  assert.deepEqual([got.symbol, got.kind], ["fuseRRF", "definition"]);  // kind defaulted
+  assert.equal(r.result.structuredContent.kind, "definition");
+  assert.match(r.result.content[0].text, /src\/s\.mjs:19-36/);
+  assert.match(r.result.content[0].text, /definition/);
+});
+
+test("tools/call find_<label> honors kind=references", async () => {
+  let got = null;
+  const ctx = { ...baseCtx, findFn: async (label, a) => { got = a; return []; } };
+  const r = await handleRequest({ jsonrpc: "2.0", id: 26, method: "tools/call", params: { name: "find_code", arguments: { symbol: "x", kind: "references" } } }, ctx);
+  assert.equal(got.kind, "references");
+  assert.match(r.result.content[0].text, /no references found for "x"/);
+});
+
 test("tools/call: a thrown searchFn error becomes a graceful isError result", async () => {
   const ctx = { ...baseCtx, searchFn: async () => { throw new Error("ollama down"); } };
   const r = await handleRequest({ jsonrpc: "2.0", id: 7, method: "tools/call", params: { name: "search_code", arguments: { query: "x" } } }, ctx);
@@ -200,7 +220,14 @@ test("defaultStatusFn: an unbuilt index reports healthy:false + a note, never th
   assert.match(status[0].note, /not built/);
 });
 
-import { parseToolName, defaultReadFn } from "../src/mcp.mjs";
+import { parseToolName, defaultReadFn, declaredSymbols } from "../src/mcp.mjs";
+
+test("declaredSymbols extracts all declared names across languages, de-duped", () => {
+  assert.deepEqual(declaredSymbols("export function fuseRRF(a) {}\nconst RRF_K = 60"), ["fuseRRF", "RRF_K"]);
+  assert.deepEqual(declaredSymbols("class LRU:\n  def get(self): pass\n  def put(self): pass"), ["LRU", "get", "put"]);
+  assert.deepEqual(declaredSymbols("pub fn rotate() {}\nstruct Vec3 {}"), ["rotate", "Vec3"]);
+  assert.deepEqual(declaredSymbols("// fuseRRF is called here\nfuseRRF()"), []);  // a mention, not a declaration
+});
 
 test("parseToolName splits a verb prefix off, keeping underscores in the label", () => {
   assert.deepEqual(parseToolName("search_code"), { verb: "search", label: "code" });

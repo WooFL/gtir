@@ -94,6 +94,21 @@ export function buildTools(indexes) {
         required: ["path"],
       },
     });
+    tools.push({
+      name: `find_${ix.label}`,
+      description: `Jump to a symbol in ${at} by exact name. kind="definition" (default) returns where it's declared; ` +
+        `kind="references" is a lexical sweep of where the name appears (not type-resolved — same-named symbols collide). ` +
+        `Prefer this over search when you already know the exact name.`,
+      inputSchema: {
+        type: "object",
+        properties: {
+          symbol: { type: "string", description: "exact symbol name (function, class, type, …)" },
+          kind: { type: "string", enum: ["definition", "references"], description: 'definition (default) or references' },
+          limit: { type: "integer", description: "max results (default 25)" },
+        },
+        required: ["symbol"],
+      },
+    });
   }
   tools.push({
     name: "gtir_status",
@@ -159,7 +174,24 @@ function signatureOf(text) {
   return sig.length > 100 ? sig.slice(0, 99) + "…" : sig;
 }
 
-const TOOL_VERBS = ["search", "read", "outline", "similar"];
+// Every identifier this chunk *declares* — heuristic, regex over declaration keywords for the
+// common languages (not tree-sitter-precise). Used to tell a definition site from a mention.
+export function declaredSymbols(text) {
+  const re = /\b(?:function|func|def|class|fn|interface|type|struct|impl|trait|enum|const|let|var)\s+([A-Za-z_$][\w$]*)/g;
+  const out = new Set();
+  let m;
+  while ((m = re.exec(String(text || "")))) out.add(m[1]);
+  return [...out];
+}
+
+function formatFind(results, symbol, kind) {
+  if (!results.length) return `(no ${kind} found for "${symbol}")`;
+  return results.map((r) =>
+    `### ${r.path}:${r.lines}  _(${r.kind})_\n\`\`\`\n${r.snippet}\n\`\`\``,
+  ).join("\n\n");
+}
+
+const TOOL_VERBS = ["search", "read", "outline", "similar", "find"];
 
 // "search_my_wiki" -> { verb: "search", label: "my_wiki" } (labels may contain underscores).
 export function parseToolName(name) {
@@ -172,7 +204,7 @@ export function parseToolName(name) {
 const stripSnippet = (results) => results.map(({ snippet, ...rest }) => rest);
 
 async function dispatchToolCall(params, ctx) {
-  const { indexes, searchFn, statusFn, readFn, outlineFn, similarFn } = ctx;
+  const { indexes, searchFn, statusFn, readFn, outlineFn, similarFn, findFn } = ctx;
   const name = params.name;
   const args = params.arguments ?? {};
   const reply = (text, structured) => ({ content: [{ type: "text", text }], structuredContent: structured });
@@ -203,6 +235,11 @@ async function dispatchToolCall(params, ctx) {
       if (verb === "similar") {
         const results = await similarFn(label, { path: args.path, line: args.line, limit: args.limit });
         return reply(formatHits(results), { results });
+      }
+      if (verb === "find") {
+        const kind = args.kind === "references" ? "references" : "definition";
+        const results = await findFn(label, { symbol: args.symbol, kind, limit: args.limit });
+        return reply(formatFind(results, args.symbol, kind), { symbol: args.symbol, kind, results });
       }
     }
     return { content: [{ type: "text", text: `unknown tool: ${name}` }], isError: true };
@@ -292,11 +329,41 @@ export function defaultSimilarFn(indexes) {
   };
 }
 
+const reEsc = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+// Symbol jump. Prefilter via the BM25 index (chunks that mention the name — no full scan), then
+// keep declaration sites (kind=definition) or whole-word name matches (kind=references, lexical).
+export function defaultFindFn(indexes) {
+  return async (label, { symbol, kind = "definition", limit = 25 }) => {
+    const ix = indexes.find((i) => i.label === label);
+    if (!symbol) throw new Error("symbol is required");
+    const store = await openStore(ix.cfg);
+    const tbl = await store.chunksTable();
+    if (!tbl) throw new Error(`no index at ${ix.cfg.indexDir} — run: gtir index --repo ${ix.repo}`);
+    const k = Math.max(1, Math.min(100, (limit | 0) || 25));
+    const fan = Math.max(k * 2, 50);
+    let cand;
+    try { cand = await tbl.query().nearestToText(symbol, ["fts_text"]).limit(fan).toArray(); }
+    catch {
+      try { cand = await tbl.query().nearestToText(symbol, undefined).limit(fan).toArray(); }
+      catch { cand = await tbl.query().limit(5000).toArray(); }   // no FTS: degrade to a scan
+    }
+    const word = new RegExp(`(?:^|[^\\w$])${reEsc(symbol)}(?![\\w$])`);
+    const isDef = (r) => declaredSymbols(r.text).includes(symbol);
+    const rows = (kind === "references" ? cand.filter((r) => word.test(r.text)) : cand.filter(isDef)).slice(0, k);
+    return rows.map((r) => ({
+      path: r.path, lines: `${r.line_start}-${r.line_end}`, language: r.language,
+      kind: isDef(r) ? "definition" : "reference", snippet: r.text,
+    }));
+  };
+}
+
 export function serveStdio(indexes, { version } = {}) {
   const ctx = {
     indexes, version,
     searchFn: defaultSearchFn(indexes), statusFn: defaultStatusFn(indexes),
-    readFn: defaultReadFn(indexes), outlineFn: defaultOutlineFn(indexes), similarFn: defaultSimilarFn(indexes),
+    readFn: defaultReadFn(indexes), outlineFn: defaultOutlineFn(indexes),
+    similarFn: defaultSimilarFn(indexes), findFn: defaultFindFn(indexes),
   };
   let buf = "";
   process.stdin.setEncoding("utf8");
@@ -313,7 +380,7 @@ export function serveStdio(indexes, { version } = {}) {
       if (res) process.stdout.write(JSON.stringify(res) + "\n");
     }
   });
-  process.stderr.write(`gtir mcp: serving [${indexes.map((i) => i.label).join(", ")}] × {search,read,outline,similar} + gtir_status\n`);
+  process.stderr.write(`gtir mcp: serving [${indexes.map((i) => i.label).join(", ")}] × {search,read,outline,similar,find} + gtir_status\n`);
 }
 
 export function printConfig(repos) {

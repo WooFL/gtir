@@ -377,9 +377,10 @@ or override with `--label name:<repo>`), plus a global `gtir_status`:
 - **`read_<label>`** — read the source of a span (`path` + `lines`, optional `context`); the natural follow-up to a search hit.
 - **`outline_<label>`** — list a file's indexed chunks, each with its line range and signature — a cheap map of a file.
 - **`similar_<label>`** — find chunks semantically similar to a span (reuses the stored embedding — no re-embed).
+- **`find_<label>`** — jump to a symbol by **exact name**: `kind:"definition"` (default) returns where it's *declared*; `kind:"references"` is a lexical sweep of where the name *appears* (not type-resolved — same-named symbols collide). Use it instead of `search` when you already know the name.
 
-Together these let an agent **search → read more → map a file → pivot to related code** without leaving
-the conversation. Register the server by pasting the snippet from:
+Together these let an agent **search → read more → map a file → jump to a definition → pivot to related
+code** without leaving the conversation. Register the server by pasting the snippet from:
 
     gtir mcp --repo <codeRepo> --repo <wikiRepo> --print-config
 
