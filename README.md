@@ -6,9 +6,7 @@ word "retry." It's a small, install-once command-line tool that searches your ow
 note vaults, and it runs **entirely on your machine** — no cloud, no API keys, nothing leaves your
 laptop.
 
-![gtir demo — a search for "edit distance" returns the levenshtein function the query never named, in one span instead of the files grep hit](assets/demo.svg)
-
-> *gtir* — Armenian *գտնել*, "to find." · The animation above is `gtir demo` — run it yourself with one command.
+> *gtir* — Armenian *գտնել*, "to find."
 
 ### Why you'd want it
 

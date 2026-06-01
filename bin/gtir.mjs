@@ -65,7 +65,6 @@ function parseArgs(argv) {
     else if (a === "--query") args.query = argv[++i];
     else if (a === "--grep-term") args.grepTerm = argv[++i];
     else if (a === "--no-color") args.noColor = true;
-    else if (a === "--color") args.color = true;
     else if (a === "-k" || a === "--k") {
       const next = argv[i + 1];
       if (next !== undefined && !next.startsWith("-") && Number.isFinite(Number(next))) {
@@ -222,7 +221,7 @@ async function main() {
       }
       case "demo": {
         const query = args.query ?? (args._.length ? args._.join(" ") : null);
-        const color = args.color ? true : (!args.noColor && !process.env.NO_COLOR && !!process.stdout.isTTY);
+        const color = !args.noColor && !process.env.NO_COLOR && !!process.stdout.isTTY;
         const r = await runDemo({ repo: args.repo ?? null, query, grepTerm: args.grepTerm, log: (m) => process.stderr.write(`gtir: ${m}\n`) });
         process.stdout.write(formatDemo(r, { color }));
         break;
