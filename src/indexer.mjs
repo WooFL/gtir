@@ -29,7 +29,7 @@ export async function buildIndex(cfg, { rebuild = false } = {}) {
   for (const [lang, n] of optionalCounts) {
     if (grammarMissing(lang)) {
       warnings.push(`${n} ${lang.toUpperCase()} file${n > 1 ? "s" : ""} indexed as line-windows — `
-        + `the ${lang} grammar isn't installed. Run \`npm run build:shaders\` for function-aligned chunking.`);
+        + `the ${lang} grammar isn't installed. Run \`gtir fetch-grammars\` for function-aligned chunking.`);
     }
   }
 

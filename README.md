@@ -84,9 +84,9 @@ Everything runs through **one runtime — Ollama** (no Python, no sentence-trans
 **first-class HLSL and GLSL shaders** (real grammars — they parse `register()`/`SV_TARGET` semantics
 cleanly, where the old C++ approximation choked). Slang borrows the HLSL grammar; Metal borrows C++.
 Markdown is split by heading. Everything else — and WGSL — falls back to line-window chunking, so it's
-still fully searchable, just not function-aligned. (The shader grammar wasm aren't in the published
-bundle — run `npm run build:shaders` once after cloning to enable AST shader chunking; without them,
-shaders fall back to line-windows.)
+still fully searchable, just not function-aligned. (The shader grammar wasm aren't in the bundle —
+when gtir sees `.hlsl`/`.glsl` files without them it says so; run `gtir fetch-grammars` to download
+them, prebuilt and ~5 MB, no toolchain. Until then shaders fall back to line-windows.)
 
 Search blends a **dense** (vector) branch with a **lexical** (BM25) branch, plus a few small
 refinements — each kept only because it moved the numbers on the

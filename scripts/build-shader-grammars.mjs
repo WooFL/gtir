@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 // Build the shader grammar wasm (GLSL, HLSL) that gtir loads from vendor/grammars/.
 //
-// Why this exists: these two grammars are NOT in the tree-sitter-wasms devDependency, so
-// they can't be bundled-at-publish like the other grammars. They're kept out of git
-// (vendor/grammars/*.wasm is gitignored — ~5MB of binaries) and regenerated from source
-// by this script. Run it once after a fresh clone to get first-class shader chunking;
-// without the wasm, .hlsl/.glsl files fall back to line-window splitting (still indexed,
-// just not function-aligned).
+// Who runs this: MAINTAINERS regenerating the grammars (e.g. to bump a grammar version).
+// END USERS should run `gtir fetch-grammars` instead — it downloads these same wasm,
+// prebuilt and checksum-pinned, from the GitHub release (no toolchain needed).
+//
+// Why it exists: these two grammars are NOT in the tree-sitter-wasms devDependency, so they
+// can't be bundled-at-publish like the others. They're kept out of git (vendor/grammars/*.wasm
+// is gitignored — ~5MB of binaries) and rebuilt from source here. After rebuilding, re-upload
+// the wasm to the release tag and bump the pinned sha256 in src/fetch-grammars.mjs.
 //
 // Requirements:
 //   - tree-sitter CLI >= 0.25 on PATH:   npm i -g tree-sitter-cli

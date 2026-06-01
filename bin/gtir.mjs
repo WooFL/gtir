@@ -13,6 +13,7 @@ import { resolveIndexes, serveStdio, printConfig } from "../src/mcp.mjs";
 import { evalGolden, flattenMetrics, compareBaseline, compareTiers } from "../src/eval.mjs";
 import { runDemo, formatDemo } from "../src/demo.mjs";
 import { runDoctor } from "../src/doctor.mjs";
+import { fetchGrammars } from "../src/fetch-grammars.mjs";
 
 // --- programmatic entrypoints (used by tests and the dispatcher) ---
 
@@ -247,6 +248,11 @@ async function main() {
         else { installHook(repo); process.stderr.write("gtir: post-commit refresh hook installed\n"); }
         break;
       }
+      case "fetch-grammars": {
+        const installed = await fetchGrammars({ log: (m) => process.stderr.write(m + "\n") });
+        process.stderr.write(`gtir: ${installed.length} grammar${installed.length === 1 ? "" : "s"} ready — re-run \`gtir index --rebuild\` to chunk those files via AST.\n`);
+        break;
+      }
       case "mcp": {
         const repos = args.repos ?? (args.repo ? [args.repo] : []);
         if (repos.length === 0) { process.stderr.write("gtir mcp: pass at least one --repo <path>\n"); process.exit(2); }
@@ -286,6 +292,7 @@ async function main() {
           "  gtir doctor  [--repo <project>] [--no-pull]   # check Ollama, pull the model, verify readiness",
           "  gtir setup   --repo <project>",
           "  gtir hook    --repo <project> [--remove]",
+          "  gtir fetch-grammars   # download prebuilt shader grammars (HLSL/GLSL, ~5MB, no toolchain)",
           "  gtir mcp     --repo <project> [--label name:<repo>] [--print-config]",
           "  gtir eval    --repo <project> [--golden <f>] [-k 10] [--save] [--no-build] [--json]",
         ].join("\n") + "\n");
