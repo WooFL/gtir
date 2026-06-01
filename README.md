@@ -58,6 +58,12 @@ it's the **model turns** (seconds each). Folding several guess→grep→read rou
 answer means fewer turns, and a smaller context is quicker for the model to process — so the *answer*
 lands sooner even though the *search* is slower. Tokens and time are the same win: fewer, lighter turns.
 
+**Pair it with output compression.** gtir attacks one token sink — *finding* the right code. The other
+big one is the verbose *output* of routine commands (`git`, test runs, builds, `ls`). They're different
+layers, so they stack: a deterministic output-compression proxy like [RTK](https://github.com/rtk-ai/rtk)
+trims that firehose (it reports ~80% off a typical session), while gtir handles discovery with ranked,
+complete chunks. Rule of thumb — **gtir for find-by-meaning, an output proxy for everything else's noise.**
+
 ## How it works
 
 ```
