@@ -113,5 +113,26 @@ export async function openStore(cfg) {
     if (names.includes("chunks")) await db.dropTable("chunks");
   }
 
-  return { chunksTable, upsertRows, loadManifest, evictPaths, writeMeta, readMeta, hasContentHash, loadEmbedCache, dropChunks };
+  // All chunks for one file, ordered by start line — the source for `outline`.
+  async function chunksByPath(path) {
+    const tbl = await chunksTable();
+    if (!tbl) return [];
+    const rows = await tbl.query().where(`path = ${quote(path)}`)
+      .select(["id", "line_start", "line_end", "language", "text"]).toArray();
+    return rows.sort((a, b) => Number(a.line_start) - Number(b.line_start));
+  }
+
+  // The chunk covering `line` in `path` (or the file's first chunk if line is null) —
+  // returns the full row including its embedding, the seed for `similar`.
+  async function chunkAt(path, line = null) {
+    const tbl = await chunksTable();
+    if (!tbl) return null;
+    const rows = (await tbl.query().where(`path = ${quote(path)}`).toArray())
+      .sort((a, b) => Number(a.line_start) - Number(b.line_start));
+    if (rows.length === 0) return null;
+    if (line == null) return rows[0];
+    return rows.find((r) => Number(r.line_start) <= line && line <= Number(r.line_end)) || rows[0];
+  }
+
+  return { chunksTable, upsertRows, loadManifest, evictPaths, writeMeta, readMeta, hasContentHash, loadEmbedCache, dropChunks, chunksByPath, chunkAt };
 }

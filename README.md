@@ -370,14 +370,21 @@ Expose gtir's search as native MCP tools so Claude can call them mid-session:
 
     gtir mcp --repo <codeRepo> --repo <wikiRepo>
 
-It serves one tool per index — `search_code`, `search_notes` (auto-labeled from each
-index's model; override with `--label name:<repo>`) — plus `gtir_status`. Register it by
-pasting the snippet from:
+It serves a small tool **suite per index** (auto-labeled from each index's model — `code`, `notes` —
+or override with `--label name:<repo>`), plus a global `gtir_status`:
+
+- **`search_<label>`** — hybrid semantic + BM25 search. Pass `compact: true` for path/lines/score only (token-saving).
+- **`read_<label>`** — read the source of a span (`path` + `lines`, optional `context`); the natural follow-up to a search hit.
+- **`outline_<label>`** — list a file's indexed chunks, each with its line range and signature — a cheap map of a file.
+- **`similar_<label>`** — find chunks semantically similar to a span (reuses the stored embedding — no re-embed).
+
+Together these let an agent **search → read more → map a file → pivot to related code** without leaving
+the conversation. Register the server by pasting the snippet from:
 
     gtir mcp --repo <codeRepo> --repo <wikiRepo> --print-config
 
-into your project's `.mcp.json` (`mcpServers`). The server is stdio JSON-RPC, zero extra
-deps, and adds no new retrieval logic — it wraps the same hybrid search as the CLI.
+into your project's `.mcp.json` (`mcpServers`). It's stdio JSON-RPC with zero extra deps; `search` and
+`similar` reuse the same hybrid retrieval as the CLI, and `read`/`outline` are plain lookups over the index.
 
 ## Model
 

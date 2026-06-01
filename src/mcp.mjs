@@ -1,8 +1,10 @@
-import { resolve, basename } from "node:path";
+import { resolve, basename, relative } from "node:path";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "./config.mjs";
 import { search } from "./search.mjs";
 import { openStore } from "./store.mjs";
+import { parseLines } from "./eval.mjs";
 
 export function sanitizeLabel(s) {
   return String(s).toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "index";
@@ -39,20 +41,60 @@ export function resolveIndexes(repos, overrides = {}) {
 }
 
 export function buildTools(indexes) {
-  const tools = indexes.map((ix) => ({
-    name: `search_${ix.label}`,
-    description: `Hybrid semantic + lexical (vector + BM25 + RRF) search over the ${ix.label} index at ${ix.repo}. Returns ranked chunks.`,
-    inputSchema: {
-      type: "object",
-      properties: {
-        query: { type: "string", description: "natural-language search query" },
-        k: { type: "integer", description: "max results (default 8)" },
-        path_prefix: { type: "string", description: "restrict to paths under this prefix" },
-        language: { type: "string", description: "restrict to a language (code indexes)" },
+  const tools = [];
+  for (const ix of indexes) {
+    const at = `the ${ix.label} index at ${ix.repo}`;
+    tools.push({
+      name: `search_${ix.label}`,
+      description: `Hybrid semantic + lexical (vector + BM25 + RRF) search over ${at}. Returns ranked chunks.`,
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "natural-language search query" },
+          k: { type: "integer", description: "max results (default 8)" },
+          path_prefix: { type: "string", description: "restrict to paths under this prefix" },
+          language: { type: "string", description: "restrict to a language (code indexes)" },
+          compact: { type: "boolean", description: "omit the code snippet — return path/lines/score only (token-saving)" },
+        },
+        required: ["query"],
       },
-      required: ["query"],
-    },
-  }));
+    });
+    tools.push({
+      name: `read_${ix.label}`,
+      description: `Read the source of a span in ${at}. Use after a search hit to see more — pass the hit's path and lines.`,
+      inputSchema: {
+        type: "object",
+        properties: {
+          path: { type: "string", description: "file path, relative to the repo root" },
+          lines: { type: "string", description: 'line range like "42-71" (or a single line); omit for the whole file' },
+          context: { type: "integer", description: "extra lines before/after the range (0-50, default 3)" },
+        },
+        required: ["path"],
+      },
+    });
+    tools.push({
+      name: `outline_${ix.label}`,
+      description: `List the indexed chunks of one file in ${at} — each with its line range and signature. A cheap map of a file.`,
+      inputSchema: {
+        type: "object",
+        properties: { path: { type: "string", description: "file path, relative to the repo root" } },
+        required: ["path"],
+      },
+    });
+    tools.push({
+      name: `similar_${ix.label}`,
+      description: `Find chunks semantically similar to a span in ${at} — pass a path and a line inside the chunk of interest.`,
+      inputSchema: {
+        type: "object",
+        properties: {
+          path: { type: "string", description: "file path, relative to the repo root" },
+          line: { type: "integer", description: "a line inside the chunk to match (default: the file's first chunk)" },
+          limit: { type: "integer", description: "max results (default 8)" },
+        },
+        required: ["path"],
+      },
+    });
+  }
   tools.push({
     name: "gtir_status",
     description: "List the indexes this gtir MCP server serves, with model, dim, file/chunk count, and last-built time.",
@@ -84,32 +126,84 @@ export async function handleRequest(msg, ctx) {
   }
 }
 
-function formatHits(results) {
-  if (!results.length) return "(no matches)";
-  return results.map((r) => {
-    const branch = [r.vec_rank ? `v${r.vec_rank}` : null, r.fts_rank ? `f${r.fts_rank}` : null].filter(Boolean).join("+") || "—";
-    return `### ${r.path}:${r.lines}  _(rrf=${r.score} · ${branch})_\n\`\`\`\n${r.snippet}\n\`\`\``;
-  }).join("\n\n");
+function branchTag(r) {
+  return [r.vec_rank ? `v${r.vec_rank}` : null, r.fts_rank ? `f${r.fts_rank}` : null].filter(Boolean).join("+") || "—";
 }
 
+function formatHits(results) {
+  if (!results.length) return "(no matches)";
+  return results.map((r) =>
+    `### ${r.path}:${r.lines}  _(rrf=${r.score} · ${branchTag(r)})_\n\`\`\`\n${r.snippet}\n\`\`\``,
+  ).join("\n\n");
+}
+
+function formatCompact(results) {
+  if (!results.length) return "(no matches)";
+  return results.map((r) => `- ${r.path}:${r.lines}  _(rrf=${r.score} · ${branchTag(r)})_`).join("\n");
+}
+
+function formatRead(out) {
+  return `### ${out.path}:${out.lines}\n\`\`\`\n${out.text}\n\`\`\``;
+}
+
+function formatOutline(out) {
+  if (!out.symbols.length) return `(${out.path}: not indexed, or no chunks)`;
+  const body = out.symbols.map((s) => `- \`${s.lines}\`  ${s.signature}`).join("\n");
+  return `### ${out.path} — ${out.symbols.length} chunk(s)\n${body}`;
+}
+
+// First meaningful (non-comment) line of a chunk — a readable "signature" for outlines.
+function signatureOf(text) {
+  const lines = String(text || "").split("\n").map((l) => l.trim()).filter(Boolean);
+  const sig = lines.find((l) => !/^(\/\/|#|\*|\/\*|--|<!--)/.test(l)) || lines[0] || "";
+  return sig.length > 100 ? sig.slice(0, 99) + "…" : sig;
+}
+
+const TOOL_VERBS = ["search", "read", "outline", "similar"];
+
+// "search_my_wiki" -> { verb: "search", label: "my_wiki" } (labels may contain underscores).
+export function parseToolName(name) {
+  for (const v of TOOL_VERBS) {
+    if (typeof name === "string" && name.startsWith(v + "_")) return { verb: v, label: name.slice(v.length + 1) };
+  }
+  return null;
+}
+
+const stripSnippet = (results) => results.map(({ snippet, ...rest }) => rest);
+
 async function dispatchToolCall(params, ctx) {
-  const { indexes, searchFn, statusFn } = ctx;
+  const { indexes, searchFn, statusFn, readFn, outlineFn, similarFn } = ctx;
   const name = params.name;
   const args = params.arguments ?? {};
+  const reply = (text, structured) => ({ content: [{ type: "text", text }], structuredContent: structured });
   try {
     if (name === "gtir_status") {
       const status = await statusFn();
-      return { content: [{ type: "text", text: JSON.stringify(status, null, 2) }], structuredContent: { indexes: status } };
+      return reply(JSON.stringify(status, null, 2), { indexes: status });
     }
-    if (typeof name === "string" && name.startsWith("search_")) {
-      const label = name.slice("search_".length);
+    const parsed = parseToolName(name);
+    if (parsed) {
+      const { verb, label } = parsed;
       if (!indexes.some((ix) => ix.label === label)) {
         return { content: [{ type: "text", text: `unknown index: ${label}` }], isError: true };
       }
-      const results = await searchFn(label, {
-        query: args.query, k: args.k, pathPrefix: args.path_prefix, language: args.language,
-      });
-      return { content: [{ type: "text", text: formatHits(results) }], structuredContent: { results } };
+      if (verb === "search") {
+        let results = await searchFn(label, { query: args.query, k: args.k, pathPrefix: args.path_prefix, language: args.language });
+        if (args.compact) results = stripSnippet(results);
+        return reply(args.compact ? formatCompact(results) : formatHits(results), { results });
+      }
+      if (verb === "read") {
+        const out = await readFn(label, { path: args.path, lines: args.lines, context: args.context });
+        return reply(formatRead(out), out);
+      }
+      if (verb === "outline") {
+        const out = await outlineFn(label, { path: args.path });
+        return reply(formatOutline(out), out);
+      }
+      if (verb === "similar") {
+        const results = await similarFn(label, { path: args.path, line: args.line, limit: args.limit });
+        return reply(formatHits(results), { results });
+      }
     }
     return { content: [{ type: "text", text: `unknown tool: ${name}` }], isError: true };
   } catch (e) {
@@ -147,8 +241,63 @@ export function defaultStatusFn(indexes) {
   }));
 }
 
+// Read a file span from disk (the index isn't needed — just the chunk's path + lines).
+// Guards against path traversal outside the index's repo root.
+export function defaultReadFn(indexes) {
+  return async (label, { path, lines = null, context = 3 }) => {
+    const ix = indexes.find((i) => i.label === label);
+    if (!path) throw new Error("path is required");
+    const abs = resolve(ix.repo, path);
+    if (relative(ix.repo, abs).startsWith("..")) throw new Error("path escapes the repo");
+    const body = readFileSync(abs, "utf8").split("\n");
+    let [s, e] = lines ? parseLines(lines) : [1, body.length];
+    if (!Number.isFinite(s)) s = 1;
+    if (!Number.isFinite(e)) e = s;
+    const ctxN = Math.max(0, Math.min(50, (context | 0) || 0));
+    const start = Math.max(1, s - ctxN), end = Math.min(body.length, Math.max(s, e) + ctxN);
+    return { path, lines: `${start}-${end}`, language: ix.cfg?.language ?? null, text: body.slice(start - 1, end).join("\n") };
+  };
+}
+
+// List a file's indexed chunks (line range + a one-line signature) — a cheap file map.
+export function defaultOutlineFn(indexes) {
+  return async (label, { path }) => {
+    const ix = indexes.find((i) => i.label === label);
+    if (!path) throw new Error("path is required");
+    const store = await openStore(ix.cfg);
+    const rows = await store.chunksByPath(path);
+    return { path, symbols: rows.map((r) => ({ lines: `${r.line_start}-${r.line_end}`, language: r.language, signature: signatureOf(r.text) })) };
+  };
+}
+
+// Nearest chunks to the one covering (path, line) — reuses the stored embedding, no re-embed.
+export function defaultSimilarFn(indexes) {
+  return async (label, { path, line = null, limit = 8 }) => {
+    const ix = indexes.find((i) => i.label === label);
+    if (!path) throw new Error("path is required");
+    const store = await openStore(ix.cfg);
+    const src = await store.chunkAt(path, line);
+    if (!src) throw new Error(`no indexed chunk at ${path}${line != null ? `:${line}` : ""}`);
+    const tbl = await store.chunksTable();
+    const k = Math.max(1, Math.min(25, (limit | 0) || 8));
+    const rows = await tbl.search(Array.from(src.embedding)).distanceType("cosine").limit(k + 4).toArray();
+    const out = [];
+    for (const r of rows) {
+      if (r.id === src.id) continue;            // the seed chunk itself
+      out.push({ path: r.path, lines: `${r.line_start}-${r.line_end}`, language: r.language,
+        score: Number((1 - (r._distance ?? 0)).toFixed(4)), snippet: r.text });
+      if (out.length >= k) break;
+    }
+    return out;
+  };
+}
+
 export function serveStdio(indexes, { version } = {}) {
-  const ctx = { indexes, searchFn: defaultSearchFn(indexes), statusFn: defaultStatusFn(indexes), version };
+  const ctx = {
+    indexes, version,
+    searchFn: defaultSearchFn(indexes), statusFn: defaultStatusFn(indexes),
+    readFn: defaultReadFn(indexes), outlineFn: defaultOutlineFn(indexes), similarFn: defaultSimilarFn(indexes),
+  };
   let buf = "";
   process.stdin.setEncoding("utf8");
   process.stdin.on("data", async (chunk) => {
@@ -164,7 +313,7 @@ export function serveStdio(indexes, { version } = {}) {
       if (res) process.stdout.write(JSON.stringify(res) + "\n");
     }
   });
-  process.stderr.write(`gtir mcp: serving ${indexes.map((i) => `search_${i.label}`).join(", ")}, gtir_status\n`);
+  process.stderr.write(`gtir mcp: serving [${indexes.map((i) => i.label).join(", ")}] × {search,read,outline,similar} + gtir_status\n`);
 }
 
 export function printConfig(repos) {

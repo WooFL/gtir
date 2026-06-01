@@ -45,15 +45,19 @@ test("resolveIndexes throws on label collision, unless --label disambiguates", (
 
 import { buildTools } from "../src/mcp.mjs";
 
-test("buildTools emits search_<label> per index plus gtir_status", () => {
+test("buildTools emits search/read/outline/similar per index + gtir_status", () => {
   const tools = buildTools([{ label: "code", repo: "/r/code", cfg: {} }, { label: "notes", repo: "/r/wiki", cfg: {} }]);
-  const names = tools.map((t) => t.name);
-  assert.deepEqual(names, ["search_code", "search_notes", "gtir_status"]);
-  const search = tools[0];
-  assert.deepEqual(search.inputSchema.required, ["query"]);
-  assert.ok(search.inputSchema.properties.k);
-  assert.ok(search.inputSchema.properties.path_prefix);
-  assert.deepEqual(tools[2].inputSchema.properties, {}); // status takes no args
+  assert.deepEqual(tools.map((t) => t.name), [
+    "search_code", "read_code", "outline_code", "similar_code",
+    "search_notes", "read_notes", "outline_notes", "similar_notes",
+    "gtir_status",
+  ]);
+  assert.deepEqual(tools[0].inputSchema.required, ["query"]);  // search
+  assert.ok(tools[0].inputSchema.properties.compact);          // search gained compact
+  assert.deepEqual(tools[1].inputSchema.required, ["path"]);   // read
+  assert.deepEqual(tools[2].inputSchema.required, ["path"]);   // outline
+  assert.deepEqual(tools[3].inputSchema.required, ["path"]);   // similar
+  assert.deepEqual(tools.at(-1).inputSchema.properties, {});   // status takes no args
 });
 
 import { handleRequest } from "../src/mcp.mjs";
@@ -79,7 +83,8 @@ test("handleRequest: notifications/initialized returns null (no reply)", async (
 
 test("handleRequest: tools/list returns the tool set", async () => {
   const r = await handleRequest({ jsonrpc: "2.0", id: 2, method: "tools/list" }, baseCtx);
-  assert.deepEqual(r.result.tools.map((t) => t.name), ["search_code", "gtir_status"]);
+  assert.deepEqual(r.result.tools.map((t) => t.name),
+    ["search_code", "read_code", "outline_code", "similar_code", "gtir_status"]);
 });
 
 test("handleRequest: unknown method => JSON-RPC -32601", async () => {
@@ -111,6 +116,47 @@ test("tools/call gtir_status calls statusFn", async () => {
 
 test("tools/call unknown index => isError", async () => {
   const r = await handleRequest({ jsonrpc: "2.0", id: 6, method: "tools/call", params: { name: "search_missing", arguments: { query: "x" } } }, baseCtx);
+  assert.equal(r.result.isError, true);
+  assert.match(r.result.content[0].text, /unknown index: missing/);
+});
+
+test("tools/call search compact strips the snippet from results and text", async () => {
+  const ctx = { ...baseCtx, searchFn: async () => [hit] };
+  const r = await handleRequest({ jsonrpc: "2.0", id: 20, method: "tools/call", params: { name: "search_code", arguments: { query: "x", compact: true } } }, ctx);
+  assert.equal(r.result.structuredContent.results[0].snippet, undefined);   // stripped from structured data
+  assert.match(r.result.content[0].text, /a\.ts:1-2/);
+  assert.doesNotMatch(r.result.content[0].text, /code body/);               // and from the rendered text
+});
+
+test("tools/call read_<label> calls readFn and renders a code block", async () => {
+  let got = null;
+  const ctx = { ...baseCtx, readFn: async (label, a) => { got = { label, a }; return { path: a.path, lines: "10-14", text: "line A\nline B" }; } };
+  const r = await handleRequest({ jsonrpc: "2.0", id: 21, method: "tools/call", params: { name: "read_code", arguments: { path: "src/x.ts", lines: "12", context: 2 } } }, ctx);
+  assert.equal(got.label, "code");
+  assert.deepEqual([got.a.path, got.a.lines, got.a.context], ["src/x.ts", "12", 2]);
+  assert.match(r.result.content[0].text, /src\/x\.ts:10-14/);
+  assert.match(r.result.content[0].text, /line A/);
+  assert.equal(r.result.structuredContent.lines, "10-14");
+});
+
+test("tools/call outline_<label> lists a file's chunks", async () => {
+  const ctx = { ...baseCtx, outlineFn: async (label, a) => ({ path: a.path, symbols: [{ lines: "1-9", language: "ts", signature: "export function foo()" }] }) };
+  const r = await handleRequest({ jsonrpc: "2.0", id: 22, method: "tools/call", params: { name: "outline_code", arguments: { path: "src/x.ts" } } }, ctx);
+  assert.match(r.result.content[0].text, /export function foo/);
+  assert.equal(r.result.structuredContent.symbols.length, 1);
+});
+
+test("tools/call similar_<label> calls similarFn and wraps results", async () => {
+  let got = null;
+  const ctx = { ...baseCtx, similarFn: async (label, a) => { got = a; return [hit]; } };
+  const r = await handleRequest({ jsonrpc: "2.0", id: 23, method: "tools/call", params: { name: "similar_code", arguments: { path: "a.ts", line: 5, limit: 4 } } }, ctx);
+  assert.deepEqual([got.path, got.line, got.limit], ["a.ts", 5, 4]);
+  assert.deepEqual(r.result.structuredContent.results, [hit]);
+  assert.match(r.result.content[0].text, /a\.ts:1-2/);
+});
+
+test("tools/call read_<label> on an unknown index => isError (before readFn runs)", async () => {
+  const r = await handleRequest({ jsonrpc: "2.0", id: 24, method: "tools/call", params: { name: "read_missing", arguments: { path: "x" } } }, baseCtx);
   assert.equal(r.result.isError, true);
   assert.match(r.result.content[0].text, /unknown index: missing/);
 });
@@ -152,4 +198,24 @@ test("defaultStatusFn: an unbuilt index reports healthy:false + a note, never th
   assert.equal(status.length, 1);
   assert.equal(status[0].healthy, false);
   assert.match(status[0].note, /not built/);
+});
+
+import { parseToolName, defaultReadFn } from "../src/mcp.mjs";
+
+test("parseToolName splits a verb prefix off, keeping underscores in the label", () => {
+  assert.deepEqual(parseToolName("search_code"), { verb: "search", label: "code" });
+  assert.deepEqual(parseToolName("read_my_wiki"), { verb: "read", label: "my_wiki" });
+  assert.deepEqual(parseToolName("outline_x"), { verb: "outline", label: "x" });
+  assert.equal(parseToolName("gtir_status"), null);
+  assert.equal(parseToolName("bogus_x"), null);
+});
+
+test("defaultReadFn slices a span with context and blocks path traversal", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "gtir-read-"));
+  writeFileSync(join(dir, "f.txt"), "L1\nL2\nL3\nL4\nL5\n");
+  const read = defaultReadFn([{ label: "code", repo: dir, cfg: {} }]);
+  const out = await read("code", { path: "f.txt", lines: "2-3", context: 1 });
+  assert.equal(out.lines, "1-4");                 // 2-3 padded by 1 each side, clamped to file
+  assert.equal(out.text, "L1\nL2\nL3\nL4");
+  await assert.rejects(read("code", { path: "../escape", lines: "1" }), /escapes the repo/);
 });
