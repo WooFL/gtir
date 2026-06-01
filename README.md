@@ -15,7 +15,7 @@ walk repo (.gitignore-aware)
     grammarless files use path + first line (opt-in claude-cli tier still available)
   → embed via Ollama /api/embed  (jina-code-embeddings-0.5b)
   → LanceDB upsert (vectors + BM25 FTS over a path/scope/decl-weighted text)
-search: query → embed → vector branch + BM25 branch → weighted Reciprocal Rank Fusion (k=60)
+search: query → embed → vector branch + BM25 branch → query-adaptive Reciprocal Rank Fusion (k=60)
 ```
 
 Everything runs through **one runtime — Ollama** (the same daemon that serves `nomic-embed-text` for your notes). No Python, no sentence-transformers, no torch.
@@ -36,15 +36,18 @@ outranks the source that defines it. Measured on the fixture via `gtir eval` (em
 the gain is purely BM25): overall Recall@1 0.77 → ~0.82, gate tier 0.84 → 0.90. Tune or disable it with
 `{ "bm25Boost": 0 }` in `.gtir/config.json` (0 indexes the raw body, as before).
 
-**Weighted fusion (`ftsWeight`, default 0.1).** The two branches have opposite strengths: the dense
-embedder wins conceptual and cross-vocabulary queries, while BM25 wins exact-symbol lookups (searching
-`fetchWithRetry` by name). An ablation on the eval set showed classic equal-weight RRF *over-trusts*
-BM25 on conceptual queries (it surfaces keyword-sharing decoys), while dropping BM25 entirely abandons
-symbol search. So the BM25 branch is down-weighted in the fusion: `ftsWeight` scales its RRF
-contribution relative to the vector branch (`1` = classic RRF, `0` = vector-only). The default `0.1`
-lets the embedder lead on conceptual queries while BM25 still wins exact-symbol matches (its rank-1
-signal there is unambiguous). On the eval set this lifted the hard tier 0.70 → 0.77 and held the
-symbol tier at 0.92. Override per-repo in `.gtir/config.json`.
+**Query-adaptive fusion (`ftsWeight` / `ftsWeightSymbol`).** The two branches have opposite strengths:
+the dense embedder wins conceptual and cross-vocabulary queries, while BM25 wins exact-symbol lookups
+(searching `fetchWithRetry` by name). An ablation showed *any* single fusion weight is a compromise —
+it trades one for the other. So gtir routes by query intent instead: `isSymbolQuery()` flags a query
+that is a single bare identifier (`fetchWithRetry`, `LRUCache`, `grid_shortest_path`) as an
+exact-lookup, and those get `ftsWeightSymbol` (default `1` — classic equal-weight RRF, BM25 leads);
+every natural-language query gets `ftsWeight` (default `0` — vector-only, the embedder leads). Each
+RRF weight scales the BM25 branch relative to the vector branch. On the eval set this is the best of
+both with no compromise — overall Recall@1 **0.85 → 0.90**, the conceptual *hard* tier matches
+vector-only (0.90) and the exact-symbol tier matches BM25 (0.92) — beating both a fixed weight (0.85)
+and vector-only (0.86). Detection is exact on the fixture (12/12 symbol queries, zero false positives
+on 81 NL queries). Override either weight per-repo in `.gtir/config.json`.
 
 ## Install
 
