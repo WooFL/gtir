@@ -431,6 +431,7 @@ Default model tag (in `src/config.mjs`): `hf.co/jinaai/jina-code-embeddings-0.5b
   are still represented by their members, which are indexed as their own chunks — the container's
   own non-member lines (e.g. a class docstring) are not separately re-split.
 - **No automatic dimension-skew guard at query time.** `meta` records the model + dim; if you switch models, rebuild. (`gtir status` shows the recorded dim.)
+- **`find … references` (MCP) is lexical, not type-resolved.** It matches a symbol's *name* across chunks, so two same-named methods in different files both surface, and a name in a comment or string counts. `find … definition` (the default) is precise; for exact type-aware references use an LSP — gtir builds no cross-file symbol graph.
 
 ## Development
 

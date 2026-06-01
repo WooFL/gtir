@@ -134,11 +134,10 @@ function mergeSiblings(nodes, text, langId, relPath, cfg) {
   };
   for (const n of nodes) {
     const span = n.endIndex - n.startIndex;
-    // Oversize node: flush the current group and skip this node. Container
-    // types (class/impl/mod) lose nothing — their members were collected as
-    // their own nodes and surface separately. KNOWN LIMITATION: an oversize
-    // *leaf* node (e.g. one >maxChars function with no nested target nodes) is
-    // dropped here, not re-split. Matches the original Python chunker.
+    // Oversize node: flush the current group, then handle it specially (below). An oversize
+    // *leaf* (a >maxChars function with no nested target nodes) is re-split into line-aware
+    // windows; an oversize *container* (class/impl/mod) is skipped — its members were collected
+    // as their own nodes and surface separately.
     if (span > cfg.maxChars) {
       flush();
       // Oversize *leaf* (no nested target node): re-split into line-aware windows
