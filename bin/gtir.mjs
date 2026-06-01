@@ -11,6 +11,7 @@ import { probeDim } from "../src/embed.mjs";
 import { runInit } from "../src/init.mjs";
 import { resolveIndexes, serveStdio, printConfig } from "../src/mcp.mjs";
 import { evalGolden, flattenMetrics, compareBaseline, compareTiers } from "../src/eval.mjs";
+import { runDemo, formatDemo } from "../src/demo.mjs";
 
 // --- programmatic entrypoints (used by tests and the dispatcher) ---
 
@@ -61,6 +62,9 @@ function parseArgs(argv) {
       if (c > 0) { (args.labels ??= {})[v.slice(c + 1)] = v.slice(0, c); }
     }
     else if (a === "--print-config") args.printConfig = true;
+    else if (a === "--query") args.query = argv[++i];
+    else if (a === "--grep-term") args.grepTerm = argv[++i];
+    else if (a === "--no-color") args.noColor = true;
     else if (a === "-k" || a === "--k") {
       const next = argv[i + 1];
       if (next !== undefined && !next.startsWith("-") && Number.isFinite(Number(next))) {
@@ -215,6 +219,13 @@ async function main() {
         process.stdout.write(JSON.stringify(await runStatus({ repo }), null, 2) + "\n");
         break;
       }
+      case "demo": {
+        const query = args.query ?? (args._.length ? args._.join(" ") : null);
+        const color = !args.noColor && !process.env.NO_COLOR && !!process.stdout.isTTY;
+        const r = await runDemo({ repo: args.repo ?? null, query, grepTerm: args.grepTerm, log: (m) => process.stderr.write(`gtir: ${m}\n`) });
+        process.stdout.write(formatDemo(r, { color }));
+        break;
+      }
       case "setup": {
         const r = await runSetup({ repo });
         process.stderr.write(`gtir: Ollama OK — model=${r.model} dim=${r.dim}\n`);
@@ -259,6 +270,7 @@ async function main() {
           "  gtir index   --repo <project> [--rebuild] [--no-cache]",
           "  gtir refresh --repo <project> [--no-cache]",
           "  gtir search  --repo <project> <query> [-k N] [--path-prefix P] [--language L]",
+          "  gtir demo    [--repo <project>] [--query <q>]   # see meaning-match vs grep, on a sample corpus",
           "  gtir status  --repo <project>",
           "  gtir setup   --repo <project>",
           "  gtir hook    --repo <project> [--remove]",

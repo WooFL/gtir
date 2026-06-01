@@ -133,6 +133,37 @@ gtir setup --repo <project>
 
 ## Quick start
 
+**See it work in one command — before you index anything of your own:**
+
+```bash
+gtir demo      # indexes a tiny bundled sample once, then shows the contrast
+```
+
+```text
+  ❓  "compute the edit distance between two strings"
+
+      grep -rin distance   →  5 matches in 2 files  (graph/dijkstra.rs, text/levenshtein.py)
+      gtir search   →  top hit:
+
+         text/levenshtein.py:1-16
+         ┌──────────────────────────────────────────────────────────┐
+         │ def levenshtein(s: str, t: str) -> int:                  │
+         │     """Classic Wagner-Fischer dynamic-programming edit … │
+         │     m, n = len(s), len(t)                                │
+         │     dp = list(range(n + 1))                              │
+         └──────────────────────────────────────────────────────────┘
+         ↑ matched by meaning — your query never said "levenshtein"
+
+  to find it, you read:   grep → 474 tokens (the files it hit)   ·   gtir → 187 (one span)   (≈ 3× less)
+```
+
+`gtir demo` runs a *real* search against a bundled sample corpus (all numbers are computed, not canned)
+and shows what `grep` returns vs. what gtir returns: the meaning-match — you searched *"edit distance"*
+and it found `levenshtein`, a word your query never used — and how much less you read to get there.
+Point it at your own indexed code with `gtir demo --repo .`, or ask your own question with `--query "…"`.
+
+---
+
 Already installed gtir and pulled the model (see **Install** / **Setup** above)? Point it at any
 project and ask a question in plain English:
 
