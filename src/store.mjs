@@ -25,13 +25,21 @@ export async function openStore(cfg) {
       await tbl.delete(`path IN (${inList(paths)})`); // delete-then-add upsert
       await tbl.add(rows);
     }
-    // (Re)build the BM25 FTS index. Prefer the boosted `fts_text` column (path/scope/decl
-    // weighted ahead of the body); fall back to raw `text` for pre-existing schemas.
-    try { await tbl.createIndex("fts_text", { config: lancedb.Index.fts(), replace: true }); }
-    catch {
-      try { await tbl.createIndex("text", { config: lancedb.Index.fts(), replace: true }); }
-      catch { /* older builds / empty table: degrade to vector-only at search time */ }
-    }
+    // Maintain the BM25 FTS index incrementally. Build it once (full) when the table has no index
+    // yet — the first build, or a fresh table after --rebuild's dropChunks(). On every later refresh,
+    // fold the new fragments in and prune deletes via optimize() — O(changed), not O(corpus) per
+    // write. gtir creates only the FTS index, so a non-empty index list means it already exists.
+    // Prefer the boosted `fts_text` column (path/scope/decl weighted ahead of the body); fall back
+    // to raw `text` for pre-existing schemas.
+    try {
+      const hasIndex = (await tbl.listIndices()).length > 0;
+      if (hasIndex) {
+        await tbl.optimize();
+      } else {
+        try { await tbl.createIndex("fts_text", { config: lancedb.Index.fts(), replace: true }); }
+        catch { await tbl.createIndex("text", { config: lancedb.Index.fts(), replace: true }); }
+      }
+    } catch { /* older builds / empty table: degrade to vector-only at search time */ }
   }
 
   async function loadManifest() {

@@ -84,3 +84,33 @@ test("dropChunks: removes the chunks table", async () => {
   await sa.dropChunks();
   assert.equal(await sa.chunksTable(), null);
 });
+
+// FTS rows must carry fts_text (production schema) so the index builds on the boosted column.
+const rowF = (path, text, mtime) => ({
+  id: `${path}:${text}`, path, language: "python",
+  chunk_start: 0, chunk_end: text.length, line_start: 1, line_end: 1,
+  text, fts_text: text, mtime_ms: mtime, embedding: [0.1, 0.2, 0.3],
+});
+
+test("upsertRows builds the FTS index once, then maintains it incrementally (optimize, no duplicate index)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "gtir-fts-"));
+  const store = await openStore({ indexDir: join(dir, "i.lance") });
+
+  await store.upsertRows([rowF("a.py", "alpha apple", 1), rowF("b.py", "beta banana", 2)]);
+  // Re-open the table handle after each write — LanceDB handles are version-pinned, and upsertRows
+  // mutates through its own handle (this mirrors search(), which opens a fresh handle per query).
+  assert.equal((await (await store.chunksTable()).listIndices()).length, 1, "one FTS index after first build");
+
+  // Incremental add: existing table -> optimize path, not a fresh createIndex.
+  await store.upsertRows([rowF("c.py", "gamma cherry", 3)]);
+  assert.equal((await (await store.chunksTable()).listIndices()).length, 1, "still exactly one index after incremental refresh");
+
+  // Incrementally-added content is searchable.
+  const hitC = await (await store.chunksTable()).query().nearestToText("cherry", ["fts_text"]).limit(5).toArray();
+  assert.ok(hitC.some((r) => r.path === "c.py"), "new content searchable after incremental refresh");
+
+  // Replacing a path drops its old term.
+  await store.upsertRows([rowF("a.py", "alpha apricot", 4)]);
+  const hitOld = await (await store.chunksTable()).query().nearestToText("apple", ["fts_text"]).limit(5).toArray();
+  assert.ok(!hitOld.some((r) => r.path === "a.py"), "replaced content's old term no longer matches");
+});
