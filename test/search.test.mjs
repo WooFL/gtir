@@ -31,9 +31,41 @@ test("fuseRRF ftsWeight scales the BM25 branch (1 = classic RRF, 0 = vector-only
   assert.equal(fuseRRF(vec, fts, 5, 0)[0].path, "a.ts");   // BM25 ignored → vector order (a first)
 });
 
-import { applyRerank } from "../src/search.mjs";
+import { applyRerank, pathPrior, isNotesMode } from "../src/search.mjs";
 
 const F = (p) => ({ path: p, snippet: p, score: 0 });
+
+test("pathPrior demotes test files in code mode, leaves source untouched", () => {
+  const cfg = { model: "jina-code", testPenalty: 0.5 };
+  assert.equal(pathPrior("src/config.mjs", "default config values", cfg), 1);          // source
+  assert.equal(pathPrior("test/config.test.mjs", "default config values", cfg), 0.5);  // *.test.mjs
+  assert.equal(pathPrior("tests/foo_test.py", "load the manifest", cfg), 0.5);         // test dir + _test.py
+  assert.equal(pathPrior("pkg/retry_test.go", "retry with backoff", cfg), 0.5);        // go _test.go
+  assert.equal(pathPrior("spec/parser.spec.ts", "parse the tree", cfg), 0.5);          // spec dir + .spec.
+});
+
+test("pathPrior leaves tests alone when the query is itself test-seeking", () => {
+  const cfg = { model: "jina-code", testPenalty: 0.5 };
+  assert.equal(pathPrior("http/retry.test.ts", "test that a retry succeeds after a 503", cfg), 1);
+  assert.equal(pathPrior("test/x.spec.ts", "the spec for the parser", cfg), 1);
+  assert.equal(pathPrior("test/x.test.ts", "where are the mocks", cfg), 1);
+});
+
+test("pathPrior is disabled in notes mode (.md is the target there)", () => {
+  const notes = { model: "nomic-embed-text", testPenalty: 0.5 };
+  assert.equal(pathPrior("test/whatever.test.mjs", "anything", notes), 1);
+  assert.equal(isNotesMode(notes), true);
+  assert.equal(isNotesMode({ model: "hf.co/jinaai/jina-code-embeddings-0.5b-GGUF:F16" }), false);
+});
+
+test("fuseRRF applies the path prior, sinking a penalized test below a same-rank source", () => {
+  const vec = [{ id: "t", path: "x.test.ts", line_start: 1, line_end: 2, language: "ts", text: "t" },
+               { id: "s", path: "x.ts", line_start: 1, line_end: 2, language: "ts", text: "s" }];
+  const priorOf = (p) => (/\.test\./.test(p) ? 0.5 : 1);
+  const ranked = fuseRRF(vec, [], 5, 0, priorOf);
+  assert.equal(ranked[0].path, "x.ts");          // source (vec #2) lifted above the penalized test (vec #1)
+  assert.equal(ranked.find((r) => r.path === "x.test.ts").prior, 0.5);
+});
 
 test("applyRerank reorders fused by reranker indices and slices to k", () => {
   const fused = [F("a"), F("b"), F("c")];

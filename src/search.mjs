@@ -11,12 +11,37 @@ export function isSymbolQuery(query) {
   return /^[A-Za-z_$][\w$]*$/.test(String(query).trim());
 }
 
+// In a CODE repo, a query for an implementation should not surface that implementation's
+// TEST file above the source — the dominant real-world miss (a query for "default config
+// values" returning config.test.mjs at #1). Demote conventional test paths in fusion, UNLESS
+// the query is itself test-seeking (mentions tests/specs/mocks/fixtures), in which case the
+// test IS the target and we leave it. Notes vaults (the nomic embed model) get no path priors:
+// there, .md is the content, not a thing to demote.
+const isTestPath = (p) =>
+  /(^|[/\\])(tests?|__tests__|__mocks__|specs?|e2e)[/\\]/i.test(p) ||  // inside a test/spec dir
+  /(^|[/\\._-])(test|spec)\.[a-z0-9]+$/i.test(p) ||                    // foo.test.ts, _test.go, bare test.py
+  /(^|[/\\])test_[^/\\]*\.py$/i.test(p);                              // pytest test_foo.py
+const isTestSeeking = (q) => /\b(tests?|specs?|mocks?|fixtures?)\b/i.test(q);
+
+export function isNotesMode(cfg) {
+  return /nomic|embed-text/i.test((cfg && cfg.model) || "");
+}
+
+// RRF score multiplier for a result path given the query + config. 1 = unchanged.
+export function pathPrior(path, query, cfg = {}) {
+  if (isNotesMode(cfg)) return 1;
+  if (isTestSeeking(String(query || ""))) return 1;
+  return isTestPath(String(path || "")) ? (cfg.testPenalty ?? 0.5) : 1;
+}
+
 // Pure fusion — unit-tested without a DB. Port of server.mjs bump()/RRF loop.
 // ftsWeight scales the BM25 branch's RRF contribution relative to the vector branch
 // (1 = equal/classic RRF; <1 favors the embedder). The dense branch is the stronger
 // signal on conceptual/cross-vocabulary queries; BM25 still wins exact-symbol lookups
 // even at a low weight because its rank-1 signal there is unambiguous.
-export function fuseRRF(vecRows, ftsRows, limit, ftsWeight = 1) {
+// priorOf(path) -> RRF score multiplier (default identity). Applied after fusion so a
+// demoted path (e.g. a test file in a code repo) sinks below comparably-ranked source.
+export function fuseRRF(vecRows, ftsRows, limit, ftsWeight = 1, priorOf = null) {
   const fused = new Map();
   const bump = (rows, key, weight) => rows.forEach((r, i) => {
     const cur = fused.get(r.id) ?? { row: r, rrf: 0, vec_rank: null, fts_rank: null };
@@ -26,12 +51,15 @@ export function fuseRRF(vecRows, ftsRows, limit, ftsWeight = 1) {
   });
   bump(vecRows, "vec_rank", 1);
   bump(ftsRows, "fts_rank", ftsWeight);
+  const prior = typeof priorOf === "function" ? priorOf : () => 1;
   return [...fused.values()]
+    .map((c) => { const w = prior(c.row.path); return { ...c, prior: w, rrf: c.rrf * w }; })
     .sort((a, b) => b.rrf - a.rrf)
     .slice(0, limit)
-    .map(({ row: r, rrf, vec_rank, fts_rank }) => ({
+    .map(({ row: r, rrf, vec_rank, fts_rank, prior: w }) => ({
       path: r.path, lines: `${r.line_start}-${r.line_end}`, language: r.language,
-      score: Number(rrf.toFixed(4)), vec_rank, fts_rank, snippet: r.text,
+      score: Number(rrf.toFixed(4)), vec_rank, fts_rank,
+      ...(w !== 1 ? { prior: Number(w.toFixed(2)) } : {}), snippet: r.text,
     }));
 }
 
@@ -93,7 +121,8 @@ export async function search(query, cfg, { k = 8, pathPrefix = null, language = 
     }
   }
 
-  const fused = fuseRRF(vecRows, ftsRows, cfg.rerank ? rcand : limit, ftsW);
+  const priorOf = (p) => pathPrior(p, query, cfg);
+  const fused = fuseRRF(vecRows, ftsRows, cfg.rerank ? rcand : limit, ftsW, priorOf);
   if (!cfg.rerank) return fused;
   const rerankImpl = cfg.rerankImpl ?? ((q, docs) => rerankDocs(q, docs, cfg));
   const ranked = await rerankImpl(query, fused.map((r) => r.snippet));

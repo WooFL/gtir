@@ -49,6 +49,19 @@ vector-only (0.90) and the exact-symbol tier matches BM25 (0.92) — beating bot
 and vector-only (0.86). Detection is exact on the fixture (12/12 symbol queries, zero false positives
 on 81 NL queries). Override either weight per-repo in `.gtir/config.json`.
 
+**Test-file demotion (`testPenalty`, code repos only).** Field-weighting handles *incidental*
+mentions, but a *test* for an implementation is a strong, legitimate match — `config.test.mjs`
+genuinely is about config — so it can still outrank the source you actually want. In a code repo a
+query for an implementation almost never wants its test, so gtir multiplies the fused score of
+conventional test paths (`*.test.*`, `*_test.go`, `test_*.py`, `tests/`, `spec/`) by `testPenalty`
+(default `0.5`), sinking them below comparably-ranked source. Two guards keep it honest: it is skipped
+when the query is itself test-seeking (mentions tests / specs / mocks / fixtures — so *"test that a
+retry succeeds"* still finds the test), and it is disabled entirely in notes mode, where `.md` *is* the
+content. Measured on gtir's own source with its real tests as decoys (one shared index, so the prior is
+the only variable): overall Recall@1 **0.70 → 0.76**, the exact-symbol tier **0.75 → 1.00**, with
+provably zero change on the fixture (no fixture golden target is a test file). Set `{ "testPenalty": 1 }`
+to disable.
+
 ## Install
 
 ```bash

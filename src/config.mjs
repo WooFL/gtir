@@ -26,6 +26,8 @@ export const DEFAULTS = {
   rerankCandidates: 24,                   // hybrid candidates to rerank before slicing to k
   rerankMaxChars: 2000,                   // per-document char cap (~512 tokens, bge context)
   bm25Boost: 3,                           // repeat the path+scope+decl head N times in the FTS text so BM25 weights symbol/path matches above incidental body hits (0 = index raw text)
+  testPenalty: 0.5,                       // CODE mode: RRF score multiplier for test-file paths (a query for an impl shouldn't surface its test at #1); skipped for test-seeking queries and in notes mode. 1 = off
+
   // Query-adaptive RRF fusion weights for the BM25 branch (relative to the vector branch = 1).
   // Conceptual/natural-language queries let the embedder lead (ftsWeight, low); single bare-identifier
   // queries (exact-symbol lookups) let BM25 lead (ftsWeightSymbol, ~classic RRF). See isSymbolQuery.
