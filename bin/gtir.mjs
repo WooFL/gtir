@@ -123,6 +123,16 @@ async function runEval(args) {
   const metrics = await evalGolden(golden, searchFn, { maxK });
   metrics.model = (await store.readMeta()).model || cfg.model;
 
+  // Guard the common footgun: running `gtir eval` over the wrong root (e.g. the gtir repo
+  // itself instead of its eval/corpus) indexes files whose paths never match the golden set,
+  // so every query misses and the metrics are a silent wall of zeros. Say so, actionably.
+  const looseK = Math.max(...Object.keys(metrics.recall).map(Number));
+  if (metrics.n > 0 && (metrics.recall[looseK] ?? 0) === 0) {
+    process.stderr.write(`eval: WARNING all ${metrics.n} queries missed at recall@${looseK} — the index root `
+      + `(${cfg.indexDir}) likely doesn't contain the golden paths. To evaluate the bundled corpus run `
+      + `\`npm run eval\` (i.e. --repo eval/corpus --golden eval/golden.json).\n`);
+  }
+
   const baselinePath = args.baseline || path.join(repo, "eval", "baseline.json");
 
   if (args.save) {
