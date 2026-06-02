@@ -178,7 +178,7 @@ Then point it at a real project:
 
 ```bash
 cd ~/my-project
-gtir init --repo .     # detect code vs notes, index, install a post-commit refresh hook
+gtir init --repo .     # detect code vs notes, index, install the auto-refresh git hooks
 ```
 
 ```text
@@ -187,7 +187,7 @@ gtir init: /home/me/my-project
   config: wrote .gtir/config.json
   gitignore: .gtir/ added
   index: 1284 chunks, dim=896
-  hook: post-commit auto-refresh installed
+  hook: auto-refresh installed (post-commit + post-rewrite; rebase-aware)
 ```
 
 Now search. The query never says `verifyToken`, but that's the top hit:
@@ -218,8 +218,9 @@ gtir search "verify a JWT" --repo . | jq -r '.[] | "\(.path):\(.lines)"'
 #   src/auth/middleware.ts:12-26
 ```
 
-That's the whole loop: `init` once, then `search` as often as you like. The post-commit hook keeps the
-index fresh as the code changes.
+That's the whole loop: `init` once, then `search` as often as you like. The git hooks keep the index
+fresh as the code changes — and they're rebase-aware: a rebase or cherry-pick won't re-embed every
+intermediate commit, it refreshes once when the operation finishes (see [Staying fresh](#staying-fresh)).
 
 ## Commands
 
@@ -229,7 +230,7 @@ gtir index   --repo <project> [--rebuild] [--no-cache]                   # build
 gtir refresh --repo <project> [--no-cache]                              # incremental (changed files)
 gtir search  "how are sessions created" --repo <project> [-k 8] [--language python] [--path-prefix src/]
 gtir status  --repo <project>                          # model, dim, file count
-gtir hook    --repo <project> [--remove]               # install/remove the post-commit refresh hook
+gtir hook    --repo <project> [--remove]               # install/remove the auto-refresh git hooks
 gtir fetch-grammars                                    # download prebuilt HLSL/GLSL grammars (~5 MB)
 gtir doctor  [--repo <project>] [--no-pull]            # check Ollama + model, pull if missing
 gtir mcp     --repo <project> [--label name:<repo>] [--print-config]    # run the MCP server
@@ -247,8 +248,8 @@ It detects whether the target is a **note vault** (has `.obsidian/` or is markdo
 1. writes `.gtir/config.json` (never overwrites an existing one),
 2. appends `.gtir/` to `.gitignore`,
 3. builds the first index,
-4. installs a `post-commit` auto-refresh hook — or, if it finds **lefthook/husky**, prints the snippet
-   to add rather than clobbering the managed hook.
+4. installs the auto-refresh git hooks (`post-commit` + `post-rewrite`) — or, if it finds
+   **lefthook/husky**, prints the snippet to add rather than clobbering the managed hook.
 
 For a code repo with a nested vault (e.g. `wiki/`), it adds that folder to `skipDirs` so it isn't
 indexed twice with the wrong model. Force the mode with `--notes` / `--code`; skip steps with
@@ -285,6 +286,23 @@ and installs them. Re-run `gtir index --rebuild` and your shaders chunk function
 
 You only need the 510 MB toolchain to *regenerate* a grammar (`npm run build:shaders`, for maintainers),
 never to use one.
+
+### Staying fresh
+
+`gtir init` installs two git hooks: `post-commit` and `post-rewrite`. After an ordinary commit, the
+`post-commit` hook runs `gtir refresh` (incremental — only changed files are re-chunked, and unchanged
+content reuses the embedding cache below), so the index tracks your working tree automatically.
+
+The `post-rewrite` hook exists for **rebase**. Without it, a rebase is a trap: depending on your git
+backend, the per-commit hook either fires once for every replayed commit — re-embedding each throwaway
+intermediate tree, which is where the "rebase pinned my GPU for ten minutes" reports come from — or
+doesn't fire at all, leaving the index stale. gtir handles both. The `--hook` refresh **defers** while a
+rebase / cherry-pick / merge / revert / bisect is in progress (it checks git's own in-flight markers like
+`rebase-merge` and `sequencer`), and `post-rewrite` runs a single refresh once the operation completes.
+So an N-commit rebase costs one refresh of the final tree, not N refreshes of states you threw away.
+
+Worktrees are handled correctly (state is resolved per-worktree), and `commit --amend` refreshes exactly
+once. A manual `gtir refresh` (no `--hook`) never defers — run it any time you want to force a catch-up.
 
 ### Embedding cache
 

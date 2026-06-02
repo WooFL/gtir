@@ -6,7 +6,7 @@ import { loadConfig } from "../src/config.mjs";
 import { buildIndex } from "../src/indexer.mjs";
 import { search } from "../src/search.mjs";
 import { openStore } from "../src/store.mjs";
-import { installHook, removeHook } from "../src/hook.mjs";
+import { installHook, removeHook, gitBusy } from "../src/hook.mjs";
 import { probeDim } from "../src/embed.mjs";
 import { runInit } from "../src/init.mjs";
 import { resolveIndexes, serveStdio, printConfig } from "../src/mcp.mjs";
@@ -83,6 +83,7 @@ function parseArgs(argv) {
     else if (a === "--no-cache") args.noCache = true;
     else if (a === "--no-index") args.noIndex = true;
     else if (a === "--no-hook") args.noHook = true;
+    else if (a === "--hook") args.hook = true;
     else if (a === "--save") args.save = true;
     else if (a === "--no-build") args.noBuild = true;
     else if (a === "--json") args.json = true;
@@ -219,6 +220,12 @@ async function main() {
         break;
       }
       case "refresh": {
+        // Hook-driven refresh: defer while a rebase/cherry-pick/merge is mid-flight so we
+        // don't re-embed each transient checkout. post-rewrite refreshes once it completes.
+        if (args.hook && gitBusy(repo)) {
+          process.stderr.write("gtir: git operation in progress — refresh deferred\n");
+          break;
+        }
         const r = await runIndex({ repo, rebuild: false, noCache: args.noCache ?? false });
         process.stderr.write(`gtir: refresh — ${r.chunks} chunks updated (${r.reused ?? 0} reused, ${r.embedded ?? 0} embedded, ${r.skipped} skipped, ${r.evicted} evicted)\n`);
         for (const w of r.warnings ?? []) process.stderr.write(`gtir: note: ${w}\n`);
@@ -254,8 +261,8 @@ async function main() {
         break;
       }
       case "hook": {
-        if (args.remove) { removeHook(repo); process.stderr.write("gtir: hook removed\n"); }
-        else { installHook(repo); process.stderr.write("gtir: post-commit refresh hook installed\n"); }
+        if (args.remove) { removeHook(repo); process.stderr.write("gtir: hooks removed\n"); }
+        else { installHook(repo); process.stderr.write("gtir: auto-refresh hooks installed (post-commit + post-rewrite; rebase-aware)\n"); }
         break;
       }
       case "fetch-grammars": {
@@ -284,7 +291,7 @@ async function main() {
         if (args.noIndex) process.stderr.write("  index: skipped (--no-index)\n");
         else process.stderr.write(`  index: ${r.indexed.chunks} chunks, dim=${r.indexed.dim}\n`);
         if (args.noHook) process.stderr.write("  hook: skipped (--no-hook)\n");
-        else if (r.hookInstalled) process.stderr.write("  hook: post-commit auto-refresh installed\n");
+        else if (r.hookInstalled) process.stderr.write("  hook: auto-refresh installed (post-commit + post-rewrite; rebase-aware)\n");
         else if (r.lefthookSnippet) process.stderr.write(`  hook: lefthook detected — add to lefthook.yml:\n\n${r.lefthookSnippet}\n\n`);
         else if (r.hookManager === "husky") process.stderr.write("  hook: husky detected — add 'gtir refresh --repo .' to .husky/post-commit\n");
         else process.stderr.write("  hook: no git repo — auto-refresh skipped (run 'gtir refresh' manually)\n");
