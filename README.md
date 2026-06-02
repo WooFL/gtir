@@ -293,16 +293,25 @@ never to use one.
 `post-commit` hook runs `gtir refresh` (incremental — only changed files are re-chunked, and unchanged
 content reuses the embedding cache below), so the index tracks your working tree automatically.
 
-The `post-rewrite` hook exists for **rebase**. Without it, a rebase is a trap: depending on your git
-backend, the per-commit hook either fires once for every replayed commit — re-embedding each throwaway
-intermediate tree, which is where the "rebase pinned my GPU for ten minutes" reports come from — or
-doesn't fire at all, leaving the index stale. gtir handles both. The `--hook` refresh **defers** while a
-rebase / cherry-pick / merge / revert / bisect is in progress (it checks git's own in-flight markers like
-`rebase-merge` and `sequencer`), and `post-rewrite` runs a single refresh once the operation completes.
-So an N-commit rebase costs one refresh of the final tree, not N refreshes of states you threw away.
+The `post-rewrite` hook is there for **rebase**, which is otherwise a trap. A rebase replays your commits,
+and depending on the git backend the `post-commit` hook either fires once per replayed commit — so a naive
+setup re-embeds every throwaway intermediate tree, which is where the "rebase pinned my GPU for ten
+minutes" reports come from — or doesn't fire at all, leaving the index stale. gtir handles both ends:
 
-Worktrees are handled correctly (state is resolved per-worktree), and `commit --amend` refreshes exactly
-once. A manual `gtir refresh` (no `--hook`) never defers — run it any time you want to force a catch-up.
+- **During** the operation, `post-commit` **defers**. It checks git's own in-flight markers
+  (`rebase-merge`, `rebase-apply`, `sequencer`, `CHERRY_PICK_HEAD`, `MERGE_HEAD`, …) and does nothing
+  while a rebase / cherry-pick / merge / revert / bisect is in progress — no work against a tree you're
+  about to discard.
+- **After** it completes, `post-rewrite` runs exactly one refresh of the final tree.
+
+That one catch-up is cheap because it only does real work where the tree actually changed: files git
+didn't touch keep their mtime and are skipped; files it rewrote get re-chunked but reuse their cached
+embedding when the content is byte-identical (a rebase churns mtimes, not content); only genuinely new or
+changed content is re-embedded. So an N-commit rebase costs **one** refresh proportional to the net diff,
+not N refreshes of states you threw away.
+
+Worktrees are handled correctly (the rebase state is resolved per-worktree), and `commit --amend`
+refreshes exactly once. A manual `gtir refresh` never defers — run it any time to force a catch-up.
 
 ### Embedding cache
 
