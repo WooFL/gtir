@@ -71,16 +71,20 @@ test("post-commit hook calls the git-busy-aware --hook refresh", () => {
   assert.match(body, /gtir refresh --hook --repo/);
 });
 
-test("installHook also writes a post-rewrite hook that skips the amend case", () => {
+test("installHook writes a post-rewrite hook: unconditional catch-up, amend skipped", () => {
   const repo = gitRepo();
   installHook(repo);
   const pr = join(repo, ".git", "hooks", "post-rewrite");
   assert.ok(existsSync(pr), "post-rewrite hook written");
   const body = readFileSync(pr, "utf8");
   assert.match(body, new RegExp(MARKER));
-  assert.match(body, /--hook/, "post-rewrite uses the git-busy-aware refresh");
+  // post-rewrite IS the post-operation catch-up: git's rebase state still exists on disk when
+  // it fires, so gating it on gitBusy (--hook) would defer the very refresh we want. It must
+  // run a PLAIN refresh. (Real-rebase test caught this: a --hook post-rewrite deferred itself.)
+  assert.doesNotMatch(body, /--hook/, "post-rewrite must not defer — it runs the catch-up");
+  assert.match(body, /gtir refresh --repo/, "post-rewrite runs a plain (ungated) refresh");
   // post-commit already refreshed an amend; only rebase needs the post-rewrite catch-up.
-  assert.match(body, /amend/, "post-rewrite guards the amend case");
+  assert.match(body, /amend/, "post-rewrite skips the amend case");
 });
 
 test("removeHook strips the gtir block from BOTH hooks", () => {

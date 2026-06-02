@@ -43,21 +43,25 @@ export function gitBusy(repo, gitDir = resolveGitDir(repo)) {
   return BUSY_MARKERS.some((m) => existsSync(join(gitDir, m)));
 }
 
-// Embed an ABSOLUTE repo path (forward slashes for /bin/sh). A hook runs from the repo
-// root, so a relative arg like "vault" would resolve to vault/vault and silently miss.
-// --hook makes refresh self-skip while git is mid-operation (see gitBusy).
-function refreshCmd(repoArg) {
-  return `gtir refresh --hook --repo "${repoArg}" >/dev/null 2>&1 || true`;
+// Embed an ABSOLUTE repo path (forward slashes for /bin/sh). A hook runs from the repo root,
+// so a relative arg like "vault" would resolve to vault/vault and silently miss. --hook makes
+// refresh self-skip while git is mid-operation (see gitBusy); a plain refresh always runs.
+function refreshCmd(repoArg, { gated }) {
+  return `gtir refresh${gated ? " --hook" : ""} --repo "${repoArg}" >/dev/null 2>&1 || true`;
 }
 
 function block(repoArg, hookName) {
   const lines = [MARKER];
   if (hookName === "post-rewrite") {
-    // git passes "amend" or "rebase" as $1. post-commit already refreshed an amend; only
-    // rebase needs the catch-up (the merge backend skips post-commit during the replay).
-    lines.push(`case "$1" in amend) : ;; *) ${refreshCmd(repoArg)} ;; esac`);
+    // Fires ONCE after a rebase/amend finishes — the catch-up that indexes the final tree.
+    // It must run UNCONDITIONALLY (no --hook): git still has its rebase state on disk when
+    // post-rewrite fires, so a gitBusy gate here would defer the very refresh we want. git
+    // passes "amend" or "rebase" as $1; skip amend (post-commit already refreshed it).
+    lines.push(`case "$1" in amend) : ;; *) ${refreshCmd(repoArg, { gated: false })} ;; esac`);
   } else {
-    lines.push(refreshCmd(repoArg));
+    // post-commit fires on every commit, including each pick replayed during a rebase. --hook
+    // defers those so we don't re-embed throwaway intermediate trees; post-rewrite catches up.
+    lines.push(refreshCmd(repoArg, { gated: true }));
   }
   lines.push(END, "");
   return lines.join("\n");
