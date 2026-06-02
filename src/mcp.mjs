@@ -5,6 +5,7 @@ import { loadConfig } from "./config.mjs";
 import { search } from "./search.mjs";
 import { openStore } from "./store.mjs";
 import { parseLines } from "./eval.mjs";
+import { watchRepo } from "./watch.mjs";
 
 export function sanitizeLabel(s) {
   return String(s).toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "index";
@@ -399,9 +400,25 @@ export function serveStdio(indexes, { version } = {}) {
   process.stderr.write(`gtir mcp: serving [${indexes.map((i) => i.label).join(", ")}] × {search,read,outline,similar,find} + gtir_status\n`);
 }
 
-export function printConfig(repos) {
+// Start a live file-watcher per served index (`gtir mcp --watch`). Each watcher runs an
+// incremental refresh on a debounced batch of changes and defers during git operations (the
+// same gitBusy gate as the commit hooks), so the index the agent queries tracks the working
+// tree as you edit — no commit required. `log` MUST route to stderr; stdout is the JSON-RPC
+// channel and any stray write corrupts the protocol. Returns the handles so callers can close them.
+export function startWatchers(indexes, { debounceMs = 1500, log = () => {} } = {}) {
+  return indexes.map((ix) => {
+    const handle = watchRepo(ix.cfg, { debounceMs, log: (m) => log(`[${ix.label}] ${m}`) });
+    return { label: ix.label, ...handle };
+  });
+}
+
+export function printConfig(repos, { watch = false, debounceMs = null } = {}) {
   const gtirBin = fileURLToPath(new URL("../bin/gtir.mjs", import.meta.url)).split("\\").join("/");
   const args = ["mcp"];
   for (const r of repos) args.push("--repo", r);
+  if (watch) {
+    args.push("--watch");
+    if (Number.isFinite(debounceMs)) args.push("--debounce", String(debounceMs));
+  }
   return JSON.stringify({ gtir: { type: "stdio", command: "node", args: [gtirBin, ...args] } }, null, 2);
 }

@@ -234,7 +234,7 @@ gtir status  --repo <project>                          # model, dim, file count
 gtir hook    --repo <project> [--remove]               # install/remove the auto-refresh git hooks
 gtir fetch-grammars                                    # download prebuilt HLSL/GLSL grammars (~5 MB)
 gtir doctor  [--repo <project>] [--no-pull]            # check Ollama + model, pull if missing
-gtir mcp     --repo <project> [--label name:<repo>] [--print-config]    # run the MCP server
+gtir mcp     --repo <project> [--label name:<repo>] [--watch] [--print-config]   # run the MCP server
 gtir eval    --repo <corpus> --golden <f> [--save] [--json]            # score retrieval quality
 ```
 
@@ -318,7 +318,8 @@ refreshes exactly once. A manual `gtir refresh` never defers — run it any time
 the working tree *as you save* — before you commit — run a long-lived watcher:
 
 ```bash
-gtir watch --repo .          # debounced; refreshes on every save, Ctrl+C to stop
+gtir watch --repo .                 # standalone: debounced refresh on every save, Ctrl+C to stop
+gtir mcp   --repo . --watch         # or bundled into the MCP server — see below
 ```
 
 It watches the same set of files the indexer would (skipDirs / `.gitignore` / indexable extensions),
@@ -326,6 +327,10 @@ coalesces rapid saves into one refresh (`--debounce`, default 1500 ms), and — 
 same git-busy gate as the hooks**: during a rebase / cherry-pick / merge the worktree churns constantly,
 so the watcher defers and lets the `post-rewrite` catch-up handle it, rather than re-indexing every
 transient state. `.gtir` and `.git` are excluded, so the watcher never reacts to its own index writes.
+
+Add `--watch` to `gtir mcp` and the server live-refreshes every index it serves *while it serves
+queries* — so an agent's search reflects edits you haven't committed yet, with no restart. (The watcher
+runs in the server process; its logs go to stderr, leaving stdout for the MCP protocol.)
 
 ### Embedding cache
 
@@ -412,7 +417,10 @@ override with `--label name:<repo>`), plus a global `gtir_status`:
   same-named symbols collide). Use it instead of `search` when you already know the name.
 
 Register the server by pasting the snippet from `gtir mcp … --print-config` into your project's
-`.mcp.json`. It's stdio JSON-RPC with no extra dependencies.
+`.mcp.json`. It's stdio JSON-RPC with no extra dependencies. Add `--watch` (passed through into
+`--print-config`) to have the server **live-refresh as you edit** — every served index tracks the
+working tree without a commit or restart, so a mid-session `search_<label>` reflects uncommitted code.
+The watcher defers during git operations just like the commit hooks (see [Staying fresh](#staying-fresh)).
 
 ```text
 1. search_code  { "query": "where do we verify a JWT and reject expired tokens" }

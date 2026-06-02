@@ -211,6 +211,30 @@ test("printConfig emits a stdio .mcp.json snippet with node + the repos", () => 
   assert.ok(snippet.gtir.args.includes("G:/p/wiki"));
 });
 
+test("printConfig --watch appends --watch (+ --debounce); default stays clean", () => {
+  const on = JSON.parse(printConfig(["G:/p/code"], { watch: true, debounceMs: 800 })).gtir.args.join(" ");
+  assert.match(on, /--watch/);
+  assert.match(on, /--debounce 800/);
+  const off = JSON.parse(printConfig(["G:/p/code"])).gtir.args.join(" ");
+  assert.doesNotMatch(off, /--watch/);
+});
+
+import { startWatchers } from "../src/mcp.mjs";
+
+test("startWatchers starts one live watcher per index, wired to each cfg", async () => {
+  const code = repoWithModel("hf.co/jinaai/jina-code-embeddings-0.5b-GGUF:F16");
+  const notes = repoWithModel("nomic-embed-text");
+  const indexes = resolveIndexes([code, notes], {});
+  const handles = startWatchers(indexes, { debounceMs: 50 });
+  try {
+    assert.equal(handles.length, 2);
+    assert.deepEqual(handles.map((h) => h.label).sort(), ["code", "notes"]);
+    assert.ok(handles.every((h) => typeof h.close === "function"));
+  } finally {
+    await Promise.all(handles.map((h) => h.close()));
+  }
+});
+
 test("defaultStatusFn: an unbuilt index reports healthy:false + a note, never throws", async () => {
   const dir = mkdtempSync(join(tmpdir(), "gtir-status-"));
   const indexes = [{ label: "code", repo: dir, cfg: loadConfig(dir) }];

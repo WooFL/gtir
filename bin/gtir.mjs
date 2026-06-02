@@ -10,7 +10,7 @@ import { installHook, removeHook, gitBusy } from "../src/hook.mjs";
 import { watchRepo } from "../src/watch.mjs";
 import { probeDim } from "../src/embed.mjs";
 import { runInit } from "../src/init.mjs";
-import { resolveIndexes, serveStdio, printConfig } from "../src/mcp.mjs";
+import { resolveIndexes, serveStdio, printConfig, startWatchers } from "../src/mcp.mjs";
 import { evalGolden, flattenMetrics, compareBaseline, compareTiers } from "../src/eval.mjs";
 import { runDemo, formatDemo } from "../src/demo.mjs";
 import { runDoctor } from "../src/doctor.mjs";
@@ -85,6 +85,7 @@ function parseArgs(argv) {
     else if (a === "--no-index") args.noIndex = true;
     else if (a === "--no-hook") args.noHook = true;
     else if (a === "--hook") args.hook = true;
+    else if (a === "--watch") args.watch = true;
     else if (a === "--debounce") { const v = Number(argv[++i]); if (Number.isFinite(v)) args.debounce = v; }
     else if (a === "--save") args.save = true;
     else if (a === "--no-build") args.noBuild = true;
@@ -284,8 +285,15 @@ async function main() {
       case "mcp": {
         const repos = args.repos ?? (args.repo ? [args.repo] : []);
         if (repos.length === 0) { process.stderr.write("gtir mcp: pass at least one --repo <path>\n"); process.exit(2); }
-        if (args.printConfig) { process.stdout.write(printConfig(repos) + "\n"); break; }
+        if (args.printConfig) { process.stdout.write(printConfig(repos, { watch: !!args.watch, debounceMs: args.debounce ?? null }) + "\n"); break; }
         const indexes = resolveIndexes(repos, args.labels ?? {});
+        if (args.watch) {
+          // Live-refresh each served index as files change (uncommitted edits). Logs to STDERR
+          // only — stdout is the JSON-RPC channel. Defers during git ops via the shared gitBusy gate.
+          const debounceMs = args.debounce ?? 1500;
+          startWatchers(indexes, { debounceMs, log: (m) => process.stderr.write(`gtir mcp: watch ${m}\n`) });
+          process.stderr.write(`gtir mcp: live-refresh ON (debounce ${debounceMs}ms) — watching [${indexes.map((i) => i.label).join(", ")}]\n`);
+        }
         serveStdio(indexes, { version: pkgVersion() });
         return; // keep the process alive on stdin; do not fall through to exit
       }
@@ -322,7 +330,7 @@ async function main() {
           "  gtir setup   --repo <project>",
           "  gtir hook    --repo <project> [--remove]",
           "  gtir fetch-grammars   # download prebuilt shader grammars (HLSL/GLSL, ~5MB, no toolchain)",
-          "  gtir mcp     --repo <project> [--label name:<repo>] [--print-config]",
+          "  gtir mcp     --repo <project> [--label name:<repo>] [--watch [--debounce 1500]] [--print-config]",
           "  gtir eval    --repo <project> [--golden <f>] [-k 10] [--save] [--no-build] [--json]",
         ].join("\n") + "\n");
         process.exit(cmd ? 1 : 0);
