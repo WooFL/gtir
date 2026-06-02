@@ -228,6 +228,7 @@ intermediate commit, it refreshes once when the operation finishes (see [Staying
 gtir init    --repo <project> [--notes|--code] [--no-index] [--no-hook]  # set up a repo or vault
 gtir index   --repo <project> [--rebuild] [--no-cache]                   # build / full rebuild
 gtir refresh --repo <project> [--no-cache]                              # incremental (changed files)
+gtir watch   --repo <project> [--debounce 1500]        # long-lived: live-refresh on every save (uncommitted edits)
 gtir search  "how are sessions created" --repo <project> [-k 8] [--language python] [--path-prefix src/]
 gtir status  --repo <project>                          # model, dim, file count
 gtir hook    --repo <project> [--remove]               # install/remove the auto-refresh git hooks
@@ -312,6 +313,19 @@ not N refreshes of states you threw away.
 
 Worktrees are handled correctly (the rebase state is resolved per-worktree), and `commit --amend`
 refreshes exactly once. A manual `gtir refresh` never defers — run it any time to force a catch-up.
+
+**Live mode (uncommitted edits).** The git hooks refresh at commit time. If you want the index to track
+the working tree *as you save* — before you commit — run a long-lived watcher:
+
+```bash
+gtir watch --repo .          # debounced; refreshes on every save, Ctrl+C to stop
+```
+
+It watches the same set of files the indexer would (skipDirs / `.gitignore` / indexable extensions),
+coalesces rapid saves into one refresh (`--debounce`, default 1500 ms), and — crucially — **honors the
+same git-busy gate as the hooks**: during a rebase / cherry-pick / merge the worktree churns constantly,
+so the watcher defers and lets the `post-rewrite` catch-up handle it, rather than re-indexing every
+transient state. `.gtir` and `.git` are excluded, so the watcher never reacts to its own index writes.
 
 ### Embedding cache
 

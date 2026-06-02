@@ -7,6 +7,7 @@ import { buildIndex } from "../src/indexer.mjs";
 import { search } from "../src/search.mjs";
 import { openStore } from "../src/store.mjs";
 import { installHook, removeHook, gitBusy } from "../src/hook.mjs";
+import { watchRepo } from "../src/watch.mjs";
 import { probeDim } from "../src/embed.mjs";
 import { runInit } from "../src/init.mjs";
 import { resolveIndexes, serveStdio, printConfig } from "../src/mcp.mjs";
@@ -84,6 +85,7 @@ function parseArgs(argv) {
     else if (a === "--no-index") args.noIndex = true;
     else if (a === "--no-hook") args.noHook = true;
     else if (a === "--hook") args.hook = true;
+    else if (a === "--debounce") { const v = Number(argv[++i]); if (Number.isFinite(v)) args.debounce = v; }
     else if (a === "--save") args.save = true;
     else if (a === "--no-build") args.noBuild = true;
     else if (a === "--json") args.json = true;
@@ -265,6 +267,15 @@ async function main() {
         else { installHook(repo); process.stderr.write("gtir: auto-refresh hooks installed (post-commit + post-rewrite; rebase-aware)\n"); }
         break;
       }
+      case "watch": {
+        const cfg = loadConfig(repo);
+        const debounceMs = args.debounce ?? 1500;
+        // Long-lived, like `mcp`: chokidar (persistent) holds the event loop open. Each settled
+        // batch runs an incremental refresh; it defers while a git op is in flight (gitBusy).
+        watchRepo(cfg, { debounceMs, log: (m) => process.stderr.write(`gtir: ${m}\n`) });
+        process.stderr.write(`gtir: watching ${cfg.repo} for changes (debounce ${debounceMs}ms) — Ctrl+C to stop\n`);
+        return; // keep the process alive on the watcher; do not fall through to exit
+      }
       case "fetch-grammars": {
         const installed = await fetchGrammars({ log: (m) => process.stderr.write(m + "\n") });
         process.stderr.write(`gtir: ${installed.length} grammar${installed.length === 1 ? "" : "s"} ready — re-run \`gtir index --rebuild\` to chunk those files via AST.\n`);
@@ -303,6 +314,7 @@ async function main() {
           "  gtir init    --repo <project> [--notes|--code] [--no-index] [--no-hook]",
           "  gtir index   --repo <project> [--rebuild] [--no-cache]",
           "  gtir refresh --repo <project> [--no-cache]",
+          "  gtir watch   --repo <project> [--debounce 1500]   # live-refresh the index as files change (uncommitted edits)",
           "  gtir search  --repo <project> <query> [-k N] [--path-prefix P] [--language L]",
           "  gtir demo    [--repo <project>] [--query <q>]   # see meaning-match vs grep, on a sample corpus",
           "  gtir status  --repo <project>",
