@@ -55,6 +55,7 @@ export async function buildIndex(cfg, { rebuild = false } = {}) {
     if (!rebuild && manifest[f.relPath] === f.mtimeMs) { skipped++; continue; }
     toIndex.push(f);
   }
+  const changedPaths = [...new Set(toIndex.map((f) => f.relPath))];
 
   // Evict rows for deleted/moved files (manifest paths no longer on disk).
   let evicted = 0;
@@ -89,7 +90,9 @@ export async function buildIndex(cfg, { rebuild = false } = {}) {
   // model matches and the existing table carries content_hash.
   const tableHasHash = await store.hasContentHash();
   const useCache = !cfg.noCache && tableHasHash && (await store.readMeta()).model === cfg.model;
-  const cache = useCache ? await store.loadEmbedCache() : new Map();
+  // Refresh: reuse only the changed files' prior vectors (O(changed)) — not the whole corpus.
+  // Rebuild: load every vector (null) so unchanged content anywhere in the repo is reused.
+  const cache = useCache ? await store.loadEmbedCache(rebuild ? null : changedPaths) : new Map();
 
   const missIdx = [];
   for (let i = 0; i < hashes.length; i++) if (!cache.has(hashes[i])) missIdx.push(i);
@@ -103,8 +106,7 @@ export async function buildIndex(cfg, { rebuild = false } = {}) {
   const dim = (vecs.find((v) => v) ?? []).length;
 
   // Replace prior rows. Rebuild drops+recreates the table (also migrates the schema to
-  // include content_hash); refresh deletes the changed paths' rows.
-  const changedPaths = [...new Set(toIndex.map((f) => f.relPath))];
+  // include content_hash); refresh deletes the changed paths' rows (changedPaths computed above).
   if (rebuild) await store.dropChunks();
   else if (changedPaths.length) await store.evictPaths(changedPaths);
 

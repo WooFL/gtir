@@ -112,11 +112,18 @@ export async function openStore(cfg) {
     }
   }
 
-  async function loadEmbedCache() {
+  // content_hash -> embedding, for reusing vectors whose text is byte-identical. `paths` scopes the
+  // read to just those files — what a refresh needs: pulling every vector across napi to reuse one
+  // edited file's chunks is the dominant refresh cost on a large index (profiled ~62% at 6k chunks).
+  // Omit paths (or pass null) to load the whole table, which --rebuild's corpus-wide reuse needs.
+  async function loadEmbedCache(paths = null) {
     const tbl = await chunksTable();
     if (!tbl) return new Map();
+    if (Array.isArray(paths) && paths.length === 0) return new Map(); // nothing changed -> nothing to reuse
+    let q = tbl.query();
+    if (Array.isArray(paths)) q = q.where(`path IN (${inList(paths)})`);
     let rows;
-    try { rows = await tbl.query().select(["content_hash", "embedding"]).toArray(); }
+    try { rows = await q.select(["content_hash", "embedding"]).toArray(); }
     catch { return new Map(); } // table lacks the column
     const m = new Map();
     for (const r of rows) {

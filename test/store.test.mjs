@@ -76,6 +76,18 @@ test("loadEmbedCache: returns {content_hash -> embedding}", async () => {
   assert.deepEqual(Array.from(cache.get("h1")), [1, 0, 0]);
 });
 
+test("loadEmbedCache: scopes to given paths (refresh) vs loads all when omitted (rebuild)", async () => {
+  const a = mkdtempSync(join(tmpdir(), "gtir-ch-"));
+  const sa = await openStore({ indexDir: join(a, "i.lance") });
+  await sa.upsertRows([rowH("a.md", "alpha", "h1", [1, 0, 0]), rowH("b.md", "beta", "h2", [0, 1, 0])]);
+  assert.equal((await sa.loadEmbedCache()).size, 2, "no paths → whole table (rebuild reuse)");
+  const scoped = await sa.loadEmbedCache(["a.md"]);
+  assert.equal(scoped.size, 1, "scoped to a.md — b.md's vector never pulled");
+  assert.deepEqual(Array.from(scoped.get("h1")), [1, 0, 0]);
+  assert.equal(scoped.has("h2"), false);
+  assert.equal((await sa.loadEmbedCache([])).size, 0, "empty change set → nothing to load");
+});
+
 test("dropChunks: removes the chunks table", async () => {
   const a = mkdtempSync(join(tmpdir(), "gtir-ch-"));
   const sa = await openStore({ indexDir: join(a, "i.lance") });
