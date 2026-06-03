@@ -9,7 +9,7 @@ import { openStore } from "../src/store.mjs";
 import { installHook, removeHook, gitBusy } from "../src/hook.mjs";
 import { watchRepo, watcherLive } from "../src/watch.mjs";
 import { probeDim } from "../src/embed.mjs";
-import { runInit } from "../src/init.mjs";
+import { runInit, ensureGitignore } from "../src/init.mjs";
 import { resolveIndexes, serveStdio, printConfig, startWatchers } from "../src/mcp.mjs";
 import { evalGolden, flattenMetrics, compareBaseline, compareTiers } from "../src/eval.mjs";
 import { runDemo, formatDemo } from "../src/demo.mjs";
@@ -219,6 +219,13 @@ async function main() {
     switch (cmd) {
       case "index": {
         const r = await runIndex({ repo, rebuild: !!args.rebuild, noCache: args.noCache ?? false });
+        // Keep the regenerable index out of version control — the binary LanceDB store must never be
+        // committed. `init` does this; do it on a plain `index` too (git repos only) so users who skip
+        // init don't accidentally `git add` a huge .gtir/ index.
+        const cfg0 = loadConfig(repo);
+        if (existsSync(path.join(cfg0.repo, ".git")) && ensureGitignore(cfg0.repo).added) {
+          process.stderr.write("gtir: added .gtir/ to .gitignore (the index is regenerable; don't commit it)\n");
+        }
         process.stderr.write(`gtir: indexed ${r.chunks} chunks (${r.reused ?? 0} reused, ${r.embedded ?? 0} embedded, ${r.skipped} skipped, ${r.evicted} evicted), dim=${r.dim}\n`);
         for (const w of r.warnings ?? []) process.stderr.write(`gtir: note: ${w}\n`);
         break;

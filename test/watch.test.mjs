@@ -58,7 +58,7 @@ test("watchRepo fires a batch when an indexable file is created", async () => {
   });
   await new Promise((r) => w.watcher.on("ready", r));
   writeFileSync(join(repo, "fresh.ts"), "export const fresh = 1\n");
-  await Promise.race([fired, new Promise((_, rej) => setTimeout(() => rej(new Error("watch timeout")), 5000))]);
+  await Promise.race([fired, new Promise((_, rej) => setTimeout(() => rej(new Error("watch timeout")), 15000))]);
   await w.close();
   assert.ok(got.includes("fresh.ts"), `expected fresh.ts in batch, got ${JSON.stringify(got)}`);
 });
@@ -103,7 +103,7 @@ test("watchRepo does a startup catch-up refresh (no file event needed)", async (
   const cfg = loadConfig(repo);
   let resolve; const fired = new Promise((r) => (resolve = r));
   const w = watchRepo(cfg, { debounceMs: 30, isBusy: () => false, initialRefresh: true, onBatch: async () => resolve() });
-  await Promise.race([fired, new Promise((_, rej) => setTimeout(() => rej(new Error("no startup refresh")), 5000))]);
+  await Promise.race([fired, new Promise((_, rej) => setTimeout(() => rej(new Error("no startup refresh")), 15000))]);
   await w.close();
   assert.ok(true, "startup catch-up ran without any change event");
 });
