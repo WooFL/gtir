@@ -101,5 +101,12 @@
   {"query":"how does grid_shortest_path route around blocked cells","path":"graph/bfs_grid.py","lines":[5,18],"tier":"mixed"},
   {"query":"how does IngressThrottleStrategy admit an inbound request","path":"edge/node_a.py","lines":[15,22],"tier":"mixed"},
   {"query":"how does EgressThrottleStrategy reset its accounting window","path":"edge/node_b.py","lines":[23,30],"tier":"mixed"},
-  {"query":"how does PeerThrottleStrategy admit a request","path":"edge/node_c.py","lines":[15,22],"tier":"mixed"}
+  {"query":"how does PeerThrottleStrategy admit a request","path":"edge/node_c.py","lines":[15,22],"tier":"mixed"},
+  {"query":"semi-Lagrangian advection of a velocity field","path":"gpu/fluid_advect.cpp","lines":[6,15],"tier":"gate"},
+  {"query":"trace each grid cell backward in time to move the fluid","path":"gpu/fluid_advect.cpp","lines":[6,15],"tier":"hard"},
+  {"query":"extract a triangle mesh from a scalar field with marching cubes","path":"gpu/marching_cubes.cpp","lines":[6,16],"tier":"gate"},
+  {"query":"build an isosurface by classifying cubes against an isovalue","path":"gpu/marching_cubes.cpp","lines":[6,16],"tier":"hard"},
+  {"query":"separable gaussian blur compute shader","path":"gpu/gaussian_blur.hlsl","lines":[10,18],"tier":"gate"},
+  {"query":"find nearby particles using a spatial hash grid","path":"gpu/spatial_hash.cpp","lines":[11,15],"tier":"gate"},
+  {"query":"hash a quantized position into a grid cell to avoid O(n^2) neighbour checks","path":"gpu/spatial_hash.cpp","lines":[6,9],"tier":"hard"}
 ]
