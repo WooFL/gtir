@@ -330,10 +330,18 @@ same git-busy gate as the hooks**: during a rebase / cherry-pick / merge the wor
 so the watcher defers and lets the `post-rewrite` catch-up handle it, rather than re-indexing every
 transient state. `.gtir` and `.git` are excluded, so the watcher never reacts to its own index writes.
 
-Two more things it handles so you don't have to:
+Each save triggers a **targeted** refresh: the watcher hands the changed paths straight to the indexer,
+so it re-chunks only those files instead of walking the whole tree — a single-file refresh stays roughly
+constant regardless of repo size.
+
+Three more things it handles so you don't have to:
 
 - **Startup catch-up.** On launch it runs one refresh, so edits you made while it wasn't running are
   picked up immediately — you don't have to touch a file to wake it.
+- **Periodic safety re-sweep.** Because targeted refresh only looks at the paths an event reported, a
+  *missed* event (network drives, very high churn) could leave a file stale. Every 5 minutes (`--sweep
+  <seconds>`, `0` to disable) the watcher does one full walk to catch anything it missed — the self-healing
+  backstop, cheap because it's rare and embeds nothing when nothing changed.
 - **No double work with the hooks.** A running watcher keeps a heartbeat lock (`.gtir/watch.lock`); the
   commit hooks see it and stand down, so a commit doesn't trigger a second refresh on top of the
   save-time one. Clean exit drops the lock and the hooks resume; if the watcher crashes, the lock goes

@@ -77,6 +77,27 @@ test("createBatcher.kick() refreshes once with no pending changes; defers while 
   assert.deepEqual(batches[0], []);
 });
 
+test("createBatcher.sweep() forces a FULL refresh (empty batch) even with pending paths; defers if busy", async () => {
+  const t = fakeTimer();
+  let busy = false;
+  const batches = [];
+  const b = createBatcher({ isBusy: () => busy, onBatch: (x) => batches.push(x), setTimer: t.setTimer, clearTimer: t.clearTimer });
+  b.notify("a.ts"); b.notify("b.ts");      // pending targeted paths
+  b.sweep();                                // request a safety sweep
+  await t.tick();
+  assert.deepEqual(batches.at(-1), [], "sweep does a full walk (empty paths), not a targeted refresh");
+  assert.equal(b.pendingCount(), 0, "pending cleared — the full walk subsumes them");
+
+  busy = true;
+  b.sweep();
+  await t.tick();
+  assert.equal(batches.length, 1, "deferred while a git op is in progress");
+  busy = false;
+  await t.tick();
+  assert.equal(batches.length, 2, "runs once git is free");
+  assert.deepEqual(batches.at(-1), []);
+});
+
 test("watchRepo does a startup catch-up refresh (no file event needed)", async () => {
   const repo = mkdtempSync(join(tmpdir(), "gtir-watch-kick-"));
   const cfg = loadConfig(repo);

@@ -87,6 +87,7 @@ function parseArgs(argv) {
     else if (a === "--hook") args.hook = true;
     else if (a === "--watch") args.watch = true;
     else if (a === "--debounce") { const v = Number(argv[++i]); if (Number.isFinite(v)) args.debounce = v; }
+    else if (a === "--sweep") { const v = Number(argv[++i]); if (Number.isFinite(v)) args.sweep = v; }
     else if (a === "--save") args.save = true;
     else if (a === "--no-build") args.noBuild = true;
     else if (a === "--json") args.json = true;
@@ -272,9 +273,10 @@ async function main() {
       case "watch": {
         const cfg = loadConfig(repo);
         const debounceMs = args.debounce ?? 1500;
+        const sweepMs = args.sweep != null ? args.sweep * 1000 : undefined; // --sweep is seconds (0 disables)
         // Long-lived, like `mcp`: chokidar (persistent) holds the event loop open. Each settled
         // batch runs an incremental refresh; it defers while a git op is in flight (gitBusy).
-        const handle = watchRepo(cfg, { debounceMs, log: (m) => process.stderr.write(`gtir: ${m}\n`) });
+        const handle = watchRepo(cfg, { debounceMs, sweepMs, log: (m) => process.stderr.write(`gtir: ${m}\n`) });
         process.on("SIGINT", () => { handle.close().finally(() => process.exit(0)); }); // drop the liveness lock on Ctrl+C
         process.stderr.write(`gtir: watching ${cfg.repo} for changes (debounce ${debounceMs}ms) — Ctrl+C to stop\n`);
         return; // keep the process alive on the watcher; do not fall through to exit
@@ -293,7 +295,8 @@ async function main() {
           // Live-refresh each served index as files change (uncommitted edits). Logs to STDERR
           // only — stdout is the JSON-RPC channel. Defers during git ops via the shared gitBusy gate.
           const debounceMs = args.debounce ?? 1500;
-          const handles = startWatchers(indexes, { debounceMs, log: (m) => process.stderr.write(`gtir mcp: watch ${m}\n`) });
+          const sweepMs = args.sweep != null ? args.sweep * 1000 : undefined; // --sweep is seconds (0 disables)
+          const handles = startWatchers(indexes, { debounceMs, sweepMs, log: (m) => process.stderr.write(`gtir mcp: watch ${m}\n`) });
           process.on("SIGINT", () => { Promise.all(handles.map((h) => h.close())).finally(() => process.exit(0)); }); // drop liveness locks on Ctrl+C
           process.stderr.write(`gtir mcp: live-refresh ON (debounce ${debounceMs}ms) — watching [${indexes.map((i) => i.label).join(", ")}]\n`);
         }
@@ -325,7 +328,7 @@ async function main() {
           "  gtir init    --repo <project> [--notes|--code] [--no-index] [--no-hook]",
           "  gtir index   --repo <project> [--rebuild] [--no-cache]",
           "  gtir refresh --repo <project> [--no-cache]",
-          "  gtir watch   --repo <project> [--debounce 1500]   # live-refresh the index as files change (uncommitted edits)",
+          "  gtir watch   --repo <project> [--debounce 1500] [--sweep 300]   # live-refresh as files change (uncommitted edits)",
           "  gtir search  --repo <project> <query> [-k N] [--path-prefix P] [--language L]",
           "  gtir demo    [--repo <project>] [--query <q>]   # see meaning-match vs grep, on a sample corpus",
           "  gtir status  --repo <project>",

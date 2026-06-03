@@ -14,6 +14,7 @@ import { buildIndex } from "./indexer.mjs";
 const LOCK_FILE = "watch.lock";
 const HEARTBEAT_MS = 60_000;
 const STALE_MS = 150_000;
+const SWEEP_MS = 300_000;   // periodic full-walk backstop (5 min); catches events chokidar missed
 
 const lockPath = (cfg) => join(cfg.gtirDir, LOCK_FILE);
 
@@ -40,10 +41,16 @@ export function createBatcher({ debounceMs = 1500, isBusy = () => false, onBatch
   let pending = new Set();
   let timer = null;
   let forced = false;
+  let fullSweep = false;
   function arm() { if (timer !== null) clearTimer(timer); timer = setTimer(fire, debounceMs); }
   async function fire() {
     timer = null;
     if (isBusy()) { arm(); return; }            // a git op is mid-flight — defer and retry
+    if (fullSweep) {                            // safety re-sweep: a full walk subsumes any pending paths
+      fullSweep = false; forced = false; pending = new Set();
+      await onBatch([]);
+      return;
+    }
     if (pending.size === 0 && !forced) return;
     forced = false;
     const batch = [...pending]; pending = new Set();
@@ -52,6 +59,7 @@ export function createBatcher({ debounceMs = 1500, isBusy = () => false, onBatch
   return {
     notify(relPath) { pending.add(relPath); arm(); },
     kick() { forced = true; arm(); },           // startup catch-up: refresh once with no pending changes
+    sweep() { fullSweep = true; arm(); },        // periodic backstop: force a FULL walk (catch missed events)
     cancel() { if (timer !== null) { clearTimer(timer); timer = null; } },
     pendingCount() { return pending.size; },
     armed() { return timer !== null; },
@@ -63,15 +71,18 @@ export function createBatcher({ debounceMs = 1500, isBusy = () => false, onBatch
 // their own to avoid Ollama. `.git` and `.gtir` are in skipDirs, so we never watch git's internals
 // nor our own index/lock writes (the latter would otherwise feed back into the watcher and loop).
 export function watchRepo(cfg, { debounceMs = 1500, log = () => {}, isBusy, onBatch, onReady,
-  initialRefresh = true, heartbeatMs = HEARTBEAT_MS } = {}) {
+  initialRefresh = true, heartbeatMs = HEARTBEAT_MS, sweepMs = SWEEP_MS } = {}) {
   const f = makeFilter(cfg);
   const busy = isBusy ?? (() => gitBusy(cfg.repo));
   const refresh = onBatch ?? (async (paths) => {
     try {
       // Hand the changed paths to buildIndex for a targeted refresh (no full repo walk). The
-      // startup catch-up fires with an empty batch → buildIndex falls back to a full walk.
+      // startup catch-up and the periodic safety sweep fire with an empty batch → full walk.
       const r = await buildIndex(cfg, { rebuild: false, paths });
-      log(`refreshed — ${r.chunks} chunks (${r.embedded} embedded, ${r.reused} reused, ${r.skipped} skipped) after ${paths.length} change(s)`);
+      // Stay quiet on no-op refreshes (the periodic sweep is usually one) — only log real work.
+      if (r && (r.chunks > 0 || r.evicted > 0)) {
+        log(`refreshed — ${r.chunks} chunks (${r.embedded} embedded, ${r.reused} reused, ${r.skipped} skipped, ${r.evicted} evicted)`);
+      }
       return r;
     } catch (e) {
       log(`refresh failed — ${e.message} (will retry on next change)`);
@@ -83,6 +94,12 @@ export function watchRepo(cfg, { debounceMs = 1500, log = () => {}, isBusy, onBa
   touchLock(cfg);
   const heartbeat = setInterval(() => touchLock(cfg), heartbeatMs);
   if (typeof heartbeat.unref === "function") heartbeat.unref();
+
+  // Periodic safety re-sweep: a full walk every sweepMs catches changes a watcher event missed
+  // (network drives, high churn) — restoring the self-healing that targeted refresh trades for speed.
+  // Set sweepMs to 0 to disable. unref'd so it never holds the process open on its own.
+  const sweepTimer = sweepMs > 0 ? setInterval(() => batcher.sweep(), sweepMs) : null;
+  if (sweepTimer && typeof sweepTimer.unref === "function") sweepTimer.unref();
 
   const watcher = chokidar.watch(cfg.repo, {
     ignoreInitial: true,
@@ -107,6 +124,6 @@ export function watchRepo(cfg, { debounceMs = 1500, log = () => {}, isBusy, onBa
 
   return {
     watcher, batcher,
-    close: async () => { batcher.cancel(); clearInterval(heartbeat); removeLock(cfg); return watcher.close(); },
+    close: async () => { batcher.cancel(); clearInterval(heartbeat); if (sweepTimer) clearInterval(sweepTimer); removeLock(cfg); return watcher.close(); },
   };
 }

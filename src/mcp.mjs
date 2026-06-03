@@ -405,9 +405,9 @@ export function serveStdio(indexes, { version } = {}) {
 // same gitBusy gate as the commit hooks), so the index the agent queries tracks the working
 // tree as you edit — no commit required. `log` MUST route to stderr; stdout is the JSON-RPC
 // channel and any stray write corrupts the protocol. Returns the handles so callers can close them.
-export function startWatchers(indexes, { debounceMs = 1500, log = () => {} } = {}) {
+export function startWatchers(indexes, { debounceMs = 1500, sweepMs, log = () => {} } = {}) {
   return indexes.map((ix) => {
-    const handle = watchRepo(ix.cfg, { debounceMs, log: (m) => log(`[${ix.label}] ${m}`) });
+    const handle = watchRepo(ix.cfg, { debounceMs, sweepMs, log: (m) => log(`[${ix.label}] ${m}`) });
     return { label: ix.label, ...handle };
   });
 }
