@@ -134,19 +134,29 @@ test("refresh reuses unchanged sections within a changed file", async () => {
   assert.equal(c2.state.calls, r.embedded);
 });
 
-test("pre-feature index: refresh on a column-less table runs legacy without schema error", async () => {
+test("legacy index: refresh on a forged content_hash-less table stays legacy, no schema error", async () => {
   const repo = repoWith({ "a.ts": CODE });
-  // First build WITHOUT rebuild → creates a chunks table that lacks content_hash (legacy shape).
-  await buildIndex({ ...loadConfig(repo), embedImpl: counter().fn }, { rebuild: false });
-  const store = await openStore(loadConfig(repo));
-  assert.equal(await store.hasContentHash(), false, "legacy table must lack content_hash");
-  // Edit the file and refresh — must not throw a LanceDB schema-mismatch on add.
+  const cfg = { ...loadConfig(repo), embedImpl: fakeEmbed };
+  // Forge a pre-cache table: rows WITHOUT content_hash (what an older gtir wrote). fts_text is
+  // present so the schema self-heal doesn't fire — we want the genuine legacy path, not a heal.
+  const db = await lancedb.connect(cfg.indexDir);
+  await db.createTable("chunks", [{
+    id: "x", path: "a.ts", language: "typescript",
+    chunk_start: 0, chunk_end: 10, line_start: 1, line_end: 2,
+    text: "old", fts_text: "old", mtime_ms: 1, embedding: [0, 0, 0],
+  }]);
+  assert.equal(await (await openStore(cfg)).hasContentHash(), false, "forged table is legacy");
   writeFileSync(join(repo, "a.ts"), CODE.replace("trim()", "trimEnd()"));
-  const c2 = counter();
-  const r = await buildIndex({ ...loadConfig(repo), embedImpl: c2.fn }, { rebuild: false });
+  const r = await buildIndex(cfg, { rebuild: false });
   assert.ok(r.chunks > 0, "refresh produced rows");
-  assert.equal(await (await openStore(loadConfig(repo))).hasContentHash(), false, "still legacy after refresh (no column added)");
-  assert.equal(r.reused, 0, "legacy refresh reuses nothing (no cache)");
+  assert.equal(await (await openStore(cfg)).hasContentHash(), false, "stays legacy — content_hash not force-added");
+});
+
+test("fresh index (plain `index`, not --rebuild) enables the embedding cache (writes content_hash)", async () => {
+  const repo = repoWith({ "a.ts": CODE });
+  const cfg = { ...loadConfig(repo), embedImpl: fakeEmbed };
+  await buildIndex(cfg, { rebuild: false });   // a first build that is NOT a rebuild
+  assert.equal(await (await openStore(cfg)).hasContentHash(), true, "fresh build carries content_hash so refresh can reuse");
 });
 
 test("self-heal: refresh on a table missing fts_text rebuilds instead of erroring", async () => {

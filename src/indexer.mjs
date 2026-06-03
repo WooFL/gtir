@@ -22,8 +22,10 @@ export async function buildIndex(cfg, { rebuild = false, paths = null } = {}) {
   // ("Found field not in schema"), which would also break the post-commit hook on every
   // commit. Detect the drift up front and promote the whole run to a rebuild (drop+recreate).
   let schemaHealed = false;
+  let tableExists = false;
   if (!rebuild) {
     const cols = await store.chunkColumns();
+    tableExists = cols !== null;
     if (cols && REQUIRED_CHUNK_COLUMNS.some((c) => !cols.has(c))) { rebuild = true; schemaHealed = true; }
   }
 
@@ -120,7 +122,12 @@ export async function buildIndex(cfg, { rebuild = false, paths = null } = {}) {
   if (rebuild) await store.dropChunks();
   else if (changedPaths.length) await store.evictPaths(changedPaths);
 
-  const writeHash = rebuild || tableHasHash; // rebuild recreates with the column; refresh matches existing schema
+  // Write content_hash on a rebuild, when the table already carries it, OR when creating a FRESH
+  // table — so a first `gtir index` (not just `init`/`--rebuild`) enables the embedding cache too.
+  // Only a genuinely pre-cache table (created by an older gtir) stays in legacy no-hash mode rather
+  // than being force-migrated. Without this, a non-rebuild first build re-embeds the whole changed
+  // file on every refresh (the cache never engages).
+  const writeHash = rebuild || tableHasHash || !tableExists;
   const rows = allChunks.map((c, i) => ({
     id: stableId(c), path: c.path, language: c.language,
     chunk_start: c.chunkStart, chunk_end: c.chunkEnd,
