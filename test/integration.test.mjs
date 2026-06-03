@@ -14,6 +14,7 @@ import { search } from "../src/search.mjs";
 import { openStore } from "../src/store.mjs";
 import { watchRepo } from "../src/watch.mjs";
 import { runDoctor } from "../src/doctor.mjs";
+import { handleRequest, defaultSearchFn, defaultStatusFn, defaultReadFn, defaultOutlineFn, defaultSimilarFn, defaultFindFn } from "../src/mcp.mjs";
 
 // A mock Ollama so the FULL stack (embed.mjs HTTP → store → search → watcher → doctor) runs
 // end-to-end with NO real Ollama — hermetic enough for CI, yet exercising the real /api/embed path
@@ -79,6 +80,43 @@ test("integration: edit → refresh reuses unchanged content (cache engaged end-
 });
 
 function hasGit() { try { execFileSync("git", ["--version"], { stdio: "ignore" }); return true; } catch { return false; } }
+
+test("integration: MCP tools/call search routes through the real search path to the right hit", async () => {
+  const repo = repoWith({ "auth.ts": FN("verifyToken", "reject expired session tokens"), "math.ts": FN("gcd", "greatest common divisor") });
+  const cfg = cfgFor(repo);
+  await buildIndex(cfg, { rebuild: false });
+  const indexes = [{ label: "code", repo: cfg.repo, cfg }];
+  const ctx = {
+    indexes, version: "test",
+    searchFn: defaultSearchFn(indexes), statusFn: defaultStatusFn(indexes),
+    readFn: defaultReadFn(indexes), outlineFn: defaultOutlineFn(indexes),
+    similarFn: defaultSimilarFn(indexes), findFn: defaultFindFn(indexes),
+  };
+  const res = await handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "search_code", arguments: { query: "verifyToken", k: 5 } } }, ctx);
+  assert.equal(res.result.structuredContent.results[0].path, "auth.ts", "mcp dispatch → real search → mock embed returns the right file");
+});
+
+test("integration: index converges after a real rebase — the catch-up refresh reuses churned content", { skip: hasGit() ? false : "git not installed" }, async () => {
+  const repo = repoWith({});
+  const g = (a) => execFileSync("git", a, { cwd: repo });
+  g(["init", "-q", "-b", "main"]); g(["config", "user.email", "t@t.t"]); g(["config", "user.name", "t"]); g(["config", "core.autocrlf", "false"]);
+  writeFileSync(join(repo, "base.ts"), FN("base", "base helper")); g(["add", "-A"]); g(["commit", "-qm", "base"]);
+  g(["branch", "feature"]);
+  writeFileSync(join(repo, "main_new.ts"), FN("mainNew", "the main-only function added on the trunk")); g(["add", "-A"]); g(["commit", "-qm", "main-advance"]);
+  g(["checkout", "-q", "feature"]);
+  for (const n of ["f1", "f2", "f3"]) { writeFileSync(join(repo, n + ".ts"), FN(n, `${n} feature function`)); g(["add", "-A"]); g(["commit", "-qm", n]); }
+
+  const cfg = cfgFor(repo);
+  await buildIndex(cfg, { rebuild: false });                // index the feature tip — main_new.ts NOT present
+  assert.equal((await search("the main-only function added on the trunk", cfg, { k: 5 })).some((h) => h.path === "main_new.ts"), false);
+
+  g(["rebase", "main"]);                                     // real rebase: replays f1..f3 onto main (adds main_new, churns f* mtimes)
+  const r = await buildIndex(cfg, { rebuild: false });       // the catch-up the post-rewrite hook runs
+  assert.ok(r.embedded >= 1, "the genuinely-new file is embedded");
+  assert.ok(r.reused >= 1, "rebase churned mtimes but unchanged content is reused, not re-embedded");
+  assert.ok((await search("the main-only function added on the trunk", cfg, { k: 5 })).some((h) => h.path === "main_new.ts"),
+    "the rebased tree is searchable after the catch-up refresh");
+});
 
 test("integration: `gtir index` CLI gitignores .gtir/ in a git repo (audit fix, end-to-end)", { skip: hasGit() ? false : "git not installed" }, async () => {
   const repo = repoWith({ "a.ts": FN("alpha", "alpha helper words here") });
