@@ -27,6 +27,11 @@ export function makeFilter(cfg) {
     },
     // Is this a file gtir would index? extension gate + skipSuffixes + gitignore (size excluded).
     indexableFile(abs, name = abs.split(/[\\/]/).pop()) {
+      // Emacs lock files are named `.#<file>` (a symlink mirroring the real name), so their
+      // extension passes the gate (`.#a.mjs` → ".mjs"). Reject them — an editor opening a file
+      // would otherwise trigger a spurious index refresh. (vim `.swp`/`~`, emacs `#a#`, JetBrains
+      // `___jb_tmp___` already fail the extension gate; this is the one that slips through.)
+      if (name.startsWith(".#")) return false;
       if (cfg.skipSuffixes.some((s) => name.endsWith(s))) return false;
       if (!isIndexable(extname(name))) return false;
       return !ig.ignores(rel(abs));
