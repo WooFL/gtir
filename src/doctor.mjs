@@ -23,6 +23,27 @@ async function getJSON(url, fetchImpl) {
   return res.json();
 }
 
+// POST /api/show → model metadata including `capabilities` (e.g. ["embedding"] vs ["completion"]).
+async function showModel(cfg, fetchImpl) {
+  const res = await fetchImpl(`${cfg.ollamaUrl}/api/show`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ model: cfg.model }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+// Why a present, pullable model still can't embed: Ollama only flags a model embedding-capable
+// when its GGUF carries `pooling_type` metadata. Decoder models repackaged as embedders (the
+// jina-code GGUF, GTE-Qwen2, …) often lack it, so Ollama's engine loads them completion-only and
+// /api/embed fails with "does not support embeddings". This is the actionable remediation.
+export function notEmbedHint(model, caps) {
+  return `Ollama loaded "${model}" with capabilities ${JSON.stringify(caps ?? [])} — it can't serve embeddings `
+    + `(its GGUF has no pooling_type metadata, which Ollama's engine requires). Use an embedding-native model `
+    + `— the default qwen3-embedding:0.6b, or nomic-embed-text — or set "model" in .gtir/config.json. `
+    + `To keep a decoder model like jina-code, run it under llama-server (see the README "Embedding model" notes).`;
+}
+
 // Stream POST /api/pull, surfacing distinct status lines (e.g. "pulling manifest" → "success").
 async function pullModel(cfg, fetchImpl, log) {
   const res = await fetchImpl(`${cfg.ollamaUrl}/api/pull`, {
@@ -79,8 +100,20 @@ export async function runDoctor(cfg, { pull = true, log = () => {} } = {}) {
     }
 
     if (present) {
-      try { dim = await probeDim(cfg); checks.push({ name: `embeddings (dim=${dim})`, ok: true }); }
-      catch (e) { checks.push({ name: "embeddings", ok: false, detail: e.message }); }
+      // Capability pre-check: catch the "completion-only" model up front with an actionable
+      // message, instead of letting the probe fail with llama.cpp's opaque "--embeddings" error.
+      let caps = null;
+      try { caps = (await showModel(cfg, fetchImpl)).capabilities ?? null; }
+      catch { /* older Ollama may lack /api/show capabilities — fall through to the live probe */ }
+      if (caps && !caps.includes("embedding")) {
+        checks.push({ name: "embeddings", ok: false, detail: notEmbedHint(cfg.model, caps) });
+      } else {
+        try { dim = await probeDim(cfg); checks.push({ name: `embeddings (dim=${dim})`, ok: true }); }
+        catch (e) {
+          const hint = /does not support embeddings|--embeddings/i.test(e.message) ? ` ${notEmbedHint(cfg.model, caps)}` : "";
+          checks.push({ name: "embeddings", ok: false, detail: e.message + hint });
+        }
+      }
     }
   }
 

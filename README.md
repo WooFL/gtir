@@ -8,7 +8,7 @@ your machine — a local Ollama model, no cloud, no API keys, nothing leaves you
 
 > *gtir* — Armenian *գտնել*, "to find."
 
-## What it's for
+## 🎯 What it's for
 
 - **Find code by what it does, not what it's named.** grep needs the word; gtir matches the idea. Ask
   in plain English — *"evict the least-recently-used cache entry"*, *"rotate a 3D vector"* — without
@@ -41,7 +41,7 @@ turns, so the answer lands sooner. For the other big token sink — verbose comm
 runs, builds) — pair gtir with an output-compression proxy like [RTK](https://github.com/rtk-ai/rtk).
 (Token numbers above are illustrative.)
 
-## What makes it different
+## ✨ What makes it different
 
 Semantic code search isn't new. What gtir combines, that most tools don't:
 
@@ -68,14 +68,14 @@ Semantic code search isn't new. What gtir combines, that most tools don't:
   file, find similar chunks, and jump to a symbol's definition or references — enough to navigate a
   codebase, not just match strings against it.
 
-## How it works
+## ⚙️ How it works
 
 ```
 walk repo (.gitignore-aware)
   → tree-sitter AST chunks (+ cAST sibling-merge; line-window fallback for grammarless files)
   → markdown: heading-aware sections, each carrying its heading breadcrumb + frontmatter tags
   → contextual prefix per chunk (code: path › enclosing class/module; markdown: heading breadcrumb)
-  → embed via Ollama /api/embed  (jina-code-embeddings-0.5b)
+  → embed via Ollama /api/embed  (qwen3-embedding:0.6b)
   → LanceDB upsert (vectors + BM25 FTS over a path/scope/decl-weighted text)
 search: query → embed → vector branch + BM25 branch → query-adaptive Reciprocal Rank Fusion (k=60)
 ```
@@ -111,7 +111,7 @@ everywhere else — grammarless files are still fully indexed and searchable, ju
 - **Markdown** is split by heading, each chunk carrying its heading breadcrumb and frontmatter tags.
 - **Everything else** (JSON/YAML/TOML/HTML/CSS, and any unlisted extension) → line-window chunking.
 
-## Install
+## 📦 Install
 
 ```bash
 git clone <gtir repo> && cd gtir
@@ -126,7 +126,7 @@ Windows (x64/arm64), Linux (x64/arm64, glibc + musl), and Apple Silicon macOS. *
 (`darwin-x64`) are not supported**: LanceDB ships no `darwin-x64` prebuilt, so `npm install` finds no
 native binary and gtir won't load.
 
-## Setup (once per machine)
+## 🔧 Setup (once per machine)
 
 ```bash
 gtir doctor
@@ -138,8 +138,8 @@ Checks Ollama, pulls the embedding model if it's missing, and verifies embedding
 gtir doctor — ready ✓
   ✓  Node 26.1.0
   ✓  Ollama reachable at http://localhost:11434
-  ✓  model hf.co/jinaai/jina-code-embeddings-0.5b-GGUF:F16
-  ✓  embeddings (dim=896)
+  ✓  model qwen3-embedding:0.6b
+  ✓  embeddings (dim=1024)
 ```
 
 The first run pulls the model (a HuggingFace GGUF, ~1 GB, one-time). `--no-pull` only diagnoses and
@@ -147,7 +147,7 @@ prints the `ollama pull` command to run yourself; `--repo <project>` checks that
 model (e.g. `nomic-embed-text` for a notes vault). It exits non-zero when something's missing, so it
 works as a script preflight.
 
-## Quick start
+## 🚀 Quick start
 
 See it work before indexing anything of your own:
 
@@ -186,7 +186,7 @@ gtir init: /home/me/my-project
   mode: code (detected)
   config: wrote .gtir/config.json
   gitignore: .gtir/ added
-  index: 1284 chunks, dim=896
+  index: 1284 chunks, dim=1024
   hook: auto-refresh installed (post-commit + post-rewrite; rebase-aware)
 ```
 
@@ -222,7 +222,7 @@ That's the whole loop: `init` once, then `search` as often as you like. The git 
 fresh as the code changes — and they're rebase-aware: a rebase or cherry-pick won't re-embed every
 intermediate commit, it refreshes once when the operation finishes (see [Staying fresh](#staying-fresh)).
 
-## Commands
+## 🧰 Commands
 
 ```bash
 gtir init    --repo <project> [--notes|--code] [--no-index] [--no-hook]  # set up a repo or vault
@@ -244,7 +244,7 @@ gtir eval    --repo <corpus> --golden <f> [--save] [--json]            # score r
 ### What `gtir init` does
 
 It detects whether the target is a **note vault** (has `.obsidian/` or is markdown-dominant →
-`nomic-embed-text` + prose chunk sizes) or a **codebase** (→ `jina-code` defaults), then:
+`nomic-embed-text` + prose chunk sizes) or a **codebase** (→ `qwen3-embedding` defaults), then:
 
 1. writes `.gtir/config.json` (never overwrites an existing one),
 2. appends `.gtir/` to `.gitignore`,
@@ -353,7 +353,7 @@ Reuse is gated on the model matching, so switching models re-embeds everything. 
 full re-embed. Indexes built before this cache existed keep working; a one-time `gtir index --rebuild`
 enables it.
 
-## Measuring retrieval quality — `gtir eval`
+## 📊 Measuring retrieval quality — `gtir eval`
 
 gtir ships a committed eval harness so you can tell whether a change improved retrieval or quietly hurt
 it, instead of guessing.
@@ -383,7 +383,7 @@ own set. Keep golden/baseline JSON outside the indexed tree so they don't get in
 `npm run eval` wraps `gtir eval --repo eval/corpus --golden eval/golden.json --baseline eval/baseline.json`;
 add `--json` to emit metrics to stdout, `--no-build` to skip the pre-run refresh.
 
-## Reranking (optional)
+## 🥇 Reranking (optional)
 
 gtir can rerank the top hybrid candidates with a cross-encoder before returning them. The default path
 scores query and document separately (a bi-encoder); a cross-encoder reads the `(query, chunk)` pair
@@ -407,7 +407,7 @@ Recall@1 0.63 → 0.60 / 0.57 across repeated runs). The hybrid RRF order is alr
 short code chunks without the scope context the embedder sees doesn't add anything here. The plumbing
 stays in place in case it helps on your corpus — measure it with `gtir eval --rerank` versus the floor.
 
-## MCP server
+## 🔌 MCP server
 
 Expose gtir's search as MCP tools so Claude can call them mid-session:
 
@@ -446,18 +446,33 @@ The watcher defers during git operations just like the commit hooks (see [Stayin
 Every result carries `file:line`, so each call feeds the next: find by meaning → read more → trace a
 symbol → jump to a definition → pivot to neighbors, all without leaving the chat.
 
-## Model
+## 🤖 Model
 
-Default model (in `src/config.mjs`): `hf.co/jinaai/jina-code-embeddings-0.5b-GGUF:F16` (994 MB, 896-dim).
+Default code model (in `src/config.mjs`): **`qwen3-embedding:0.6b`** (639 MB, 1024-dim) — pulled by
+`gtir doctor`. It's embedding-native (Ollama serves it first-class) and it **tied** the older
+`jina-code-embeddings-0.5b` on the bundled eval — overall R@1 0.913, MRR 0.945 — while staying a clean
+one-command `ollama pull`.
 
-- **Smaller/faster:** override with a lower quant in `.gtir/config.json`, e.g.
-  `{ "model": "hf.co/jinaai/jina-code-embeddings-0.5b-GGUF:Q8_0" }` (531 MB) or `:IQ4_XS` (349 MB), then
-  `gtir index --rebuild`.
-- **Higher recall:** the 1.5B sibling, `hf.co/jinaai/jina-code-embeddings-1.5b-GGUF:<quant>`.
+- **Notes vaults** default to `nomic-embed-text` instead (prose, 768-dim); `gtir init` picks it
+  automatically for an Obsidian vault or a markdown-dominant repo.
+- **Higher recall:** override with a larger variant in `.gtir/config.json`, e.g.
+  `{ "model": "qwen3-embedding:4b" }`, then `gtir index --rebuild`.
 - Changing the model changes the embedding dimension, so a full `gtir index --rebuild` is required (the
   old vectors are incompatible).
 
-## Known limitations
+### Embedding model won't embed? ("does not support embeddings")
+
+Ollama only serves `/api/embed` for models whose GGUF carries `pooling_type` metadata. Decoder models
+repackaged as embedders — notably `jina-code-embeddings` (Qwen2-based) and GTE-Qwen2 — lack it, so
+Ollama's newer engine loads them completion-only and the embed call fails. `gtir doctor` detects this and
+names the fix: **use a pooling-native model** — the default `qwen3-embedding:0.6b`, or `nomic-embed-text`.
+
+If you specifically want a decoder embedder like jina-code, Ollama won't run it from the stock GGUF —
+you'd re-pack the GGUF with `pooling_type` set and `ollama create` from it, or serve it under
+`llama-server --embedding --pooling last` behind an OpenAI-compatible embeddings proxy. gtir targets
+Ollama's `/api/embed` today, so the pooling-native route is the supported one.
+
+## ⚠️ Known limitations
 
 - **BM25 index is incremental.** First build and `--rebuild` build it in full; each `refresh` folds
   only the changed fragments in via LanceDB `optimize()`. Deleted rows are filtered out of results
@@ -470,7 +485,7 @@ Default model (in `src/config.mjs`): `hf.co/jinaai/jina-code-embeddings-0.5b-GGU
   methods both surface and a name in a comment counts. `find … definition` (the default) is precise;
   for exact type-aware references, use an LSP.
 
-## Development
+## 🛠️ Development
 
 ```bash
 npm test        # node --test — full suite, runs offline (embedder + HTTP client are injected)
@@ -489,6 +504,6 @@ generated by `scripts/bundle-grammars.mjs` at prepack). The two shader grammars 
 by `scripts/build-shader-grammars.mjs` into `vendor/grammars/` and shipped as a release asset that
 `gtir fetch-grammars` pulls.
 
-## License
+## 📄 License
 
 [MIT](LICENSE) © 2026 WooFL

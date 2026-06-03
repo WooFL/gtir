@@ -13,9 +13,10 @@ test("sanitizeLabel lowercases and collapses non-[a-z0-9_] to _", () => {
   assert.equal(sanitizeLabel("///"), "index"); // empty after strip -> fallback
 });
 
-test("deriveLabel: override wins; nomic=>notes; jina-code=>code; else basename", () => {
+test("deriveLabel: override wins; nomic=>notes; jina-code/qwen3-embedding=>code; else basename", () => {
   assert.equal(deriveLabel("/x/wiki", { model: "nomic-embed-text" }, null), "notes");
   assert.equal(deriveLabel("/x/repo", { model: "hf.co/jinaai/jina-code-embeddings-0.5b-GGUF:F16" }, null), "code");
+  assert.equal(deriveLabel("/x/repo", { model: "qwen3-embedding:0.6b" }, null), "code");   // the new default
   assert.equal(deriveLabel("/x/My Repo", { model: "something-else" }, null), "my_repo");
   assert.equal(deriveLabel("/x/repo", { model: "nomic-embed-text" }, "custom"), "custom");
 });

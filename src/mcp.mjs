@@ -15,7 +15,7 @@ export function deriveLabel(repo, cfg, override) {
   if (override) return sanitizeLabel(override);
   const m = cfg?.model || "";
   if (/nomic/i.test(m)) return "notes";
-  if (/jina.*code/i.test(m)) return "code";
+  if (/jina.*code/i.test(m) || /qwen3.?embedding/i.test(m)) return "code";
   return sanitizeLabel(basename(repo));
 }
 

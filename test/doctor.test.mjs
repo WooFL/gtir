@@ -27,12 +27,13 @@ const streamRes = (lines) => ({
   body: new ReadableStream({ start(c) { for (const l of lines) c.enqueue(new TextEncoder().encode(l + "\n")); c.close(); } }),
 });
 
-function mockOllama({ up = true, models = [], dim = 896, pull = ['{"status":"pulling"}', '{"status":"success"}'] } = {}) {
+function mockOllama({ up = true, models = [], dim = 896, capabilities = ["embedding"], pull = ['{"status":"pulling"}', '{"status":"success"}'] } = {}) {
   const calls = [];
   const impl = async (url) => {
     calls.push(url);
     if (url.endsWith("/api/version")) return up ? jsonRes({ version: "0.0" }) : errRes(500);
     if (url.endsWith("/api/tags")) return jsonRes({ models });
+    if (url.endsWith("/api/show")) return jsonRes({ capabilities });
     if (url.endsWith("/api/pull")) return streamRes(pull);
     if (url.endsWith("/api/embed")) return jsonRes({ embeddings: [Array(dim).fill(0.1)] });
     return errRes(404);
@@ -65,6 +66,14 @@ test("runDoctor: model missing + pull disabled → not ready, points at `ollama 
   assert.equal(r.ready, false);
   assert.ok(!impl.calls.some((u) => u.endsWith("/api/pull")));
   assert.match(r.report, /ollama pull/);
+});
+
+test("runDoctor: model present but completion-only (no embedding capability) → not ready, actionable hint", async () => {
+  const impl = mockOllama({ models: [{ name: MODEL }], capabilities: ["completion"] });
+  const r = await runDoctor(cfgWith(impl), { pull: true });
+  assert.equal(r.ready, false);
+  assert.match(r.report, /pooling_type|embedding-native|qwen3-embedding/);   // actionable, not a raw llama.cpp error
+  assert.ok(!impl.calls.some((u) => u.endsWith("/api/embed")));              // caps said no → skip the probe
 });
 
 test("runDoctor: Ollama down → not ready, never checks the model", async () => {

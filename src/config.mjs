@@ -1,14 +1,16 @@
 import { readFileSync, existsSync } from "node:fs";
 import { resolve, join } from "node:path";
 
-// Defaults ported from flow.py (MAX_CHARS/MIN_CHARS/OVERLAP_CHARS, SKIP_DIRS,
-// MAX_FILE_BYTES) and the spec's model decision. `model` is the Ollama tag
-// served via /api/embed; pull it with `ollama pull <model>` (or `gtir setup`).
-// jina-code-embeddings-0.5b has no official Ollama-library tag, so we use the
-// HuggingFace GGUF that Ollama 0.24+ can pull directly. Switch to the 1.5b GGUF
-// or a smaller quant (e.g. :Q8_0) via a per-repo .gtir/config.json override.
+// `model` is the Ollama tag served via /api/embed; pull it with `ollama pull <model>`
+// (or `gtir doctor`). Default is qwen3-embedding:0.6b — an embedding-native model Ollama
+// serves first-class because its GGUF carries the `pooling_type` metadata Ollama's engine
+// requires. On the bundled eval it MATCHED the older jina-code-embeddings-0.5b (overall R@1
+// 0.913 and MRR 0.945 — a tie) while staying a clean one-command `ollama pull`. The jina-code
+// GGUF is a Qwen2 decoder with no pooling_type, so Ollama's newer engine refuses to embed it
+// ("does not support embeddings"); see README "Embedding model" to use it via llama-server.
+// Override per-repo in .gtir/config.json (e.g. qwen3-embedding:4b for higher recall).
 export const DEFAULTS = {
-  model: "hf.co/jinaai/jina-code-embeddings-0.5b-GGUF:F16",
+  model: "qwen3-embedding:0.6b",
   ollamaUrl: process.env.OLLAMA_URL || "http://localhost:11434",
   maxChars: 2000,
   minChars: 100,
