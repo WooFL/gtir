@@ -1,5 +1,7 @@
 # gtir
 
+[![CI](https://github.com/WooFL/gtir/actions/workflows/ci.yml/badge.svg)](https://github.com/WooFL/gtir/actions/workflows/ci.yml)
+
 Search your code and notes by meaning. Ask *"where do we retry failed requests?"* and gtir finds the
 function even when it's called `backoffFetch` and never says the word "retry."
 
