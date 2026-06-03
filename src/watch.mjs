@@ -68,7 +68,9 @@ export function watchRepo(cfg, { debounceMs = 1500, log = () => {}, isBusy, onBa
   const busy = isBusy ?? (() => gitBusy(cfg.repo));
   const refresh = onBatch ?? (async (paths) => {
     try {
-      const r = await buildIndex(cfg, { rebuild: false });
+      // Hand the changed paths to buildIndex for a targeted refresh (no full repo walk). The
+      // startup catch-up fires with an empty batch → buildIndex falls back to a full walk.
+      const r = await buildIndex(cfg, { rebuild: false, paths });
       log(`refreshed — ${r.chunks} chunks (${r.embedded} embedded, ${r.reused} reused, ${r.skipped} skipped) after ${paths.length} change(s)`);
       return r;
     } catch (e) {

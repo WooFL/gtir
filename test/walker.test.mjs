@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { walkRepo } from "../src/walker.mjs";
+import { walkRepo, statPaths } from "../src/walker.mjs";
 import { loadConfig } from "../src/config.mjs";
 
 function makeRepo() {
@@ -32,4 +32,19 @@ test("walkRepo returns mtimeMs as integer", () => {
   const cfg = loadConfig(repo);
   const a = walkRepo(cfg).find((f) => f.relPath === "a.ts");
   assert.equal(Number.isInteger(a.mtimeMs), true);
+});
+
+test("statPaths: splits a changed-path set into indexable files vs deletions, dropping noise", () => {
+  const repo = makeRepo(); // a.ts, note.md, ignored.ts (gitignored), pic.png, built/, node_modules/
+  const cfg = loadConfig(repo);
+  const { files, missing } = statPaths(cfg, [
+    "a.ts",                    // indexable, on disk → file
+    "pic.png",                 // non-indexable extension → dropped
+    "ignored.ts",              // gitignored → dropped
+    "node_modules/p/c.ts",     // skip-listed dir → dropped (before stat)
+    "gone.ts",                 // not on disk → deletion
+  ]);
+  assert.deepEqual(files.map((f) => f.relPath), ["a.ts"]);
+  assert.deepEqual(missing, ["gone.ts"]);
+  assert.equal(Number.isInteger(files[0].mtimeMs), true);
 });

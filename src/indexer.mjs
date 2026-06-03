@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { extname } from "node:path";
-import { walkRepo } from "./walker.mjs";
+import { walkRepo, statPaths } from "./walker.mjs";
 import { langFor } from "./languages.mjs";
 import { grammarMissing, OPTIONAL_GRAMMARS } from "./parser.mjs";
 import { chunkFile, stableId } from "./chunker.mjs";
@@ -13,7 +13,7 @@ import { openStore } from "./store.mjs";
 const REQUIRED_CHUNK_COLUMNS = ["id", "path", "language", "chunk_start", "chunk_end",
   "line_start", "line_end", "text", "fts_text", "mtime_ms", "embedding"];
 
-export async function buildIndex(cfg, { rebuild = false } = {}) {
+export async function buildIndex(cfg, { rebuild = false, paths = null } = {}) {
   const store = await openStore(cfg);
   const embed = cfg.embedImpl ?? ((texts) => embedTexts(texts, cfg));
 
@@ -28,7 +28,14 @@ export async function buildIndex(cfg, { rebuild = false } = {}) {
   }
 
   const manifest = rebuild ? {} : await store.loadManifest();
-  const files = walkRepo(cfg);
+
+  // Targeted refresh: when the caller (the file-watcher) hands us the exact changed paths, stat
+  // just those instead of walking the whole tree — O(changed), not O(files on disk). Empty/absent
+  // paths or a rebuild fall back to the full walk: hooks, manual `refresh`, and the watcher's
+  // startup catch-up (which must see everything that changed while it was off).
+  const targeted = !rebuild && Array.isArray(paths) && paths.length > 0;
+  const scan = targeted ? statPaths(cfg, paths) : { files: walkRepo(cfg), missing: null };
+  const files = scan.files;
   const live = new Set(files.map((f) => f.relPath));
 
   // Detect optional (build-on-demand) grammars this repo needs but doesn't have installed —
@@ -57,10 +64,13 @@ export async function buildIndex(cfg, { rebuild = false } = {}) {
   }
   const changedPaths = [...new Set(toIndex.map((f) => f.relPath))];
 
-  // Evict rows for deleted/moved files (manifest paths no longer on disk).
+  // Evict deletions. Full walk: any manifest path no longer on disk. Targeted: only the batch's
+  // vanished paths (the watcher reports unlinks; the startup full walk is the backstop for the rest).
   let evicted = 0;
   if (!rebuild) {
-    const stale = Object.keys(manifest).filter((p) => !live.has(p));
+    const stale = targeted
+      ? scan.missing.filter((p) => manifest[p] !== undefined)
+      : Object.keys(manifest).filter((p) => !live.has(p));
     if (stale.length) { await store.evictPaths(stale); evicted = stale.length; }
   }
 

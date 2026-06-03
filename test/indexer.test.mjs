@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as lancedb from "@lancedb/lancedb";
@@ -177,4 +177,41 @@ test("prefix-sensitivity: retitling a page changes the hash and forces re-embed"
   const r = await buildIndex({ ...loadConfig(repo), embedImpl: c2.fn }, { rebuild: false });
   assert.ok(c2.state.calls > 0, "retitle must re-embed (prefix changed → new hash)");
   assert.ok(r.embedded >= 1, "at least the retitled section re-embeds");
+});
+
+test("targeted refresh: only the named paths are reconsidered (a file changed off-list is left alone)", async () => {
+  const repo = repoWith({ "a.ts": CODE, "b.ts": CODE.replace("foo", "bar") });
+  const cfg = { ...loadConfig(repo), embedImpl: fakeEmbed };
+  await buildIndex(cfg, { rebuild: true });
+  // change BOTH on disk, but hand buildIndex only a.ts
+  writeFileSync(join(repo, "a.ts"), CODE.replace("trim()", "trimEnd()"));
+  writeFileSync(join(repo, "b.ts"), CODE.replace("foo", "bar").replace("trim()", "trimEnd()"));
+  const r = await buildIndex(cfg, { rebuild: false, paths: ["a.ts"] });
+  assert.equal(r.scanned, 1, "only a.ts statted — the repo was not walked");
+  const store = await openStore(cfg);
+  assert.ok((await store.chunksByPath("a.ts")).some((x) => /trimEnd/.test(x.text)), "a.ts reindexed");
+  const bText = (await store.chunksByPath("b.ts")).map((x) => x.text).join("\n");
+  assert.ok(/trim\(\)/.test(bText) && !/trimEnd/.test(bText), "b.ts left at its old indexed content");
+});
+
+test("targeted refresh: a path gone from disk is evicted; others untouched", async () => {
+  const repo = repoWith({ "a.ts": CODE, "b.ts": CODE.replace("foo", "bar") });
+  const cfg = { ...loadConfig(repo), embedImpl: fakeEmbed };
+  await buildIndex(cfg, { rebuild: true });
+  rmSync(join(repo, "b.ts"));
+  const r = await buildIndex(cfg, { rebuild: false, paths: ["b.ts"] });
+  assert.equal(r.evicted, 1);
+  const man = await (await openStore(cfg)).loadManifest();
+  assert.equal(man["b.ts"], undefined, "b.ts evicted");
+  assert.notEqual(man["a.ts"], undefined, "a.ts untouched");
+});
+
+test("empty paths falls back to a full walk (the watcher startup catch-up)", async () => {
+  const repo = repoWith({ "a.ts": CODE });
+  const cfg = { ...loadConfig(repo), embedImpl: fakeEmbed };
+  await buildIndex(cfg, { rebuild: true });
+  writeFileSync(join(repo, "a.ts"), CODE.replace("trim()", "trimEnd()"));
+  const r = await buildIndex(cfg, { rebuild: false, paths: [] });   // empty → full walk, not a no-op
+  assert.ok(r.chunks > 0);
+  assert.ok((await (await openStore(cfg)).chunksByPath("a.ts")).some((x) => /trimEnd/.test(x.text)), "full walk picked up the change");
 });
