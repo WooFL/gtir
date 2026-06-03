@@ -7,7 +7,7 @@ import { buildIndex } from "../src/indexer.mjs";
 import { search } from "../src/search.mjs";
 import { openStore } from "../src/store.mjs";
 import { installHook, removeHook, gitBusy } from "../src/hook.mjs";
-import { watchRepo } from "../src/watch.mjs";
+import { watchRepo, watcherLive } from "../src/watch.mjs";
 import { probeDim } from "../src/embed.mjs";
 import { runInit } from "../src/init.mjs";
 import { resolveIndexes, serveStdio, printConfig, startWatchers } from "../src/mcp.mjs";
@@ -223,11 +223,12 @@ async function main() {
         break;
       }
       case "refresh": {
-        // Hook-driven refresh: defer while a rebase/cherry-pick/merge is mid-flight so we
-        // don't re-embed each transient checkout. post-rewrite refreshes once it completes.
-        if (args.hook && gitBusy(repo)) {
-          process.stderr.write("gtir: git operation in progress — refresh deferred\n");
-          break;
+        // Hook-driven refresh stands down in two cases:
+        //  - a git op is mid-flight (rebase/cherry-pick/merge): post-rewrite refreshes once it ends.
+        //  - a live watcher is already keeping this repo fresh: don't pay a redundant commit-time pass.
+        if (args.hook) {
+          if (gitBusy(repo)) { process.stderr.write("gtir: git operation in progress — refresh deferred\n"); break; }
+          if (watcherLive(loadConfig(repo))) { process.stderr.write("gtir: a live watcher is refreshing this repo — skipping the commit-hook pass\n"); break; }
         }
         const r = await runIndex({ repo, rebuild: false, noCache: args.noCache ?? false });
         process.stderr.write(`gtir: refresh — ${r.chunks} chunks updated (${r.reused ?? 0} reused, ${r.embedded ?? 0} embedded, ${r.skipped} skipped, ${r.evicted} evicted)\n`);
@@ -273,7 +274,8 @@ async function main() {
         const debounceMs = args.debounce ?? 1500;
         // Long-lived, like `mcp`: chokidar (persistent) holds the event loop open. Each settled
         // batch runs an incremental refresh; it defers while a git op is in flight (gitBusy).
-        watchRepo(cfg, { debounceMs, log: (m) => process.stderr.write(`gtir: ${m}\n`) });
+        const handle = watchRepo(cfg, { debounceMs, log: (m) => process.stderr.write(`gtir: ${m}\n`) });
+        process.on("SIGINT", () => { handle.close().finally(() => process.exit(0)); }); // drop the liveness lock on Ctrl+C
         process.stderr.write(`gtir: watching ${cfg.repo} for changes (debounce ${debounceMs}ms) — Ctrl+C to stop\n`);
         return; // keep the process alive on the watcher; do not fall through to exit
       }
@@ -291,7 +293,8 @@ async function main() {
           // Live-refresh each served index as files change (uncommitted edits). Logs to STDERR
           // only — stdout is the JSON-RPC channel. Defers during git ops via the shared gitBusy gate.
           const debounceMs = args.debounce ?? 1500;
-          startWatchers(indexes, { debounceMs, log: (m) => process.stderr.write(`gtir mcp: watch ${m}\n`) });
+          const handles = startWatchers(indexes, { debounceMs, log: (m) => process.stderr.write(`gtir mcp: watch ${m}\n`) });
+          process.on("SIGINT", () => { Promise.all(handles.map((h) => h.close())).finally(() => process.exit(0)); }); // drop liveness locks on Ctrl+C
           process.stderr.write(`gtir mcp: live-refresh ON (debounce ${debounceMs}ms) — watching [${indexes.map((i) => i.label).join(", ")}]\n`);
         }
         serveStdio(indexes, { version: pkgVersion() });

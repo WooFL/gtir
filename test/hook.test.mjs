@@ -140,3 +140,12 @@ test("refresh --hook defers (no index build) while a git op is in progress", { s
   execFileSync("node", [bin, "refresh", "--hook", "--repo", repo], { encoding: "utf8" });
   assert.equal(existsSync(join(repo, ".gtir", "index.lance")), false, "no index built during a git op");
 });
+
+test("refresh --hook stands down when a live watcher lock is present (no double refresh)", () => {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-hook-watchlock-"));
+  mkdirSync(join(repo, ".gtir"), { recursive: true });
+  writeFileSync(join(repo, ".gtir", "watch.lock"), `${process.pid}\n`);   // a live watcher is handling refresh
+  const bin = join(dirname(fileURLToPath(import.meta.url)), "..", "bin", "gtir.mjs");
+  execFileSync("node", [bin, "refresh", "--hook", "--repo", repo], { encoding: "utf8" });
+  assert.equal(existsSync(join(repo, ".gtir", "index.lance")), false, "hook deferred to the live watcher — no build");
+});

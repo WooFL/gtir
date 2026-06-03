@@ -328,6 +328,16 @@ same git-busy gate as the hooks**: during a rebase / cherry-pick / merge the wor
 so the watcher defers and lets the `post-rewrite` catch-up handle it, rather than re-indexing every
 transient state. `.gtir` and `.git` are excluded, so the watcher never reacts to its own index writes.
 
+Two more things it handles so you don't have to:
+
+- **Startup catch-up.** On launch it runs one refresh, so edits you made while it wasn't running are
+  picked up immediately — you don't have to touch a file to wake it.
+- **No double work with the hooks.** A running watcher keeps a heartbeat lock (`.gtir/watch.lock`); the
+  commit hooks see it and stand down, so a commit doesn't trigger a second refresh on top of the
+  save-time one. Clean exit drops the lock and the hooks resume; if the watcher crashes, the lock goes
+  stale within ~2.5 min and they resume on their own. So you can leave the hooks installed and just run a
+  watcher when you want live freshness — they won't fight.
+
 Add `--watch` to `gtir mcp` and the server live-refreshes every index it serves *while it serves
 queries* — so an agent's search reflects edits you haven't committed yet, with no restart. (The watcher
 runs in the server process; its logs go to stderr, leaving stdout for the MCP protocol.)
