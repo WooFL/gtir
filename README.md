@@ -503,9 +503,14 @@ npm run eval    # retrieval quality against the bundled corpus
 ```
 
 The embedder and Ollama client are injectable (`cfg.embedImpl` / `cfg.fetchImpl`), so the chunker,
-fusion, eval math, and MCP layer all test offline against fakes; only the corpus eval needs a live
-Ollama. If you touch retrieval, snapshot a baseline (`npm run eval -- --save`), make the change, and
-re-run — a regression in the overall or `gate` metrics fails the run.
+fusion, eval math, and MCP layer test offline against fakes. The **integration suite**
+(`test/integration.test.mjs`) goes further: it stands up a mock Ollama HTTP server and drives the *real*
+stack end-to-end — `/api/embed` → store → search → watcher → rebase catch-up → doctor — still fully
+offline. So the whole suite runs in CI with no Ollama: GitHub Actions runs `npm test` across
+{ubuntu, windows, macos} × Node {20, 22} on every push and PR. Only the corpus eval needs a live Ollama.
+
+If you touch retrieval, snapshot a baseline (`npm run eval -- --save`), make the change, and re-run — a
+regression in the overall or `gate` metrics fails the run.
 
 **Layout** (`src/`, one job per file): `walker` → `chunker` (+ `languages` / `parser`) →
 `contextualize` → `embed` (Ollama) → `store` (LanceDB) → `search` (fusion); plus `mcp` (server), `eval`
