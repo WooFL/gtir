@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 import { execFileSync, execFile } from "node:child_process";
 import { promisify } from "node:util";
 const pexec = promisify(execFile);
-import { mkdtempSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -121,6 +121,11 @@ test("integration: index converges after a real rebase — the catch-up refresh 
 test("integration: `gtir index` CLI gitignores .gtir/ in a git repo (audit fix, end-to-end)", { skip: hasGit() ? false : "git not installed" }, async () => {
   const repo = repoWith({ "a.ts": FN("alpha", "alpha helper words here") });
   execFileSync("git", ["init", "-q"], { cwd: repo });   // git needs no mock; brief sync block is fine
+  // Write a .gtir/config.json so the CLI subprocess uses the same model name the mock Ollama serves.
+  // Required now that `gtir index` runs a preflight check (model-present gate).
+  const { mkdirSync } = await import("node:fs");
+  mkdirSync(join(repo, ".gtir"), { recursive: true });
+  writeFileSync(join(repo, ".gtir", "config.json"), JSON.stringify({ model: MODEL }));
   const bin = join(dirname(fileURLToPath(import.meta.url)), "..", "bin", "gtir.mjs");
   // ASYNC spawn — execFileSync would block this process's event loop and the in-process mock Ollama
   // could never answer the child's /api/embed, deadlocking the run.
@@ -141,4 +146,41 @@ test("integration: watcher — a real file event drives a targeted refresh that 
   await w.close();
   const hits = await search("orderCheckout", cfg, { k: 5 });
   assert.ok(hits.some((h) => h.path === "checkout.ts"), `new file searchable after watcher refresh; got ${JSON.stringify(hits.map((h) => h.path))}`);
+});
+
+test("integration: index build survives a dropped first /api/embed (retry layer)", async () => {
+  let embedHits = 0;
+  const srv = createServer((req, res) => {
+    if (req.url === "/api/version") { res.end(JSON.stringify({ version: "0.5.0" })); return; }
+    if (req.url === "/api/tags") { res.end(JSON.stringify({ models: [{ name: "m" }] })); return; }
+    if (req.url === "/api/show") { res.end(JSON.stringify({ capabilities: ["embedding"] })); return; }
+    if (req.url === "/api/embed") {
+      embedHits++;
+      if (embedHits === 1) { req.destroy(); return; }            // drop first call → network error → retryable
+      let body = ""; req.on("data", (d) => (body += d)); req.on("end", () => {
+        const input = JSON.parse(body).input;
+        res.end(JSON.stringify({ embeddings: input.map(() => [1, 0, 0]) }));
+      });
+      return;
+    }
+    res.statusCode = 404; res.end("nf");
+  });
+  await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+  const port = srv.address().port;
+  const url = `http://127.0.0.1:${port}`;
+
+  // Use the repoWith helper and FN to get a file long enough to clear minChars (100).
+  // Then override ollamaUrl+model+embedRetryBackoffMs via cfgFor-style spread.
+  const repo = repoWith({ "a.js": FN("helloRetry", "retry resilience check helper function here") });
+  mkdirSync(join(repo, ".gtir"), { recursive: true });
+  writeFileSync(join(repo, ".gtir", "config.json"), JSON.stringify({ ollamaUrl: url, model: "m", embedRetryBackoffMs: 0 }));
+
+  const cfg = loadConfig(repo);
+  try {
+    const out = await buildIndex(cfg, { rebuild: true });
+    assert.ok(embedHits >= 2, "first embed dropped, retry succeeded");
+    assert.ok(out?.chunks >= 1, "index built (>=1 chunk) despite the dropped request");
+  } finally {
+    await new Promise((r) => srv.close(r));
+  }
 });

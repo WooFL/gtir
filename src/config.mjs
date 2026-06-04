@@ -18,6 +18,11 @@ export const DEFAULTS = {
   maxFileBytes: 256 * 1024,
   embedBatch: 32,
   maxEmbedChars: 6000,           // hard cap on per-input embed length (avoids model context overflow)
+  // Ollama embed resilience (see docs/superpowers/specs/2026-06-04-gtir-ollama-resilience-design.md).
+  embedTimeoutMs: 60000,        // per-batch /api/embed call timeout; cold reload of a 4b override fits
+  embedRetries: 2,              // retries for RETRYABLE failures (timeout / network / 5xx)
+  embedRetryBackoffMs: 500,     // exponential backoff base: 500ms, 1s, 2s
+  warmupOnStart: true,          // gate preflight+probe pre-load on `index`/`mcp` start (false = skip, trust retry)
   contextPrefix: true,            // synthetic prefix on by default
   contextTier: "synthetic",       // "synthetic" | "claude-cli"
   contextScope: true,             // prepend the AST scope breadcrumb (enclosing class/module) to code chunks

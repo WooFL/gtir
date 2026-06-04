@@ -57,3 +57,11 @@ test("rerank is overridable via .gtir/config.json", () => {
   assert.equal(cfg.rerank, true);
   assert.equal(cfg.rerankCandidates, 30);
 });
+
+test("DEFAULTS carry embed-resilience knobs", () => {
+  const cfg = loadConfig(process.cwd());
+  assert.equal(cfg.embedTimeoutMs, 60000);
+  assert.equal(cfg.embedRetries, 2);
+  assert.equal(cfg.embedRetryBackoffMs, 500);
+  assert.equal(cfg.warmupOnStart, true);
+});

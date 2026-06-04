@@ -120,3 +120,13 @@ export async function runDoctor(cfg, { pull = true, log = () => {} } = {}) {
   const { text, ready } = formatReport(checks);
   return { ready, dim, checks, report: text };
 }
+
+// Fast readiness gate for commands that do expensive work (`index`, `mcp`). Reuses runDoctor's
+// reachable → model-present → capability → probe checks (the probe doubles as a warmup), but never
+// pulls. On not-ready, throws an Error whose message is the ✓/✗ report plus "run: gtir doctor",
+// so the caller can print it and exit non-zero BEFORE walking files / serving.
+export async function preflight(cfg) {
+  const { ready, dim, report } = await runDoctor(cfg, { pull: false });
+  if (!ready) throw new Error(`${report}\n\ngtir: Ollama not ready — run: gtir doctor`);
+  return { dim };
+}

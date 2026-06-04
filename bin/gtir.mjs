@@ -10,10 +10,10 @@ import { installHook, removeHook, gitBusy } from "../src/hook.mjs";
 import { watchRepo, watcherLive } from "../src/watch.mjs";
 import { probeDim } from "../src/embed.mjs";
 import { runInit, ensureGitignore } from "../src/init.mjs";
-import { resolveIndexes, serveStdio, printConfig, startWatchers } from "../src/mcp.mjs";
+import { resolveIndexes, serveStdio, printConfig, startWatchers, preflightIndexes } from "../src/mcp.mjs";
 import { evalGolden, flattenMetrics, compareBaseline, compareTiers } from "../src/eval.mjs";
 import { runDemo, formatDemo } from "../src/demo.mjs";
-import { runDoctor } from "../src/doctor.mjs";
+import { runDoctor, preflight } from "../src/doctor.mjs";
 import { fetchGrammars } from "../src/fetch-grammars.mjs";
 
 // --- programmatic entrypoints (used by tests and the dispatcher) ---
@@ -23,10 +23,17 @@ function pkgVersion() {
   catch { return "0.0.0"; }
 }
 
-export async function runIndex({ repo, rebuild = false, noCache = false, embedImpl = null } = {}) {
+export async function runIndex({ repo, rebuild = false, noCache = false, embedImpl = null, preflight: doPreflight = false, fetchImpl = null } = {}) {
   const cfg = loadConfig(repo);
   if (embedImpl) cfg.embedImpl = embedImpl;
+  if (fetchImpl) cfg.fetchImpl = fetchImpl;
   cfg.noCache = noCache ?? cfg.noCache ?? false;
+  // Preflight only the interactive `gtir index` path. The post-commit hook, `refresh`, and the
+  // watcher call runIndex WITHOUT preflight so a momentarily-busy daemon never hard-blocks a commit.
+  // Skip when a custom embed backend is injected (not Ollama) or the user disabled warmupOnStart.
+  if (doPreflight && cfg.warmupOnStart && !cfg.embedImpl) {
+    await preflight(cfg);
+  }
   return buildIndex(cfg, { rebuild });
 }
 
@@ -218,7 +225,7 @@ async function main() {
   try {
     switch (cmd) {
       case "index": {
-        const r = await runIndex({ repo, rebuild: !!args.rebuild, noCache: args.noCache ?? false });
+        const r = await runIndex({ repo, rebuild: !!args.rebuild, noCache: args.noCache ?? false, preflight: true });
         // Keep the regenerable index out of version control — the binary LanceDB store must never be
         // committed. `init` does this; do it on a plain `index` too (git repos only) so users who skip
         // init don't accidentally `git add` a huge .gtir/ index.
@@ -298,16 +305,18 @@ async function main() {
         if (repos.length === 0) { process.stderr.write("gtir mcp: pass at least one --repo <path>\n"); process.exit(2); }
         if (args.printConfig) { process.stdout.write(printConfig(repos, { watch: !!args.watch, debounceMs: args.debounce ?? null }) + "\n"); break; }
         const indexes = resolveIndexes(repos, args.labels ?? {});
+        const served = await preflightIndexes(indexes, { log: (m) => process.stderr.write(`gtir mcp: ${m}\n`) });
+        if (served.length === 0) { process.stderr.write("gtir mcp: no ready indexes — run: gtir doctor\n"); process.exit(1); }
         if (args.watch) {
           // Live-refresh each served index as files change (uncommitted edits). Logs to STDERR
           // only — stdout is the JSON-RPC channel. Defers during git ops via the shared gitBusy gate.
           const debounceMs = args.debounce ?? 1500;
           const sweepMs = args.sweep != null ? args.sweep * 1000 : undefined; // --sweep is seconds (0 disables)
-          const handles = startWatchers(indexes, { debounceMs, sweepMs, log: (m) => process.stderr.write(`gtir mcp: watch ${m}\n`) });
+          const handles = startWatchers(served, { debounceMs, sweepMs, log: (m) => process.stderr.write(`gtir mcp: watch ${m}\n`) });
           process.on("SIGINT", () => { Promise.all(handles.map((h) => h.close())).finally(() => process.exit(0)); }); // drop liveness locks on Ctrl+C
-          process.stderr.write(`gtir mcp: live-refresh ON (debounce ${debounceMs}ms) — watching [${indexes.map((i) => i.label).join(", ")}]\n`);
+          process.stderr.write(`gtir mcp: live-refresh ON (debounce ${debounceMs}ms) — watching [${served.map((i) => i.label).join(", ")}]\n`);
         }
-        serveStdio(indexes, { version: pkgVersion() });
+        serveStdio(served, { version: pkgVersion() });
         return; // keep the process alive on stdin; do not fall through to exit
       }
       case "eval": {
