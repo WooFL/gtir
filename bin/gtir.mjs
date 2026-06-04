@@ -5,6 +5,8 @@ import path from "node:path";
 import { loadConfig } from "../src/config.mjs";
 import { buildIndex } from "../src/indexer.mjs";
 import { search } from "../src/search.mjs";
+import { embedTexts } from "../src/embed.mjs";
+import { gridCombos, parseGridSpec, sweepWeights, rankSweep, defaultObjective, weightsKey } from "../src/sweep.mjs";
 import { openStore } from "../src/store.mjs";
 import { installHook, removeHook, gitBusy } from "../src/hook.mjs";
 import { watchRepo, watcherLive } from "../src/watch.mjs";
@@ -95,6 +97,7 @@ function parseArgs(argv) {
     else if (a === "--watch") args.watch = true;
     else if (a === "--debounce") { const v = Number(argv[++i]); if (Number.isFinite(v)) args.debounce = v; }
     else if (a === "--sweep") { const v = Number(argv[++i]); if (Number.isFinite(v)) args.sweep = v; }
+    else if (a === "--tune") { args.tune = true; const next = argv[i + 1]; if (next !== undefined && !next.startsWith("-")) { args.tuneSpec = next; i++; } }
     else if (a === "--save") args.save = true;
     else if (a === "--no-build") args.noBuild = true;
     else if (a === "--json") args.json = true;
@@ -131,6 +134,12 @@ async function runEval(args) {
   }
 
   const maxK = Math.max(1, Math.min(50, (args.k | 0) || 10));
+
+  // --tune: sweep fusion weights over the golden set and report the grid (no baseline write).
+  // Fusion is a query-time step, so the index built above serves every combo; we only re-run
+  // search()+scoring per combo. Returns its own exit code.
+  if (args.tune) return runTune({ cfg, golden, maxK, spec: args.tuneSpec });
+
   const searchFn = (q, k) => search(q, cfg, { k });
   const metrics = await evalGolden(golden, searchFn, { maxK });
   metrics.model = (await store.readMeta()).model || cfg.model;
@@ -187,6 +196,85 @@ async function runEval(args) {
     return 1;
   }
   process.stderr.write("eval: no regressions\n");
+  return 0;
+}
+
+// Memoizing embed wrapper: the golden query set is fixed across combos, so embed each unique
+// text once and replay from cache. Turns an N-combo sweep from N×(embed all queries) into
+// 1×(embed all queries) — the embed call is the only real cost; fusion is in-memory.
+function memoEmbed(cfg) {
+  const cache = new Map();
+  const real = (texts) => embedTexts(texts, cfg);
+  return async (texts) => {
+    const out = new Array(texts.length);
+    const miss = [], missIdx = [];
+    texts.forEach((t, i) => { if (cache.has(t)) out[i] = cache.get(t); else { miss.push(t); missIdx.push(i); } });
+    if (miss.length) {
+      const got = await real(miss);
+      got.forEach((v, j) => { cache.set(miss[j], v); out[missIdx[j]] = v; });
+    }
+    return out;
+  };
+}
+
+// `gtir eval --tune [spec]`: sweep RRF fusion weights over the golden set and print the grid,
+// best-first, so the per-bucket weights (ftsWeight / ftsWeightMixed / ftsWeightSymbol) become
+// data-driven instead of hand-set. Default grid sweeps the pure-NL ftsWeight (the one bucket
+// never swept); pass a spec like "ftsWeight=0,0.2;ftsWeightMixed=0,0.3" to sweep others.
+async function runTune({ cfg, golden, maxK, spec }) {
+  const axes = spec ? parseGridSpec(spec) : { ftsWeight: [0, 0.1, 0.2, 0.3, 0.5] };
+  const combos = gridCombos(axes);
+  const embedImpl = memoEmbed(cfg);                       // shared cache across every combo
+  const searchFnFor = (w) => (q, k) => search(q, { ...cfg, ...w, embedImpl }, { k });
+  const sweptKeys = Object.keys(axes);
+  const curWeights = Object.fromEntries(sweptKeys.map((k) => [k, cfg[k]]));
+
+  process.stderr.write(`eval --tune: ${combos.length} combo(s) over {${sweptKeys.join(", ")}}, n=${golden.length} queries\n`);
+  const rows = await sweepWeights(golden, combos, searchFnFor, evalGolden, {
+    maxK,
+    onProgress: (i, n, w) => process.stderr.write(`  [${i + 1}/${n}] ${weightsKey(w)} ...\n`),
+  });
+
+  const ranked = rankSweep(rows, defaultObjective);
+  const tiers = [...new Set(golden.map((g) => g.tier || "gate"))];
+  const tierOrder = ["gate", "hard", "symbol", "mixed"].filter((t) => tiers.includes(t))
+    .concat(tiers.filter((t) => !["gate", "hard", "symbol", "mixed"].includes(t)));
+
+  const sameWeights = (w) => sweptKeys.every((k) => (w[k] ?? cfg[k]) === curWeights[k]);
+  const head = ["", "combo".padEnd(28), "mrr", "R@1", "R@5", ...tierOrder.map((t) => `${t.slice(0, 4)}@1`)];
+  const fmt = (x) => (x === null || x === undefined ? " n/a " : x.toFixed(3));
+  const out = [head.join("  ")];
+  for (const r of ranked) {
+    const m = r.metrics, bt = m.byTier || {};
+    const mark = sameWeights(r.weights) ? "*" : (r === ranked[0] ? "→" : " ");
+    out.push([
+      mark,
+      weightsKey(r.weights).padEnd(28),
+      fmt(m.mrr), fmt(m.recall?.[1]), fmt(m.recall?.[5]),
+      ...tierOrder.map((t) => fmt(bt[t]?.recall?.[1])),
+    ].join("  "));
+  }
+  process.stderr.write(out.join("\n") + "\n");
+  process.stderr.write("  legend: → best by objective (mrr, then R@1, R@5)   * current config\n");
+
+  const best = ranked[0];
+  const cur = rows.find((r) => sameWeights(r.weights));
+  if (cur && best !== cur) {
+    const dM = (best.metrics.mrr - cur.metrics.mrr);
+    const dR = ((best.metrics.recall?.[1] ?? 0) - (cur.metrics.recall?.[1] ?? 0));
+    const gateCur = cur.metrics.byTier?.gate?.recall?.[1];
+    const gateBest = best.metrics.byTier?.gate?.recall?.[1];
+    const gateNote = (gateCur != null && gateBest != null && gateBest < gateCur - 0.005)
+      ? `  ⚠ gate R@1 regresses ${gateCur.toFixed(3)}→${gateBest.toFixed(3)} (gate is the CI gating tier)` : "";
+    process.stderr.write(
+      `eval --tune: best ${weightsKey(best.weights)} vs current ${weightsKey(cur.weights)}: `
+      + `mrr ${dM >= 0 ? "+" : ""}${dM.toFixed(4)}, R@1 ${dR >= 0 ? "+" : ""}${dR.toFixed(4)}.${gateNote}\n`
+      + (Math.abs(dM) <= 0.005 && Math.abs(dR) <= 0.005
+        ? "  → within noise; keep current weights.\n"
+        : `  → set in .gtir/config.json: ${sweptKeys.map((k) => `"${k}": ${best.weights[k]}`).join(", ")}\n`));
+  } else {
+    process.stderr.write("eval --tune: current weights are already the grid best.\n");
+  }
   return 0;
 }
 
@@ -354,6 +442,7 @@ async function main() {
           "  gtir fetch-grammars   # download prebuilt shader grammars (HLSL/GLSL, ~5MB, no toolchain)",
           "  gtir mcp     --repo <project> [--label name:<repo>] [--watch [--debounce 1500]] [--print-config]",
           "  gtir eval    --repo <project> [--golden <f>] [-k 10] [--save] [--no-build] [--json]",
+          "  gtir eval    --repo <project> --tune [\"ftsWeight=0,0.2;ftsWeightMixed=0,0.3\"]   # sweep fusion weights on the golden set",
         ].join("\n") + "\n");
         process.exit(cmd ? 1 : 0);
     }

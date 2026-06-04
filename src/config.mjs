@@ -39,9 +39,9 @@ export const DEFAULTS = {
   // Query-adaptive RRF fusion weights for the BM25 branch (relative to the vector branch = 1).
   // Conceptual/natural-language queries let the embedder lead (ftsWeight, low); single bare-identifier
   // queries (exact-symbol lookups) let BM25 lead (ftsWeightSymbol, ~classic RRF). See isSymbolQuery.
-  ftsWeight: 0,                           // conceptual queries: vector-led (0 = vector-only)
+  ftsWeight: 0,                           // conceptual queries: vector-led (0 = vector-only). Swept on qwen3-embedding:0.6b (`gtir eval --tune`): any BM25 weight monotonically hurts — hard-tier R@1 0.879→0.727 at 0.3. 0 is optimal.
   ftsWeightSymbol: 1,                     // bare-identifier queries: classic equal-weight RRF (BM25 leads)
-  ftsWeightMixed: 0.3,                    // NL query that NAMES a symbol (camelCase/snake/etc.): lexical boost weight. Measured: mixed-tier R@1 0.90→1.00, zero regression on gate/hard/symbol; saturates at 0.3
+  ftsWeightMixed: 1,                      // NL query that NAMES a symbol (camelCase/snake/etc.): treat like the symbol bucket — equal-weight RRF. Swept on qwen3-embedding:0.6b: 0.1–0.5 are INERT (mixed R@1 stuck at 0.90, identical to off); only full weight 1 flips the symbol-naming query (mixed R@1 0.90→1.00, overall R@1 +0.009, zero regression on gate/hard/symbol). The old "saturates at 0.3" tuning was for the jina-code model; re-tune with `gtir eval --tune "ftsWeightMixed=0,0.3,0.5,1"` after any model change.
 
   version: 1,
   skipDirs: [
