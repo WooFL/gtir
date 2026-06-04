@@ -383,6 +383,7 @@ export function defaultFindFn(indexes) {
 // are kept as-is — the embed retry layer covers them at query time.
 export async function preflightIndexes(indexes, { log = () => {} } = {}) {
   const healthy = [];
+  // Serial, not Promise.all: avoids a thundering-herd of probes on a cold Ollama daemon at startup.
   for (const ix of indexes) {
     if (!ix.cfg.warmupOnStart || ix.cfg.embedImpl) { healthy.push(ix); continue; }
     try { await preflight(ix.cfg); healthy.push(ix); }

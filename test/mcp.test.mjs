@@ -315,3 +315,11 @@ test("preflightIndexes skips the probe when warmupOnStart is false (keeps the in
   const healthy = await preflightIndexes(indexes, { log: () => {} });
   assert.deepEqual(healthy.map((i) => i.label), ["lazy"], "no preflight ⇒ index kept, retry layer covers it");
 });
+
+test("preflightIndexes skips the probe when a custom embedImpl is injected (keeps the index)", async () => {
+  const indexes = [
+    { label: "custom", repo: "/c", cfg: { model: "m", ollamaUrl: "http://x", warmupOnStart: true, embedImpl: () => [[1, 0, 0]], fetchImpl: async () => { throw new Error("ECONNREFUSED"); } } },
+  ];
+  const healthy = await preflightIndexes(indexes, { log: () => {} });
+  assert.deepEqual(healthy.map((i) => i.label), ["custom"], "embedImpl set ⇒ no Ollama probe, index kept");
+});
