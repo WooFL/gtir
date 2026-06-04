@@ -176,9 +176,11 @@ test("integration: index build survives a dropped first /api/embed (retry layer)
   writeFileSync(join(repo, ".gtir", "config.json"), JSON.stringify({ ollamaUrl: url, model: "m", embedRetryBackoffMs: 0 }));
 
   const cfg = loadConfig(repo);
-  const out = await buildIndex(cfg, { rebuild: true });
-  assert.ok(embedHits >= 2, `first embed dropped, retry succeeded (embedHits=${embedHits})`);
-  assert.ok(out, "index built despite the dropped request");
-
-  await new Promise((r) => srv.close(r));
+  try {
+    const out = await buildIndex(cfg, { rebuild: true });
+    assert.ok(embedHits >= 2, "first embed dropped, retry succeeded");
+    assert.ok(out?.chunks >= 1, "index built (>=1 chunk) despite the dropped request");
+  } finally {
+    await new Promise((r) => srv.close(r));
+  }
 });
