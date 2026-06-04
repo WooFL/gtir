@@ -71,6 +71,13 @@ export async function embedTexts(texts, cfg) {
   return out;
 }
 
+// Force the model to load before real work so the first real batch doesn't eat the cold-reload
+// latency. Best-effort: never throws — preflight already reports hard-down / missing-model.
+export async function warmup(cfg) {
+  try { await embedTexts(["warmup"], cfg); return true; }
+  catch { return false; }
+}
+
 export async function probeDim(cfg) {
   const [v] = await embedTexts(["ping"], cfg);
   return v.length;

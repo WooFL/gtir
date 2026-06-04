@@ -104,3 +104,24 @@ test("embedBatch does NOT retry a malformed response", async () => {
   await assert.rejects(() => embedTexts(["a"], cfg), /no embeddings array/);
   assert.equal(calls, 1, "bad shape is fatal — no retry");
 });
+
+import { warmup } from "../src/embed.mjs";
+
+test("warmup returns true when the embed succeeds", async () => {
+  let seen = null;
+  const cfg = {
+    model: "m", ollamaUrl: "http://x", embedBatch: 32,
+    fetchImpl: async (_u, opts) => { seen = JSON.parse(opts.body).input; return { ok: true, json: async () => ({ embeddings: [[1, 0, 0]] }) }; },
+  };
+  assert.equal(await warmup(cfg), true);
+  assert.deepEqual(seen, ["warmup"], "warmup embeds the single token 'warmup'");
+});
+
+test("warmup swallows failure and returns false", async () => {
+  const cfg = {
+    model: "m", ollamaUrl: "http://x", embedBatch: 32,
+    embedRetries: 0, embedRetryBackoffMs: 0,
+    fetchImpl: async () => ({ ok: false, status: 400, text: async () => "nope" }),
+  };
+  assert.equal(await warmup(cfg), false);
+});
