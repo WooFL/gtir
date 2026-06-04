@@ -236,44 +236,49 @@ async function runTune({ cfg, golden, maxK, spec }) {
   });
 
   const ranked = rankSweep(rows, defaultObjective);
+  const KNOWN_TIERS = ["gate", "hard", "symbol", "mixed"];   // preferred display order; unknown tiers appended
   const tiers = [...new Set(golden.map((g) => g.tier || "gate"))];
-  const tierOrder = ["gate", "hard", "symbol", "mixed"].filter((t) => tiers.includes(t))
-    .concat(tiers.filter((t) => !["gate", "hard", "symbol", "mixed"].includes(t)));
+  const tierOrder = KNOWN_TIERS.filter((t) => tiers.includes(t))
+    .concat(tiers.filter((t) => !KNOWN_TIERS.includes(t)));
 
-  const sameWeights = (w) => sweptKeys.every((k) => (w[k] ?? cfg[k]) === curWeights[k]);
-  const head = ["", "combo".padEnd(28), "mrr", "R@1", "R@5", ...tierOrder.map((t) => `${t.slice(0, 4)}@1`)];
-  const fmt = (x) => (x === null || x === undefined ? " n/a " : x.toFixed(3));
-  const out = [head.join("  ")];
+  // A combo carries every swept axis (gridCombos fills them all), so "is this the current config?"
+  // is a plain per-axis equality against cfg.
+  const isCurrent = (w) => sweptKeys.every((k) => w[k] === cfg[k]);
+  const cell = (s) => String(s).padStart(7);
+  const fmt = (x) => cell(x == null ? "n/a" : x.toFixed(3));
+  const cols = ["mrr", "R@1", "R@5", ...tierOrder.map((t) => `${t.slice(0, 4)}@1`)];
+  const out = [`  ${"combo".padEnd(32)}${cols.map(cell).join("")}`];
   for (const r of ranked) {
     const m = r.metrics, bt = m.byTier || {};
-    const mark = sameWeights(r.weights) ? "*" : (r === ranked[0] ? "→" : " ");
-    out.push([
-      mark,
-      weightsKey(r.weights).padEnd(28),
-      fmt(m.mrr), fmt(m.recall?.[1]), fmt(m.recall?.[5]),
-      ...tierOrder.map((t) => fmt(bt[t]?.recall?.[1])),
-    ].join("  "));
+    const mark = isCurrent(r.weights) ? "*" : (r === ranked[0] ? "→" : " ");
+    const vals = [m.mrr, m.recall?.[1], m.recall?.[5], ...tierOrder.map((t) => bt[t]?.recall?.[1])];
+    out.push(`${mark} ${weightsKey(r.weights).padEnd(32)}${vals.map(fmt).join("")}`);
   }
   process.stderr.write(out.join("\n") + "\n");
   process.stderr.write("  legend: → best by objective (mrr, then R@1, R@5)   * current config\n");
 
   const best = ranked[0];
-  const cur = rows.find((r) => sameWeights(r.weights));
-  if (cur && best !== cur) {
-    const dM = (best.metrics.mrr - cur.metrics.mrr);
-    const dR = ((best.metrics.recall?.[1] ?? 0) - (cur.metrics.recall?.[1] ?? 0));
+  const cur = rows.find((r) => isCurrent(r.weights));
+  const recLine = `  → set in .gtir/config.json: ${sweptKeys.map((k) => `"${k}": ${best.weights[k]}`).join(", ")}\n`;
+  if (!cur) {
+    // Current config falls outside the swept grid (e.g. a range that skips the live value), so there's
+    // no in-grid row to diff against — just point at the grid winner.
+    process.stderr.write(`eval --tune: current ${weightsKey(curWeights)} is outside the swept grid; grid best is ${weightsKey(best.weights)}.\n${recLine}`);
+  } else if (best === cur) {
+    process.stderr.write("eval --tune: current weights are already the grid best.\n");
+  } else {
+    const dM = best.metrics.mrr - cur.metrics.mrr;
+    const dR = (best.metrics.recall?.[1] ?? 0) - (cur.metrics.recall?.[1] ?? 0);
     const gateCur = cur.metrics.byTier?.gate?.recall?.[1];
     const gateBest = best.metrics.byTier?.gate?.recall?.[1];
     const gateNote = (gateCur != null && gateBest != null && gateBest < gateCur - 0.005)
       ? `  ⚠ gate R@1 regresses ${gateCur.toFixed(3)}→${gateBest.toFixed(3)} (gate is the CI gating tier)` : "";
+    const sign = (d) => (d >= 0 ? "+" : "") + d.toFixed(4);
     process.stderr.write(
       `eval --tune: best ${weightsKey(best.weights)} vs current ${weightsKey(cur.weights)}: `
-      + `mrr ${dM >= 0 ? "+" : ""}${dM.toFixed(4)}, R@1 ${dR >= 0 ? "+" : ""}${dR.toFixed(4)}.${gateNote}\n`
+      + `mrr ${sign(dM)}, R@1 ${sign(dR)}.${gateNote}\n`
       + (Math.abs(dM) <= 0.005 && Math.abs(dR) <= 0.005
-        ? "  → within noise; keep current weights.\n"
-        : `  → set in .gtir/config.json: ${sweptKeys.map((k) => `"${k}": ${best.weights[k]}`).join(", ")}\n`));
-  } else {
-    process.stderr.write("eval --tune: current weights are already the grid best.\n");
+        ? "  → within noise; keep current weights.\n" : recLine));
   }
   return 0;
 }
