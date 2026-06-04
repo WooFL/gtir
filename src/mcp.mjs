@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { loadConfig } from "./config.mjs";
 import { search } from "./search.mjs";
 import { openStore } from "./store.mjs";
+import { preflight } from "./doctor.mjs";
 import { parseLines } from "./eval.mjs";
 import { watchRepo } from "./watch.mjs";
 
@@ -373,6 +374,21 @@ export function defaultFindFn(indexes) {
       kind: isDef(r) ? "definition" : "reference", snippet: r.text,
     }));
   };
+}
+
+// Gate each served index on a readiness probe before serving. A broken/unready index is dropped
+// with a logged note (stderr) — the healthy ones still serve, matching defaultStatusFn's per-index
+// tolerance. The server must not refuse to start because one index's daemon/model is unready.
+// Indexes whose cfg disables warmupOnStart (or injects a non-Ollama backend) skip the probe and
+// are kept as-is — the embed retry layer covers them at query time.
+export async function preflightIndexes(indexes, { log = () => {} } = {}) {
+  const healthy = [];
+  for (const ix of indexes) {
+    if (!ix.cfg.warmupOnStart || ix.cfg.embedImpl) { healthy.push(ix); continue; }
+    try { await preflight(ix.cfg); healthy.push(ix); }
+    catch (e) { log(`index '${ix.label}' not ready — skipping (${String(e.message).split("\n").pop()})`); }
+  }
+  return healthy;
 }
 
 export function serveStdio(indexes, { version } = {}) {

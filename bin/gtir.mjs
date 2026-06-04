@@ -10,7 +10,7 @@ import { installHook, removeHook, gitBusy } from "../src/hook.mjs";
 import { watchRepo, watcherLive } from "../src/watch.mjs";
 import { probeDim } from "../src/embed.mjs";
 import { runInit, ensureGitignore } from "../src/init.mjs";
-import { resolveIndexes, serveStdio, printConfig, startWatchers } from "../src/mcp.mjs";
+import { resolveIndexes, serveStdio, printConfig, startWatchers, preflightIndexes } from "../src/mcp.mjs";
 import { evalGolden, flattenMetrics, compareBaseline, compareTiers } from "../src/eval.mjs";
 import { runDemo, formatDemo } from "../src/demo.mjs";
 import { runDoctor, preflight } from "../src/doctor.mjs";
@@ -305,16 +305,18 @@ async function main() {
         if (repos.length === 0) { process.stderr.write("gtir mcp: pass at least one --repo <path>\n"); process.exit(2); }
         if (args.printConfig) { process.stdout.write(printConfig(repos, { watch: !!args.watch, debounceMs: args.debounce ?? null }) + "\n"); break; }
         const indexes = resolveIndexes(repos, args.labels ?? {});
+        const served = await preflightIndexes(indexes, { log: (m) => process.stderr.write(`gtir mcp: ${m}\n`) });
+        if (served.length === 0) { process.stderr.write("gtir mcp: no ready indexes — run: gtir doctor\n"); process.exit(1); }
         if (args.watch) {
           // Live-refresh each served index as files change (uncommitted edits). Logs to STDERR
           // only — stdout is the JSON-RPC channel. Defers during git ops via the shared gitBusy gate.
           const debounceMs = args.debounce ?? 1500;
           const sweepMs = args.sweep != null ? args.sweep * 1000 : undefined; // --sweep is seconds (0 disables)
-          const handles = startWatchers(indexes, { debounceMs, sweepMs, log: (m) => process.stderr.write(`gtir mcp: watch ${m}\n`) });
+          const handles = startWatchers(served, { debounceMs, sweepMs, log: (m) => process.stderr.write(`gtir mcp: watch ${m}\n`) });
           process.on("SIGINT", () => { Promise.all(handles.map((h) => h.close())).finally(() => process.exit(0)); }); // drop liveness locks on Ctrl+C
-          process.stderr.write(`gtir mcp: live-refresh ON (debounce ${debounceMs}ms) — watching [${indexes.map((i) => i.label).join(", ")}]\n`);
+          process.stderr.write(`gtir mcp: live-refresh ON (debounce ${debounceMs}ms) — watching [${served.map((i) => i.label).join(", ")}]\n`);
         }
-        serveStdio(indexes, { version: pkgVersion() });
+        serveStdio(served, { version: pkgVersion() });
         return; // keep the process alive on stdin; do not fall through to exit
       }
       case "eval": {

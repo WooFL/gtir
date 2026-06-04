@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { sanitizeLabel, deriveLabel, resolveIndexes, defaultStatusFn } from "../src/mcp.mjs";
+import { sanitizeLabel, deriveLabel, resolveIndexes, defaultStatusFn, preflightIndexes } from "../src/mcp.mjs";
 import { loadConfig } from "../src/config.mjs";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -285,4 +285,33 @@ test("defaultReadFn slices a span with context and blocks path traversal", async
   assert.equal(out.lines, "1-4");                 // 2-3 padded by 1 each side, clamped to file
   assert.equal(out.text, "L1\nL2\nL3\nL4");
   await assert.rejects(read("code", { path: "../escape", lines: "1" }), /escapes the repo/);
+});
+
+function okFetch(model) {
+  return async (url, opts) => {
+    if (url.endsWith("/api/version")) return { ok: true, json: async () => ({ version: "0.5.0" }) };
+    if (url.endsWith("/api/tags")) return { ok: true, json: async () => ({ models: [{ name: model }] }) };
+    if (url.endsWith("/api/show")) return { ok: true, json: async () => ({ capabilities: ["embedding"] }) };
+    if (url.endsWith("/api/embed")) return { ok: true, json: async () => ({ embeddings: JSON.parse(opts.body).input.map(() => [1, 0, 0]) }) };
+    return { ok: false, status: 404, text: async () => "nf" };
+  };
+}
+
+test("preflightIndexes keeps healthy indexes and drops unready ones", async () => {
+  const dropped = [];
+  const indexes = [
+    { label: "good", repo: "/g", cfg: { model: "m", ollamaUrl: "http://x", warmupOnStart: true, fetchImpl: okFetch("m") } },
+    { label: "bad",  repo: "/b", cfg: { model: "m", ollamaUrl: "http://x", warmupOnStart: true, fetchImpl: async () => { throw new Error("ECONNREFUSED"); } } },
+  ];
+  const healthy = await preflightIndexes(indexes, { log: (m) => dropped.push(m) });
+  assert.deepEqual(healthy.map((i) => i.label), ["good"]);
+  assert.ok(dropped.some((m) => /bad/.test(m)), "dropped index is logged");
+});
+
+test("preflightIndexes skips the probe when warmupOnStart is false (keeps the index)", async () => {
+  const indexes = [
+    { label: "lazy", repo: "/l", cfg: { model: "m", ollamaUrl: "http://x", warmupOnStart: false, fetchImpl: async () => { throw new Error("ECONNREFUSED"); } } },
+  ];
+  const healthy = await preflightIndexes(indexes, { log: () => {} });
+  assert.deepEqual(healthy.map((i) => i.label), ["lazy"], "no preflight ⇒ index kept, retry layer covers it");
 });
