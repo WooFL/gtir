@@ -7,23 +7,55 @@ export function l2normalize(v) {
   return v.map((x) => x / n);
 }
 
-async function embedBatch(texts, cfg) {
+function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+// One /api/embed call, time-boxed. Tags thrown errors with `.retryable` so embedBatch
+// knows whether to back off and try again (timeout / network / 5xx) or give up (4xx / bad shape).
+async function embedOnce(texts, cfg, timeoutMs) {
   const fetchImpl = cfg.fetchImpl ?? fetch;
-  const res = await fetchImpl(`${cfg.ollamaUrl}/api/embed`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ model: cfg.model, input: texts.map((t) => t.slice(0, cfg.maxEmbedChars ?? 6000)) }),
-  });
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
+  let res;
+  try {
+    res = await fetchImpl(`${cfg.ollamaUrl}/api/embed`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: cfg.model, input: texts.map((t) => t.slice(0, cfg.maxEmbedChars ?? 6000)) }),
+      signal: ac.signal,
+    });
+  } catch (err) {
+    err.retryable = true;   // AbortError (timeout) or network failure
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
   if (!res.ok) {
     const detail = (await res.text?.().catch(() => "")) || res.status;
-    throw new Error(`Ollama embed failed (${detail}). Is Ollama running and the model pulled? Run: gtir doctor`);
+    const e = new Error(`Ollama embed failed (${detail}). Is Ollama running and the model pulled? Run: gtir doctor`);
+    e.retryable = res.status >= 500;   // 5xx transient; 4xx fatal (capability error etc.)
+    throw e;
   }
   const data = await res.json();
-  if (!data.embeddings) throw new Error("Ollama returned no embeddings array");
+  if (!data.embeddings) { const e = new Error("Ollama returned no embeddings array"); e.retryable = false; throw e; }
   if (data.embeddings.length !== texts.length) {
-    throw new Error(`Ollama returned ${data.embeddings.length} embeddings for ${texts.length} inputs`);
+    const e = new Error(`Ollama returned ${data.embeddings.length} embeddings for ${texts.length} inputs`);
+    e.retryable = false; throw e;
   }
   return data.embeddings.map(l2normalize);
+}
+
+async function embedBatch(texts, cfg) {
+  const timeoutMs = cfg.embedTimeoutMs ?? 60000;
+  const retries   = cfg.embedRetries ?? 2;
+  const backoff   = cfg.embedRetryBackoffMs ?? 500;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await embedOnce(texts, cfg, timeoutMs);
+    } catch (e) {
+      if (!e.retryable || attempt >= retries) throw e;
+      await sleep(backoff * 2 ** attempt);
+    }
+  }
 }
 
 export async function embedTexts(texts, cfg) {

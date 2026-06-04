@@ -45,3 +45,62 @@ test("contentHash: stable sha256 hex; differs by input", () => {
   assert.equal(contentHash("hello world"), a);      // deterministic
   assert.notEqual(contentHash("hello world!"), a);  // input-sensitive
 });
+
+// fetch that hangs until the AbortController fires, then rejects like the platform does.
+function hangingFetch(onCall = () => {}) {
+  return (_url, opts) => new Promise((_resolve, reject) => {
+    onCall();
+    opts.signal.addEventListener("abort", () => {
+      const e = new Error("The operation was aborted"); e.name = "AbortError"; reject(e);
+    });
+  });
+}
+
+test("embedBatch retries on timeout then throws after exhausting retries", async () => {
+  let calls = 0;
+  const cfg = {
+    model: "m", ollamaUrl: "http://x", embedBatch: 32,
+    embedTimeoutMs: 20, embedRetries: 2, embedRetryBackoffMs: 0,
+    fetchImpl: hangingFetch(() => { calls++; }),
+  };
+  await assert.rejects(() => embedTexts(["a"], cfg), /abort/i);
+  assert.equal(calls, 3, "1 initial attempt + 2 retries");
+});
+
+test("embedBatch recovers after retryable 503s", async () => {
+  let calls = 0;
+  const cfg = {
+    model: "m", ollamaUrl: "http://x", embedBatch: 32,
+    embedTimeoutMs: 1000, embedRetries: 2, embedRetryBackoffMs: 0,
+    fetchImpl: async () => {
+      calls++;
+      if (calls <= 2) return { ok: false, status: 503, text: async () => "loading model" };
+      return { ok: true, json: async () => ({ embeddings: [[1, 0, 0]] }) };
+    },
+  };
+  const vecs = await embedTexts(["a"], cfg);
+  assert.equal(calls, 3, "succeeds on the 3rd call");
+  assert.equal(vecs.length, 1);
+});
+
+test("embedBatch does NOT retry a fatal 4xx", async () => {
+  let calls = 0;
+  const cfg = {
+    model: "m", ollamaUrl: "http://x", embedBatch: 32,
+    embedTimeoutMs: 1000, embedRetries: 2, embedRetryBackoffMs: 0,
+    fetchImpl: async () => { calls++; return { ok: false, status: 400, text: async () => "does not support embeddings" }; },
+  };
+  await assert.rejects(() => embedTexts(["a"], cfg), /embed failed/);
+  assert.equal(calls, 1, "4xx is fatal — no retry");
+});
+
+test("embedBatch does NOT retry a malformed response", async () => {
+  let calls = 0;
+  const cfg = {
+    model: "m", ollamaUrl: "http://x", embedBatch: 32,
+    embedTimeoutMs: 1000, embedRetries: 2, embedRetryBackoffMs: 0,
+    fetchImpl: async () => { calls++; return { ok: true, json: async () => ({}) }; },
+  };
+  await assert.rejects(() => embedTexts(["a"], cfg), /no embeddings array/);
+  assert.equal(calls, 1, "bad shape is fatal — no retry");
+});
