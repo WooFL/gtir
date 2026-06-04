@@ -82,3 +82,52 @@ test("runDoctor: Ollama down → not ready, never checks the model", async () =>
   assert.equal(r.ready, false);
   assert.ok(!impl.calls.some((u) => u.endsWith("/api/tags")));
 });
+
+import { preflight } from "../src/doctor.mjs";
+
+// Mock Ollama: version ok, tags lists the model, show says embedding-capable, embed returns a 3-vec.
+function okOllama(model) {
+  return async (url, opts) => {
+    if (url.endsWith("/api/version")) return { ok: true, json: async () => ({ version: "0.5.0" }) };
+    if (url.endsWith("/api/tags")) return { ok: true, json: async () => ({ models: [{ name: model }] }) };
+    if (url.endsWith("/api/show")) return { ok: true, json: async () => ({ capabilities: ["embedding"] }) };
+    if (url.endsWith("/api/embed")) return { ok: true, json: async () => ({ embeddings: JSON.parse(opts.body).input.map(() => [1, 0, 0]) }) };
+    return { ok: false, status: 404, text: async () => "nf" };
+  };
+}
+
+test("preflight resolves with a dim when Ollama is ready", async () => {
+  const cfg = { model: "m", ollamaUrl: "http://x", fetchImpl: okOllama("m") };
+  const out = await preflight(cfg);
+  assert.equal(out.dim, 3);
+});
+
+test("preflight throws an actionable error when Ollama is unreachable", async () => {
+  const cfg = { model: "m", ollamaUrl: "http://x", fetchImpl: async () => { throw new Error("ECONNREFUSED"); } };
+  await assert.rejects(() => preflight(cfg), /gtir doctor/);
+});
+
+test("preflight throws when the model is missing", async () => {
+  const cfg = {
+    model: "absent", ollamaUrl: "http://x",
+    fetchImpl: async (url) => {
+      if (url.endsWith("/api/version")) return { ok: true, json: async () => ({ version: "0.5.0" }) };
+      if (url.endsWith("/api/tags")) return { ok: true, json: async () => ({ models: [{ name: "other" }] }) };
+      return { ok: false, status: 404, text: async () => "nf" };
+    },
+  };
+  await assert.rejects(() => preflight(cfg), /gtir doctor/);
+});
+
+import { runIndex } from "../bin/gtir.mjs";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+test("runIndex with preflight:true throws before walking when Ollama is unreachable", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-preflight-"));
+  await assert.rejects(
+    () => runIndex({ repo, preflight: true, fetchImpl: async () => { throw new Error("ECONNREFUSED"); } }),
+    /gtir doctor/,
+  );
+});

@@ -121,6 +121,11 @@ test("integration: index converges after a real rebase — the catch-up refresh 
 test("integration: `gtir index` CLI gitignores .gtir/ in a git repo (audit fix, end-to-end)", { skip: hasGit() ? false : "git not installed" }, async () => {
   const repo = repoWith({ "a.ts": FN("alpha", "alpha helper words here") });
   execFileSync("git", ["init", "-q"], { cwd: repo });   // git needs no mock; brief sync block is fine
+  // Write a .gtir/config.json so the CLI subprocess uses the same model name the mock Ollama serves.
+  // Required now that `gtir index` runs a preflight check (model-present gate).
+  const { mkdirSync } = await import("node:fs");
+  mkdirSync(join(repo, ".gtir"), { recursive: true });
+  writeFileSync(join(repo, ".gtir", "config.json"), JSON.stringify({ model: MODEL }));
   const bin = join(dirname(fileURLToPath(import.meta.url)), "..", "bin", "gtir.mjs");
   // ASYNC spawn — execFileSync would block this process's event loop and the in-process mock Ollama
   // could never answer the child's /api/embed, deadlocking the run.

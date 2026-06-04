@@ -13,7 +13,7 @@ import { runInit, ensureGitignore } from "../src/init.mjs";
 import { resolveIndexes, serveStdio, printConfig, startWatchers } from "../src/mcp.mjs";
 import { evalGolden, flattenMetrics, compareBaseline, compareTiers } from "../src/eval.mjs";
 import { runDemo, formatDemo } from "../src/demo.mjs";
-import { runDoctor } from "../src/doctor.mjs";
+import { runDoctor, preflight } from "../src/doctor.mjs";
 import { fetchGrammars } from "../src/fetch-grammars.mjs";
 
 // --- programmatic entrypoints (used by tests and the dispatcher) ---
@@ -23,10 +23,17 @@ function pkgVersion() {
   catch { return "0.0.0"; }
 }
 
-export async function runIndex({ repo, rebuild = false, noCache = false, embedImpl = null } = {}) {
+export async function runIndex({ repo, rebuild = false, noCache = false, embedImpl = null, preflight: doPreflight = false, fetchImpl = null } = {}) {
   const cfg = loadConfig(repo);
   if (embedImpl) cfg.embedImpl = embedImpl;
+  if (fetchImpl) cfg.fetchImpl = fetchImpl;
   cfg.noCache = noCache ?? cfg.noCache ?? false;
+  // Preflight only the interactive `gtir index` path. The post-commit hook, `refresh`, and the
+  // watcher call runIndex WITHOUT preflight so a momentarily-busy daemon never hard-blocks a commit.
+  // Skip when a custom embed backend is injected (not Ollama) or the user disabled warmupOnStart.
+  if (doPreflight && cfg.warmupOnStart && !cfg.embedImpl) {
+    await preflight(cfg);
+  }
   return buildIndex(cfg, { rebuild });
 }
 
@@ -218,7 +225,7 @@ async function main() {
   try {
     switch (cmd) {
       case "index": {
-        const r = await runIndex({ repo, rebuild: !!args.rebuild, noCache: args.noCache ?? false });
+        const r = await runIndex({ repo, rebuild: !!args.rebuild, noCache: args.noCache ?? false, preflight: true });
         // Keep the regenerable index out of version control — the binary LanceDB store must never be
         // committed. `init` does this; do it on a plain `index` too (git repos only) so users who skip
         // init don't accidentally `git add` a huge .gtir/ index.
