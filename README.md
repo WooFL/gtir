@@ -87,10 +87,9 @@ knobs sharpen the ranking, all overridable per-repo in `.gtir/config.json`:
 
 - **Field-weighted BM25** (`bm25Boost`) — indexes the path / scope / declaration ahead of the body, so
   a symbol match beats an incidental mention in a comment.
-- **Query-adaptive fusion** (`ftsWeight` / `ftsWeightSymbol`) — a bare identifier lets BM25 lead; a
-  natural-language question lets the embedder lead.
-- **Identifier boost** (`ftsWeightMixed`) — a natural-language query that *names* a symbol
-  (`fetchWithRetry`) gets a lexical nudge.
+- **Query-adaptive fusion** (`ftsWeight` / `ftsWeightSymbol` / `ftsWeightMixed`) — three buckets: a
+  bare identifier lets BM25 lead, a plain-English question lets the embedder lead, and a question that
+  *names* a symbol (`fetchWithRetry`) is fused with full lexical weight so the exact token still counts.
 - **Test-file demotion** (`testPenalty`) — a query for an implementation won't return its test file at
   #1 (unless you're actually asking about tests).
 - **Scope breadcrumb** (`contextScope`) — prepends the enclosing class/module to each chunk, so a
@@ -98,6 +97,9 @@ knobs sharpen the ranking, all overridable per-repo in `.gtir/config.json`:
 
 Each knob is in the tree because it improved the eval numbers (below). A cross-encoder reranker, a
 structural-centrality prior, and a bigger embedding model were tried and dropped because they didn't.
+The fusion weights aren't hand-guessed either — `gtir eval --tune` sweeps them on the golden set and
+reports the grid, and they're re-tuned per embedding model (a weight that's right for one model can be
+inert on another — switching the default off the old jina embedder is exactly what flushed one out).
 
 ### Supported languages
 
@@ -238,6 +240,7 @@ gtir fetch-grammars                                    # download prebuilt HLSL/
 gtir doctor  [--repo <project>] [--no-pull]            # check Ollama + model, pull if missing
 gtir mcp     --repo <project> [--label name:<repo>] [--watch] [--print-config]   # run the MCP server
 gtir eval    --repo <corpus> --golden <f> [--save] [--json]            # score retrieval quality
+gtir eval    --repo <corpus> --tune ["ftsWeight=0,0.2;ftsWeightMixed=0,1"]   # sweep fusion weights on the golden set
 ```
 
 `search` prints JSON to stdout; everything human-readable goes to stderr. The index lives in
@@ -373,15 +376,15 @@ npm run eval              # score the golden set against the bundled corpus, com
 npm run eval -- --save    # set the current metrics as the new baseline
 ```
 
-It runs a hand-written golden query set (`eval/golden.json`, 103 queries) against a fixture corpus
+It runs a hand-written golden query set (`eval/golden.json`, 110 queries) against a fixture corpus
 (`eval/corpus/`), reports **Recall@{1,5,10}**, **MRR**, and **Sec-hit@{1,5}**, compares to
 `eval/baseline.json`, and **exits non-zero if the overall or `gate` metrics regressed** — so it works
 in CI.
 
 The golden queries are split into tiers:
 
-- **gate** (51) — near-saturated queries; the strict regression floor.
-- **hard** (30) — realistic decoys (near-duplicate implementations, test/doc shadows, ambiguous method
+- **gate** (55) — near-saturated queries; the strict regression floor.
+- **hard** (33) — realistic decoys (near-duplicate implementations, test/doc shadows, ambiguous method
   names). This is the improvement *meter*, not a gate — it's small enough that one query flipping rank
   between runs moves it ~0.03, and Ollama's inference isn't bit-exact, so gating on it would flake.
   It's reported with deltas instead.
@@ -392,6 +395,19 @@ The harness is corpus-agnostic: point `--repo` at any index and pass `--golden <
 own set. Keep golden/baseline JSON outside the indexed tree so they don't get indexed as corpus content.
 `npm run eval` wraps `gtir eval --repo eval/corpus --golden eval/golden.json --baseline eval/baseline.json`;
 add `--json` to emit metrics to stdout, `--no-build` to skip the pre-run refresh.
+
+**Tuning fusion weights — `gtir eval --tune`.** The same golden set doubles as a tuning harness. Fusion
+is a query-time step, so one index build serves every combo and query embeddings are cached across them —
+an N-combo sweep costs one pass of embedding:
+
+```bash
+gtir eval --repo eval/corpus --tune --no-build                          # sweep the default grid (pure-NL ftsWeight)
+gtir eval --repo eval/corpus --tune "ftsWeightMixed=0,0.3,0.5,1" --no-build   # sweep a specific axis
+```
+
+It prints the grid best-first by (MRR, R@1, R@5) with per-tier R@1, marks your current config, and
+recommends a `.gtir/config.json` line — so the weights are data-driven, not eyeballed. Re-run it after
+any embedding-model change: the weight that was right for one model can be inert on the next.
 
 ## 🥇 Reranking (optional)
 
@@ -412,10 +428,10 @@ unreachable, gtir falls back to hybrid order with a stderr note — a search nev
 reranker is down.
 
 One thing worth knowing before you bother: on gtir's bundled corpus, reranking didn't help. Both
-`bge-reranker-v2-m3` and `jina-reranker-v2` scored slightly *below* the plain hybrid order (hard-tier
-Recall@1 0.63 → 0.60 / 0.57 across repeated runs). The hybrid RRF order is already strong, and reranking
-short code chunks without the scope context the embedder sees doesn't add anything here. The plumbing
-stays in place in case it helps on your corpus — measure it with `gtir eval --rerank` versus the floor.
+`bge-reranker-v2-m3` and `jina-reranker-v2` scored at or slightly *below* the plain hybrid order across
+repeated runs, and dragged the strict `gate` tier down. The hybrid RRF order is already strong, and
+reranking short code chunks without the scope context the embedder sees doesn't add anything here. The
+plumbing stays in place in case it helps on your corpus — measure it with `gtir eval --rerank` versus the floor.
 
 ## 🔌 MCP server
 
@@ -459,9 +475,10 @@ symbol → jump to a definition → pivot to neighbors, all without leaving the 
 ## 🤖 Model
 
 Default code model (in `src/config.mjs`): **`qwen3-embedding:0.6b`** (639 MB, 1024-dim) — pulled by
-`gtir doctor`. It's embedding-native (Ollama serves it first-class) and it **tied** the older
-`jina-code-embeddings-0.5b` on the bundled eval — overall R@1 0.913, MRR 0.945 — while staying a clean
-one-command `ollama pull`.
+`gtir doctor`. It's embedding-native (Ollama serves `/api/embed` for it first-class) and scores overall
+R@1 0.918 / MRR 0.949 on the bundled eval, while staying a clean one-command `ollama pull`. It replaced
+the older `jina-code-embeddings-0.5b` — a decoder repackaged as an embedder that Ollama's current engine
+refuses to embed (see [below](#embedding-model-wont-embed-does-not-support-embeddings)).
 
 - **Notes vaults** default to `nomic-embed-text` instead (prose, 768-dim); `gtir init` picks it
   automatically for an Obsidian vault or a markdown-dominant repo.
