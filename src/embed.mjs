@@ -15,37 +15,39 @@ async function embedOnce(texts, cfg, timeoutMs) {
   const fetchImpl = cfg.fetchImpl ?? fetch;
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
-  let res;
   try {
-    res = await fetchImpl(`${cfg.ollamaUrl}/api/embed`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ model: cfg.model, input: texts.map((t) => t.slice(0, cfg.maxEmbedChars ?? 6000)) }),
-      signal: ac.signal,
-    });
-  } catch (err) {
-    // Wrap rather than mutate the platform error (AbortError/network) — keeps the name+message
-    // for callers/tests and avoids assigning to a possibly-frozen runtime error object.
-    const e = new Error(err.message, { cause: err });
-    e.name = err.name;      // preserve "AbortError" so timeout callers can detect it
-    e.retryable = true;     // AbortError (timeout) or network failure
-    throw e;
+    let res;
+    try {
+      res = await fetchImpl(`${cfg.ollamaUrl}/api/embed`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: cfg.model, input: texts.map((t) => t.slice(0, cfg.maxEmbedChars ?? 6000)) }),
+        signal: ac.signal,
+      });
+    } catch (err) {
+      // Wrap rather than mutate the platform error (AbortError/network) — keeps the name+message
+      // for callers/tests and avoids assigning to a possibly-frozen runtime error object.
+      const e = new Error(err.message, { cause: err });
+      e.name = err.name;      // preserve "AbortError" so timeout callers can detect it
+      e.retryable = true;     // AbortError (timeout) or network failure
+      throw e;
+    }
+    if (!res.ok) {
+      const detail = (await res.text?.().catch(() => "")) || res.status;
+      const e = new Error(`Ollama embed failed (${detail}). Is Ollama running and the model pulled? Run: gtir doctor`);
+      e.retryable = res.status >= 500;   // 5xx transient; 4xx fatal (capability error etc.)
+      throw e;
+    }
+    const data = await res.json();
+    if (!data.embeddings) { const e = new Error("Ollama returned no embeddings array"); e.retryable = false; throw e; }
+    if (data.embeddings.length !== texts.length) {
+      const e = new Error(`Ollama returned ${data.embeddings.length} embeddings for ${texts.length} inputs`);
+      e.retryable = false; throw e;
+    }
+    return data.embeddings.map(l2normalize);
   } finally {
-    clearTimeout(timer);
+    clearTimeout(timer);   // armed through the body read, not just the headers
   }
-  if (!res.ok) {
-    const detail = (await res.text?.().catch(() => "")) || res.status;
-    const e = new Error(`Ollama embed failed (${detail}). Is Ollama running and the model pulled? Run: gtir doctor`);
-    e.retryable = res.status >= 500;   // 5xx transient; 4xx fatal (capability error etc.)
-    throw e;
-  }
-  const data = await res.json();
-  if (!data.embeddings) { const e = new Error("Ollama returned no embeddings array"); e.retryable = false; throw e; }
-  if (data.embeddings.length !== texts.length) {
-    const e = new Error(`Ollama returned ${data.embeddings.length} embeddings for ${texts.length} inputs`);
-    e.retryable = false; throw e;
-  }
-  return data.embeddings.map(l2normalize);
 }
 
 async function embedBatch(texts, cfg) {
