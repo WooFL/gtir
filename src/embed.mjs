@@ -24,8 +24,12 @@ async function embedOnce(texts, cfg, timeoutMs) {
       signal: ac.signal,
     });
   } catch (err) {
-    err.retryable = true;   // AbortError (timeout) or network failure
-    throw err;
+    // Wrap rather than mutate the platform error (AbortError/network) — keeps the name+message
+    // for callers/tests and avoids assigning to a possibly-frozen runtime error object.
+    const e = new Error(err.message, { cause: err });
+    e.name = err.name;      // preserve "AbortError" so timeout callers can detect it
+    e.retryable = true;     // AbortError (timeout) or network failure
+    throw e;
   } finally {
     clearTimeout(timer);
   }
