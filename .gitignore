@@ -6,3 +6,5 @@ node_modules/
 /grammars/
 # shader grammar wasm — built from source, not committed (~5MB); regen: npm run build:shaders
 vendor/grammars/*.wasm
+# local planning/spec scratch — not part of the shipped project
+docs/superpowers/
