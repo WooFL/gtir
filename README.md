@@ -184,7 +184,7 @@ gtir init    --repo <project> [--notes|--code] [--no-index] [--no-hook]  # set u
 gtir index   --repo <project> [--rebuild] [--no-cache]                   # build / full rebuild
 gtir refresh --repo <project> [--no-cache]                              # incremental (changed files)
 gtir watch   --repo <project> [--debounce 1500]        # live-refresh on every save (uncommitted edits)
-gtir search  "how are sessions created" --repo <project> [-k 8] [--language python] [--path-prefix src/]
+gtir search  "how are sessions created" --repo <project> [-k 8] [--language python] [--path-prefix src/] [--edges] [--centrality]
 gtir status  --repo <project>                          # model, dim, file count
 gtir hook    --repo <project> [--remove]               # install/remove the auto-refresh git hooks
 gtir fetch-grammars                                    # download prebuilt HLSL/GLSL grammars (~5 MB)
@@ -275,6 +275,19 @@ sha256(embedText)` and reuses the prior index's vector for any byte-identical ch
 and `refresh` benefit. The stats line shows the split: `indexed N chunks (R reused, K embedded)`. Reuse
 is gated on the model matching (switching models re-embeds everything); `--no-cache` forces a full
 re-embed.
+
+### Graph-aware search
+
+Two opt-in flags fold the edge graph into search (JSON on stdout; MCP `search_`/`read_` tools take the same as booleans):
+
+- `gtir search "<query>" --edges` — attach each hit's `callers`/`callees` (capped, the symbols the
+  chunk declares). One call gives the result *and* its neighborhood. `read_` also takes `edges:true`.
+- `gtir search "<query>" --centrality` — gently re-rank by call-graph degree, so a widely-called
+  helper or widely-imported module floats up. Bounded multiplier (≤ `centralityWeight`, default
+  +15%); off by default; ignored when reranking is on (the reranker stays authoritative).
+
+Both read the edge graph at query time (cached in memory); they need an index built with the edge
+layer (`gtir index`). Tunables: `centralityWeight`, `centralityK`, `contextCap` in the config file.
 
 ## 📊 Measuring retrieval quality — `gtir eval`
 
