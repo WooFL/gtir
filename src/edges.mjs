@@ -207,12 +207,13 @@ function resolveSourceStem(fromPath, source) {
 
 const noteKey = (s) => basename(String(s)).replace(/\.(md|mdx)$/i, "").toLowerCase();
 
-function row(kind, from, to, conf, candidates, contentHash) {
+function row(kind, from, to, conf, candidates, contentHash, refName) {
   return {
     kind, conf,
     from_path: from.path, from_lines: from.lines ?? `${from.fromLine}`, from_symbol: from.symbol ?? null,
     to_path: to?.path ?? null, to_lines: to ? `${to.line_start}-${to.line_end}` : null,
     to_symbol: to?.symbol ?? null,
+    ref_name: refName ?? null,
     candidates: candidates ?? [],
     content_hash: contentHash ?? null,
   };
@@ -236,33 +237,33 @@ export function resolveEdges(rawEdges, symbolIndex, noteIndex, opts = {}) {
     if (e.kind === "calls") {
       const cands = symbolIndex.get(e.refName) ?? [];
       const from = { path: e.fromPath, fromLine: e.fromLine, symbol: e.fromSymbol ?? null };
-      if (cands.length === 0) { out.push(row("calls", from, null, "external", [], contentHash)); continue; }
+      if (cands.length === 0) { out.push(row("calls", from, null, "external", [], contentHash, e.refName)); continue; }
       const stem = importByName.get(e.fromPath)?.get(e.refName);
       const scoped = stem ? cands.find((c) => stripExt(c.path) === stem) : null;
-      if (scoped) { out.push(row("calls", from, { ...scoped, symbol: e.refName }, "resolved", [], contentHash)); continue; }
+      if (scoped) { out.push(row("calls", from, { ...scoped, symbol: e.refName }, "resolved", [], contentHash, e.refName)); continue; }
       // Unique-name fallback. A single same-file candidate is a real intra-file call. A single
       // candidate in ANOTHER file with no import vouching for it is a name coincidence (a builtin
       // like Error, a method like .split, a stdlib name) — surface it as a guess, not a fact.
       if (cands.length === 1) {
         const only = cands[0];
-        if (only.path === e.fromPath) { out.push(row("calls", from, { ...only, symbol: e.refName }, "resolved", [], contentHash)); continue; }
-        out.push(row("calls", from, null, "ambiguous", [only.path], contentHash));
+        if (only.path === e.fromPath) { out.push(row("calls", from, { ...only, symbol: e.refName }, "resolved", [], contentHash, e.refName)); continue; }
+        out.push(row("calls", from, null, "ambiguous", [only.path], contentHash, e.refName));
         continue;
       }
-      out.push(row("calls", from, null, "ambiguous", cands.map((c) => c.path), contentHash));
+      out.push(row("calls", from, null, "ambiguous", cands.map((c) => c.path), contentHash, e.refName));
     } else if (e.kind === "imports") {
       const stem = resolveSourceStem(e.fromPath, e.source);
       const from = { path: e.fromPath, fromLine: e.fromLine };
       const conf = stem ? "resolved" : "external";
       out.push(row("imports", { ...from, symbol: e.source },
-        stem ? { path: stem, line_start: 0, line_end: 0, symbol: null } : null, conf, [], contentHash));
+        stem ? { path: stem, line_start: 0, line_end: 0, symbol: null } : null, conf, [], contentHash, e.source));
     } else if (e.kind === "links" || e.kind === "embeds") {
       const cands = noteIndex.get(noteKey(e.target)) ?? [];
       const noteSymbol = basename(String(e.fromPath)).replace(/\.(md|mdx)$/i, "");
       const from = { path: e.fromPath, fromLine: e.fromLine, symbol: noteSymbol || null };
-      if (cands.length === 0) { out.push(row(e.kind, from, null, "external", [], contentHash)); continue; }
-      if (cands.length === 1) { out.push(row(e.kind, from, { ...cands[0], line_start: 0, line_end: 0, symbol: e.target }, "resolved", [], contentHash)); continue; }
-      out.push(row(e.kind, from, null, "ambiguous", cands.map((c) => c.path), contentHash));
+      if (cands.length === 0) { out.push(row(e.kind, from, null, "external", [], contentHash, e.target)); continue; }
+      if (cands.length === 1) { out.push(row(e.kind, from, { ...cands[0], line_start: 0, line_end: 0, symbol: e.target }, "resolved", [], contentHash, e.target)); continue; }
+      out.push(row(e.kind, from, null, "ambiguous", cands.map((c) => c.path), contentHash, e.target));
     }
   }
   return out;

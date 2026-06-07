@@ -206,6 +206,26 @@ test("extractNotesEdges captures wikilinks and embeds", () => {
   assert.equal(edges[0].fromPath, "notes/a.md");
 });
 
+test("resolveEdges: external call carries ref_name", () => {
+  const raw = [{ kind: "calls", refName: "Error", fromPath: "src/x.ts", fromLine: 10, fromSymbol: "f" }];
+  const [e] = resolveEdges(raw, new Map(), new Map());
+  assert.equal(e.conf, "external");
+  assert.equal(e.ref_name, "Error");
+});
+
+test("resolveEdges: ambiguous call carries ref_name", () => {
+  const raw = [{ kind: "calls", refName: "verifyToken", fromPath: "src/x.ts", fromLine: 10 }];
+  const [e] = resolveEdges(raw, symIndex, new Map());
+  assert.equal(e.conf, "ambiguous");
+  assert.equal(e.ref_name, "verifyToken");
+});
+
+test("resolveEdges: import carries ref_name = source", () => {
+  const raw = [{ kind: "imports", source: "./util", fromPath: "src/x.ts", fromLine: 1, names: ["u"] }];
+  const [e] = resolveEdges(raw, new Map(), new Map());
+  assert.equal(e.ref_name, "./util");
+});
+
 test("extractNotesEdges ignores wikilinks inside code fences", () => {
   const md = "```\n[[NotALink]]\n```\n[[RealLink]]\n";
   const edges = extractNotesEdges("a.md", md);
