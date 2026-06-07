@@ -7,6 +7,7 @@ import { openStore } from "./store.mjs";
 import { preflight } from "./doctor.mjs";
 import { parseLines } from "./eval.mjs";
 import { watchRepo } from "./watch.mjs";
+import { buildAdjacency, callersOf, calleesOf, neighborsOf } from "./edges.mjs";
 
 export function sanitizeLabel(s) {
   return String(s).toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "index";
@@ -111,6 +112,38 @@ export function buildTools(indexes) {
         required: ["symbol"],
       },
     });
+    const noteMode = /nomic|notes/i.test(ix.label) || /nomic/i.test(ix.cfg?.model || "");
+    const callersName = noteMode ? `backlinks_${ix.label}` : `callers_${ix.label}`;
+    const calleesName = noteMode ? `links_${ix.label}` : `callees_${ix.label}`;
+    tools.push({
+      name: callersName,
+      description: noteMode
+        ? `Notes that link to a note in ${at} (backlinks). Pass the note name.`
+        : `Spans that call a symbol in ${at}. Real call edges (not lexical) — each tagged resolved/ambiguous.`,
+      inputSchema: { type: "object", properties: {
+        symbol: { type: "string", description: "exact symbol or note name" },
+        limit: { type: "integer", description: "max results (default 50)" },
+      }, required: ["symbol"] },
+    });
+    tools.push({
+      name: calleesName,
+      description: noteMode
+        ? `Notes/embeds a note links to in ${at}. Pass the note name.`
+        : `What a symbol calls in ${at} (outgoing call edges).`,
+      inputSchema: { type: "object", properties: {
+        symbol: { type: "string", description: "exact symbol or note name" },
+        limit: { type: "integer", description: "max results (default 50)" },
+      }, required: ["symbol"] },
+    });
+    tools.push({
+      name: `neighbors_${ix.label}`,
+      description: `Blast radius around a span in ${at}: callers + callees + same-file siblings. Returns file:line.`,
+      inputSchema: { type: "object", properties: {
+        symbol: { type: "string", description: "the span's symbol name (drives caller/callee lookup)" },
+        path: { type: "string", description: "file path of the span" },
+        lines: { type: "string", description: 'line range of the span, e.g. "48-79"' },
+      }, required: ["symbol"] },
+    });
   }
   tools.push({
     name: "gtir_status",
@@ -187,7 +220,7 @@ function formatFind(results, symbol, kind) {
   ).join("\n\n");
 }
 
-const TOOL_VERBS = ["search", "read", "outline", "similar", "find"];
+const TOOL_VERBS = ["search", "read", "outline", "similar", "find", "callers", "callees", "neighbors", "backlinks", "links"];
 
 // "search_my_wiki" -> { verb: "search", label: "my_wiki" } (labels may contain underscores).
 export function parseToolName(name) {
@@ -200,7 +233,7 @@ export function parseToolName(name) {
 const stripSnippet = (results) => results.map(({ snippet, ...rest }) => rest);
 
 async function dispatchToolCall(params, ctx) {
-  const { indexes, searchFn, statusFn, readFn, outlineFn, similarFn, findFn } = ctx;
+  const { indexes, searchFn, statusFn, readFn, outlineFn, similarFn, findFn, callersFn, calleesFn, neighborsFn } = ctx;
   const name = params.name;
   const args = params.arguments ?? {};
   const reply = (text, structured) => ({ content: [{ type: "text", text }], structuredContent: structured });
@@ -236,6 +269,18 @@ async function dispatchToolCall(params, ctx) {
         const kind = args.kind === "references" ? "references" : "definition";
         const results = await findFn(label, { symbol: args.symbol, kind, limit: args.limit });
         return reply(formatFind(results, args.symbol, kind), { symbol: args.symbol, kind, results });
+      }
+      if (verb === "callers" || verb === "backlinks") {
+        const results = await callersFn(label, { symbol: args.symbol, limit: args.limit });
+        return reply(JSON.stringify(results, null, 2), { results });
+      }
+      if (verb === "callees" || verb === "links") {
+        const results = await calleesFn(label, { symbol: args.symbol, limit: args.limit });
+        return reply(JSON.stringify(results, null, 2), { results });
+      }
+      if (verb === "neighbors") {
+        const out = await neighborsFn(label, { symbol: args.symbol, path: args.path, lines: args.lines });
+        return reply(JSON.stringify(out, null, 2), out);
       }
     }
     return { content: [{ type: "text", text: `unknown tool: ${name}` }], isError: true };
@@ -348,11 +393,82 @@ export function defaultFindFn(indexes) {
     }
     const word = new RegExp(`(?:^|[^\\w$])${reEsc(symbol)}(?![\\w$])`);
     const isDef = (r) => declaredSymbols(r.text).includes(symbol);
+    if (kind === "references") {
+      const adj = await adjacencyFor(ix).catch(() => null);
+      const edgeCallers = adj ? callersOf(adj, symbol) : [];
+      if (edgeCallers.length) {
+        return edgeCallers.slice(0, k).map((c) => ({
+          path: c.path, lines: c.lines, language: null, kind: "reference", conf: c.conf, snippet: "",
+        }));
+      }
+      // fall through to the existing lexical sweep below
+    }
     const rows = (kind === "references" ? cand.filter((r) => word.test(r.text)) : cand.filter(isDef)).slice(0, k);
     return rows.map((r) => ({
       path: r.path, lines: `${r.line_start}-${r.line_end}`, language: r.language,
       kind: isDef(r) ? "definition" : "reference", snippet: r.text,
     }));
+  };
+}
+
+const adjCache = new Map(); // label -> adj
+
+async function adjacencyFor(ix) {
+  if (adjCache.has(ix.label)) return adjCache.get(ix.label);
+  const store = await openStore(ix.cfg);
+  const rows = await store.loadEdges();
+  const adj = buildAdjacency(rows);
+  adjCache.set(ix.label, adj);
+  return adj;
+}
+
+export function defaultCallersFn(indexes) {
+  return async (label, { symbol, limit = 50 }) => {
+    const ix = indexes.find((i) => i.label === label);
+    if (!symbol) throw new Error("symbol is required");
+    const adj = await adjacencyFor(ix);
+    return callersOf(adj, symbol).slice(0, Math.max(1, Math.min(200, limit | 0 || 50)));
+  };
+}
+
+export function defaultCalleesFn(indexes) {
+  return async (label, { symbol, limit = 50 }) => {
+    const ix = indexes.find((i) => i.label === label);
+    if (!symbol) throw new Error("symbol is required");
+    const adj = await adjacencyFor(ix);
+    return calleesOf(adj, symbol).slice(0, Math.max(1, Math.min(200, limit | 0 || 50)));
+  };
+}
+
+export function defaultNeighborsFn(indexes) {
+  return async (label, { symbol, path = null, lines = null }) => {
+    const ix = indexes.find((i) => i.label === label);
+    if (!symbol) throw new Error("symbol is required");
+    const adj = await adjacencyFor(ix);
+    let siblings = [];
+    let callees = calleesOf(adj, symbol);
+    if (path) {
+      const store = await openStore(ix.cfg);
+      siblings = (await store.chunksByPath(path)).map((r) => ({
+        line_start: Number(r.line_start), line_end: Number(r.line_end), signature: signatureOf(r.text),
+      }));
+      // If the symbol-keyed callee lookup is empty (from_symbol is null for call edges),
+      // fall back to finding all call edges whose from_path + from_lines fall within
+      // the given span — this covers the common case where the edge model doesn't
+      // record the enclosing function name.
+      if (callees.length === 0 && lines) {
+        const [lineA, lineB] = lines.split("-").map(Number);
+        const lo = Math.min(lineA, lineB || lineA);
+        const hi = Math.max(lineA, lineB || lineA);
+        const rawEdges = await store.loadEdges();
+        callees = rawEdges
+          .filter((r) => r.from_path === path && r.to_symbol && r.kind === "calls")
+          .filter((r) => { const ln = Number(r.from_lines); return ln >= lo && ln <= hi; })
+          .map((r) => ({ path: r.to_path, lines: r.to_lines, symbol: r.to_symbol, kind: r.kind, conf: r.conf }));
+      }
+    }
+    const base = neighborsOf(adj, { symbol, path, lines, siblings });
+    return { ...base, callees };
   };
 }
 
@@ -378,6 +494,8 @@ export function serveStdio(indexes, { version } = {}) {
     searchFn: defaultSearchFn(indexes), statusFn: defaultStatusFn(indexes),
     readFn: defaultReadFn(indexes), outlineFn: defaultOutlineFn(indexes),
     similarFn: defaultSimilarFn(indexes), findFn: defaultFindFn(indexes),
+    callersFn: defaultCallersFn(indexes), calleesFn: defaultCalleesFn(indexes),
+    neighborsFn: defaultNeighborsFn(indexes),
   };
   let buf = "";
   process.stdin.setEncoding("utf8");
@@ -404,7 +522,22 @@ export function serveStdio(indexes, { version } = {}) {
 // channel and any stray write corrupts the protocol. Returns the handles so callers can close them.
 export function startWatchers(indexes, { debounceMs = 1500, sweepMs, log = () => {} } = {}) {
   return indexes.map((ix) => {
-    const handle = watchRepo(ix.cfg, { debounceMs, sweepMs, log: (m) => log(`[${ix.label}] ${m}`) });
+    const handle = watchRepo(ix.cfg, {
+      debounceMs, sweepMs, log: (m) => log(`[${ix.label}] ${m}`),
+      onBatch: async (paths) => {
+        const { buildIndex } = await import("./indexer.mjs");
+        try {
+          const r = await buildIndex(ix.cfg, { rebuild: false, paths });
+          adjCache.delete(ix.label); // invalidate adjacency cache after any refresh
+          if (r && (r.chunks > 0 || r.evicted > 0)) {
+            log(`[${ix.label}] refreshed — ${r.chunks} chunks (${r.embedded} embedded, ${r.reused} reused, ${r.skipped} skipped, ${r.evicted} evicted)`);
+          }
+          return r;
+        } catch (e) {
+          log(`[${ix.label}] refresh failed — ${e.message} (will retry on next change)`);
+        }
+      },
+    });
     return { label: ix.label, ...handle };
   });
 }
