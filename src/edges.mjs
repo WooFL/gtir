@@ -1,5 +1,5 @@
 import { dirname, join, basename } from "node:path";
-import { edgeTypes } from "./languages.mjs";
+import { edgeTypes, targetTypes } from "./languages.mjs";
 
 // Walk every named node depth-first, calling visit(node). Iterative (no recursion depth limit),
 // mirrors chunker.collectNodes' traversal.
@@ -84,6 +84,29 @@ function importNames(node) {
     }
   });
   return names;
+}
+
+// Mirror of chunker.mjs nodeName: prefer the `name` field, else first identifier-like named child.
+function nodeName(n) {
+  const f = n.childForFieldName ? n.childForFieldName("name") : null;
+  if (f && f.text) return f.text;
+  for (let i = 0; i < n.namedChildCount; i++) {
+    const c = n.namedChild(i);
+    if (/identifier/.test(c.type)) return c.text;
+  }
+  return null;
+}
+
+// Walk node.parent upward; return the name of the nearest ancestor whose type is in `declSet`
+// and has a `nodeName`. Returns null when the call is at module top-level (no enclosing decl).
+function enclosingSymbol(node, declSet) {
+  for (let p = node.parent; p; p = p.parent) {
+    if (declSet.has(p.type)) {
+      const nm = nodeName(p);
+      if (nm) return nm;
+    }
+  }
+  return null;
 }
 
 // The string literal source of an import node, if any (handles ts `from "x"`, c `#include <x>`,
@@ -212,7 +235,7 @@ export function resolveEdges(rawEdges, symbolIndex, noteIndex, opts = {}) {
   for (const e of rawEdges) {
     if (e.kind === "calls") {
       const cands = symbolIndex.get(e.refName) ?? [];
-      const from = { path: e.fromPath, fromLine: e.fromLine, symbol: null };
+      const from = { path: e.fromPath, fromLine: e.fromLine, symbol: e.fromSymbol ?? null };
       if (cands.length === 0) { out.push(row("calls", from, null, "external", [], contentHash)); continue; }
       const stem = importByName.get(e.fromPath)?.get(e.refName);
       const scoped = stem ? cands.find((c) => stripExt(c.path) === stem) : null;
@@ -227,7 +250,8 @@ export function resolveEdges(rawEdges, symbolIndex, noteIndex, opts = {}) {
         stem ? { path: stem, line_start: 0, line_end: 0, symbol: null } : null, conf, [], contentHash));
     } else if (e.kind === "links" || e.kind === "embeds") {
       const cands = noteIndex.get(noteKey(e.target)) ?? [];
-      const from = { path: e.fromPath, fromLine: e.fromLine, symbol: null };
+      const noteSymbol = basename(String(e.fromPath)).replace(/\.(md|mdx)$/i, "");
+      const from = { path: e.fromPath, fromLine: e.fromLine, symbol: noteSymbol || null };
       if (cands.length === 0) { out.push(row(e.kind, from, null, "external", [], contentHash)); continue; }
       if (cands.length === 1) { out.push(row(e.kind, from, { ...cands[0], line_start: 0, line_end: 0, symbol: e.target }, "resolved", [], contentHash)); continue; }
       out.push(row(e.kind, from, null, "ambiguous", cands.map((c) => c.path), contentHash));
@@ -284,6 +308,8 @@ export function extractCodeEdges(tree, langId, relPath) {
   if (!tree?.rootNode) return [];
   const callSet = new Set(types.call);
   const importSet = new Set(types.import);
+  // Enclosing-scope detection: walk to the nearest ancestor whose type is a target declaration type.
+  const declSet = new Set(targetTypes(langId));
   const edges = [];
   const seen = new Set();
   walk(tree.rootNode, (n) => {
@@ -293,7 +319,9 @@ export function extractCodeEdges(tree, langId, relPath) {
         const key = `c:${name}:${n.startIndex}`;
         if (!seen.has(key)) {
           seen.add(key);
-          edges.push({ kind: "calls", refName: name, fromPath: relPath, fromLine: n.startPosition.row + 1 });
+          // Best-effort: null when at module top-level or grammar doesn't expose a name.
+          const fromSymbol = declSet.size > 0 ? enclosingSymbol(n, declSet) : null;
+          edges.push({ kind: "calls", refName: name, fromPath: relPath, fromLine: n.startPosition.row + 1, fromSymbol });
         }
       }
     } else if (importSet.has(n.type)) {

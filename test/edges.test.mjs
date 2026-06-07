@@ -165,6 +165,28 @@ test("extractCodeEdges: python from-import still works after Fix 2", async () =>
   assert.equal(imp.source, "token");
 });
 
+// Part 1 — fromSymbol: enclosing scope capture
+test("extractCodeEdges records the enclosing function as fromSymbol", async () => {
+  const edges = await edgesFor("typescript",
+    `function outer(x){ return helper(x); }`);
+  const call = edges.find((e) => e.kind === "calls" && e.refName === "helper");
+  assert.equal(call.fromSymbol, "outer");
+});
+
+test("extractCodeEdges fromSymbol is null for a top-level call", async () => {
+  const edges = await edgesFor("typescript", `helper(x);`);
+  const call = edges.find((e) => e.kind === "calls" && e.refName === "helper");
+  assert.equal(call.fromSymbol, null);
+});
+
+// Part 2 — resolveEdges uses fromSymbol
+test("resolveEdges populates from_symbol for calls (enables calleesOf)", () => {
+  const sym = new Map([["helper", [{ path: "h.ts", line_start: 1, line_end: 2 }]]]);
+  const raw = [{ kind: "calls", refName: "helper", fromPath: "a.ts", fromLine: 3, fromSymbol: "outer" }];
+  const [e] = resolveEdges(raw, sym, new Map());
+  assert.equal(e.from_symbol, "outer");
+});
+
 test("extractNotesEdges captures wikilinks and embeds", () => {
   const md = `See [[Token Auth]] and [[Sessions#expiry|here]].\n![[diagram.png]]\n`;
   const edges = extractNotesEdges("notes/a.md", md);

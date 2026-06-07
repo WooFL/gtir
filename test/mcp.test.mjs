@@ -379,6 +379,33 @@ test("callers tool returns spans that call a symbol", async () => {
   assert.equal(callers[0].conf, "resolved");
 });
 
+test("callees tool returns what a function calls (end-to-end)", async () => {
+  const indexes = await makeIndex({
+    "token.ts": [
+      "export function verifyToken(x){",
+      "  // Verify the supplied token value and return it if valid.",
+      "  // Uses the decode helper to process the raw token bytes.",
+      "  return decode(x);",
+      "}",
+      "function decode(x){",
+      "  // Decode the raw token bytes into a usable payload.",
+      "  // Called internally by verifyToken during validation.",
+      "  return x;",
+      "}",
+    ].join("\n") + "\n",
+    "mw.ts": [
+      "import { verifyToken } from './token';",
+      "export function mw(r){",
+      "  // Middleware that verifies the auth token on every request.",
+      "  // Delegates to verifyToken for the actual validation logic.",
+      "  return verifyToken(r);",
+      "}",
+    ].join("\n") + "\n",
+  });
+  const callees = await defaultCalleesFn(indexes)(indexes[0].label, { symbol: "verifyToken" });
+  assert.ok(callees.some((c) => c.symbol === "decode"), `expected decode, got ${JSON.stringify(callees)}`);
+});
+
 test("neighbors tool returns callers, callees, and siblings", async () => {
   const indexes = await makeIndex({
     "token.ts": [

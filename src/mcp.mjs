@@ -215,9 +215,10 @@ export { declaredSymbols } from "./symbols.mjs";
 
 function formatFind(results, symbol, kind) {
   if (!results.length) return `(no ${kind} found for "${symbol}")`;
-  return results.map((r) =>
-    `### ${r.path}:${r.lines}  _(${r.kind})_\n\`\`\`\n${r.snippet}\n\`\`\``,
-  ).join("\n\n");
+  return results.map((r) => {
+    if (!r.snippet) return `### ${r.path}:${r.lines}  _(${r.kind})_`;
+    return `### ${r.path}:${r.lines}  _(${r.kind})_\n\`\`\`\n${r.snippet}\n\`\`\``;
+  }).join("\n\n");
 }
 
 const TOOL_VERBS = ["search", "read", "outline", "similar", "find", "callers", "callees", "neighbors", "backlinks", "links"];
@@ -411,14 +412,15 @@ export function defaultFindFn(indexes) {
   };
 }
 
-const adjCache = new Map(); // label -> adj
+const adjCache = new Map(); // repo path -> adj
 
 async function adjacencyFor(ix) {
-  if (adjCache.has(ix.label)) return adjCache.get(ix.label);
+  const cacheKey = ix.repo;
+  if (adjCache.has(cacheKey)) return adjCache.get(cacheKey);
   const store = await openStore(ix.cfg);
   const rows = await store.loadEdges();
   const adj = buildAdjacency(rows);
-  adjCache.set(ix.label, adj);
+  adjCache.set(cacheKey, adj);
   return adj;
 }
 
@@ -446,29 +448,13 @@ export function defaultNeighborsFn(indexes) {
     if (!symbol) throw new Error("symbol is required");
     const adj = await adjacencyFor(ix);
     let siblings = [];
-    let callees = calleesOf(adj, symbol);
     if (path) {
       const store = await openStore(ix.cfg);
       siblings = (await store.chunksByPath(path)).map((r) => ({
         line_start: Number(r.line_start), line_end: Number(r.line_end), signature: signatureOf(r.text),
       }));
-      // If the symbol-keyed callee lookup is empty (from_symbol is null for call edges),
-      // fall back to finding all call edges whose from_path + from_lines fall within
-      // the given span — this covers the common case where the edge model doesn't
-      // record the enclosing function name.
-      if (callees.length === 0 && lines) {
-        const [lineA, lineB] = lines.split("-").map(Number);
-        const lo = Math.min(lineA, lineB || lineA);
-        const hi = Math.max(lineA, lineB || lineA);
-        const rawEdges = await store.loadEdges();
-        callees = rawEdges
-          .filter((r) => r.from_path === path && r.to_symbol && r.kind === "calls")
-          .filter((r) => { const ln = Number(r.from_lines); return ln >= lo && ln <= hi; })
-          .map((r) => ({ path: r.to_path, lines: r.to_lines, symbol: r.to_symbol, kind: r.kind, conf: r.conf }));
-      }
     }
-    const base = neighborsOf(adj, { symbol, path, lines, siblings });
-    return { ...base, callees };
+    return neighborsOf(adj, { symbol, path, lines, siblings });
   };
 }
 
@@ -528,7 +514,7 @@ export function startWatchers(indexes, { debounceMs = 1500, sweepMs, log = () =>
         const { buildIndex } = await import("./indexer.mjs");
         try {
           const r = await buildIndex(ix.cfg, { rebuild: false, paths });
-          adjCache.delete(ix.label); // invalidate adjacency cache after any refresh
+          adjCache.delete(ix.repo); // invalidate adjacency cache after any refresh
           if (r && (r.chunks > 0 || r.evicted > 0)) {
             log(`[${ix.label}] refreshed — ${r.chunks} chunks (${r.embedded} embedded, ${r.reused} reused, ${r.skipped} skipped, ${r.evicted} evicted)`);
           }
