@@ -17,6 +17,7 @@ import { evalGolden, flattenMetrics, compareBaseline, compareTiers } from "../sr
 import { runDemo, formatDemo } from "../src/demo.mjs";
 import { runDoctor, preflight } from "../src/doctor.mjs";
 import { fetchGrammars } from "../src/fetch-grammars.mjs";
+import { buildGraph, renderHtml } from "../src/graph.mjs";
 
 // --- programmatic entrypoints (used by tests and the dispatcher) ---
 
@@ -58,6 +59,28 @@ export async function runSetup({ repo } = {}) {
   const cfg = loadConfig(repo);
   const dim = await probeDim(cfg); // throws a remediation message if Ollama/model missing
   return { model: cfg.model, ollamaUrl: cfg.ollamaUrl, dim };
+}
+
+export async function runGraph({ repo, out = "gtir-graph.html", focus = null, depth = 2, rollup = false,
+  maxNodes = 400, kind = null, conf = null, pathPrefix = null, edgesImpl = null } = {}) {
+  const cfg = loadConfig(repo);
+  const edges = edgesImpl ? await edgesImpl() : await (await openStore(cfg)).loadEdges();
+  if (!edges.length) throw new Error("no edge index — run 'gtir index' first");
+
+  const graph = buildGraph(edges, { focus, depth, rollup, maxNodes, kind, conf, pathPrefix });
+  if (focus && graph.nodes.length === 0) throw new Error(`no symbol matching '${focus}' in the edge graph`);
+
+  const d3Path = fileURLToPath(new URL("../vendor/d3.v7.min.js", import.meta.url));
+  let d3Source;
+  try { d3Source = readFileSync(d3Path, "utf8"); }
+  catch (e) {
+    if (e.code === "ENOENT") throw new Error(`missing vendored d3 at ${d3Path} — reinstall gtir`);
+    throw new Error(`cannot read vendored d3 at ${d3Path}: ${e.message}`);
+  }
+
+  const html = renderHtml({ nodes: graph.nodes, edges: graph.edges, meta: { truncated: graph.truncated, dropped: graph.dropped } }, d3Source);
+  writeFileSync(out, html);
+  return { out, nodes: graph.nodes.length, edges: graph.edges.length, truncated: graph.truncated, dropped: graph.dropped };
 }
 
 // --- argv parsing ---
@@ -104,6 +127,13 @@ function parseArgs(argv) {
     else if (a === "--rerank") args.rerank = true;
     else if (a === "--golden") args.golden = argv[++i];
     else if (a === "--baseline") args.baseline = argv[++i];
+    else if (a === "--out") args.out = argv[++i];
+    else if (a === "--focus") args.focus = argv[++i];
+    else if (a === "--depth") { const v = Number(argv[++i]); if (Number.isFinite(v)) args.depth = v; }
+    else if (a === "--rollup") args.rollup = true;
+    else if (a === "--max-nodes") { const v = Number(argv[++i]); if (Number.isFinite(v)) args.maxNodes = v; }
+    else if (a === "--kind") args.kind = argv[++i].split(",").map((s) => s.trim()).filter(Boolean);
+    else if (a === "--conf") args.conf = argv[++i].split(",").map((s) => s.trim()).filter(Boolean);
     else args._.push(a);
   }
   return args;
@@ -431,6 +461,16 @@ async function main() {
         else process.stderr.write("  hook: no git repo — auto-refresh skipped (run 'gtir refresh' manually)\n");
         break;
       }
+      case "graph": {
+        const r = await runGraph({
+          repo, out: args.out, focus: args.focus ?? null, depth: args.depth ?? 2,
+          rollup: !!args.rollup, maxNodes: args.maxNodes ?? 400,
+          kind: args.kind ?? null, conf: args.conf ?? null, pathPrefix: args.pathPrefix ?? null,
+        });
+        process.stderr.write(`gtir: wrote ${r.out} (${r.nodes} nodes, ${r.edges} edges)\n`);
+        if (r.truncated) process.stderr.write(`gtir: graph truncated — dropped ${r.dropped} lowest-degree node(s); narrow with --focus/--path-prefix or raise --max-nodes\n`);
+        break;
+      }
       default:
         process.stderr.write([
           "usage: gtir <command> [options]",
@@ -448,6 +488,7 @@ async function main() {
           "  gtir mcp     --repo <project> [--label name:<repo>] [--watch [--debounce 1500]] [--print-config]",
           "  gtir eval    --repo <project> [--golden <f>] [-k 10] [--save] [--no-build] [--json]",
           "  gtir eval    --repo <project> --tune [\"ftsWeight=0,0.2;ftsWeightMixed=0,0.3\"]   # sweep fusion weights on the golden set",
+          "  gtir graph   --repo <project> [--out FILE] [--focus SYM [--depth 2]] [--rollup] [--max-nodes 400] [--kind calls,imports] [--conf ambiguous] [--path-prefix P]",
         ].join("\n") + "\n");
         process.exit(cmd ? 1 : 0);
     }

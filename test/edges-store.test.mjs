@@ -52,3 +52,31 @@ test("evictEdgePaths drops a file's edges", async () => {
     assert.ok(!rows.some((r) => r.from_path === "x.ts"));
   } finally { rmSync(cfg._root, { recursive: true, force: true }); }
 });
+
+test("edge ref_name round-trips through the store", async () => {
+  const cfg = tmpCfg();
+  try {
+    const store = await openStore(cfg);
+    await store.upsertEdges([{
+      kind: "calls", conf: "external", from_path: "a.ts", from_lines: "5", from_symbol: "f",
+      to_path: null, to_lines: null, to_symbol: null, ref_name: "Error", candidates: [], content_hash: "h1",
+    }]);
+    const [e] = await store.loadEdges();
+    assert.equal(e.ref_name, "Error");
+  } finally { rmSync(cfg._root, { recursive: true, force: true }); }
+});
+
+test("edge upserted without ref_name coerces undefined -> '' -> null", async () => {
+  // Not a real schema-less old table — this exercises the toEdgeRow("") + fromEdgeRow(null) coercion
+  // that makes a missing ref_name degrade cleanly. A genuinely old table is handled by `gtir index --rebuild`.
+  const cfg = tmpCfg();
+  try {
+    const store = await openStore(cfg);
+    await store.upsertEdges([{
+      kind: "calls", conf: "resolved", from_path: "a.ts", from_lines: "5", from_symbol: "f",
+      to_path: "b.ts", to_lines: "10", to_symbol: "g", candidates: [], content_hash: "h2",
+    }]);
+    const [e] = await store.loadEdges();
+    assert.equal(e.ref_name, null);
+  } finally { rmSync(cfg._root, { recursive: true, force: true }); }
+});

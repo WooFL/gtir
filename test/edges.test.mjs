@@ -61,6 +61,7 @@ test("resolveEdges: note link resolves via noteIndex", () => {
   const [e] = resolveEdges(raw, new Map(), notes);
   assert.equal(e.conf, "resolved");
   assert.equal(e.to_path, "wiki/Token Auth.md");
+  assert.equal(e.ref_name, "Token Auth");
 });
 
 async function edgesFor(langId, src, path = "a.ts") {
@@ -204,6 +205,26 @@ test("extractNotesEdges captures wikilinks and embeds", () => {
   assert.ok(edges.some((e) => e.kind === "links" && e.target === "Sessions"));
   assert.ok(edges.some((e) => e.kind === "embeds" && e.target === "diagram.png"));
   assert.equal(edges[0].fromPath, "notes/a.md");
+});
+
+test("resolveEdges: external call carries ref_name", () => {
+  const raw = [{ kind: "calls", refName: "Error", fromPath: "src/x.ts", fromLine: 10, fromSymbol: "f" }];
+  const [e] = resolveEdges(raw, new Map(), new Map());
+  assert.equal(e.conf, "external");
+  assert.equal(e.ref_name, "Error");
+});
+
+test("resolveEdges: ambiguous call carries ref_name", () => {
+  const raw = [{ kind: "calls", refName: "verifyToken", fromPath: "src/x.ts", fromLine: 10 }];
+  const [e] = resolveEdges(raw, symIndex, new Map());
+  assert.equal(e.conf, "ambiguous");
+  assert.equal(e.ref_name, "verifyToken");
+});
+
+test("resolveEdges: import carries ref_name = source", () => {
+  const raw = [{ kind: "imports", source: "./util", fromPath: "src/x.ts", fromLine: 1, names: ["u"] }];
+  const [e] = resolveEdges(raw, new Map(), new Map());
+  assert.equal(e.ref_name, "./util");
 });
 
 test("extractNotesEdges ignores wikilinks inside code fences", () => {

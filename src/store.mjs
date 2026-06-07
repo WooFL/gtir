@@ -148,6 +148,7 @@ export async function openStore(cfg) {
       kind: e.kind, conf: e.conf,
       from_path: e.from_path, from_lines: String(e.from_lines ?? ""), from_symbol: e.from_symbol ?? "",
       to_path: e.to_path ?? "", to_lines: e.to_lines ?? "", to_symbol: e.to_symbol ?? "",
+      ref_name: e.ref_name ?? "",
       candidates_json: JSON.stringify(e.candidates ?? []),
       content_hash: e.content_hash ?? "",
     };
@@ -157,6 +158,7 @@ export async function openStore(cfg) {
       kind: r.kind, conf: r.conf,
       from_path: r.from_path, from_lines: r.from_lines, from_symbol: r.from_symbol || null,
       to_path: r.to_path || null, to_lines: r.to_lines || null, to_symbol: r.to_symbol || null,
+      ref_name: r.ref_name || null,
       candidates: (() => { try { return JSON.parse(r.candidates_json || "[]"); } catch { return []; } })(),
       content_hash: r.content_hash || null,
     };
