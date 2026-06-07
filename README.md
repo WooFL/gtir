@@ -350,6 +350,23 @@ git operations).
 
 Every result carries `file:line`, so each call feeds the next.
 
+## 🕸️ Edges — how things connect
+
+Beyond finding a span, gtir tracks the edges between spans — locally, no LLM. Code gets `calls` and
+`imports` edges (tree-sitter AST); notes get `links` and `embeds` (Obsidian `[[wikilinks]]` / `![[embeds]]`).
+Edges build on `gtir index`/`refresh` (incremental, same git hooks) into a second LanceDB table, and the
+MCP server exposes them as traversal tools:
+
+- **`callers_<label>`** `{ symbol }` — spans that call a symbol (notes: `backlinks_<label>` — notes that link here).
+- **`callees_<label>`** `{ symbol }` — what a symbol calls (notes: `links_<label>` — what a note links to).
+- **`neighbors_<label>`** `{ symbol, path, lines }` — the blast radius: callers + callees + same-file siblings.
+
+Each edge carries a confidence tag: **`resolved`** (a unique definition, or import-scoped to one),
+**`ambiguous`** (several same-named definitions, no import to disambiguate — candidates returned, not a
+guess), or **`external`** (a library/builtin not in the index). Resolution is import-scoped *heuristic*,
+not type-resolved — it uses the imports a file declares to pick the right same-named symbol, but it is not
+an LSP. `find … references` now prefers real call edges and falls back to the lexical sweep when none exist.
+
 ## 🤖 Model
 
 Default code model (in `src/config.mjs`): **`qwen3-embedding:0.6b`** (639 MB, 1024-dim), pulled by
@@ -378,6 +395,9 @@ embed call fails. Fix: use a pooling-native model — the default `qwen3-embeddi
   dim.)
 - **`find … references` is lexical, not type-resolved.** Same-named methods both surface and a name in a
   comment counts. `find … definition` (the default) is precise; use an LSP for exact type-aware references.
+- **Edge resolution is import-scoped heuristic, not type-resolved.** A call to a name with several
+  same-named definitions and no disambiguating import is tagged `ambiguous` (candidates returned), not
+  resolved to one. Use an LSP for exact type-aware references; `find … references` uses edges when present.
 
 ## 🛠️ Development
 

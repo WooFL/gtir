@@ -63,3 +63,25 @@ export function isIndexable(ext) {
 export function targetTypes(langId) {
   return CHUNK_TARGET_TYPES_BY_LANG[langId] ?? [];
 }
+
+// Tree-sitter node types that denote a call site or an import, per grammar. Siblings of
+// CHUNK_TARGET_TYPES_BY_LANG. A language with no entry yields no code edges (grammarless and
+// edgeless degrade the same way chunking does). `call` types are extracted for callee names;
+// `import` types are extracted for module sources (+ named specifiers where the grammar exposes them).
+const EDGE_NODE_TYPES_BY_LANG = {
+  typescript: { call: ["call_expression", "new_expression"], import: ["import_statement"] },
+  tsx:        { call: ["call_expression", "new_expression"], import: ["import_statement"] },
+  javascript: { call: ["call_expression", "new_expression"], import: ["import_statement"] },
+  python:     { call: ["call"], import: ["import_statement", "import_from_statement"] },
+  rust:       { call: ["call_expression", "macro_invocation"], import: ["use_declaration"] },
+  go:         { call: ["call_expression"], import: ["import_declaration"] },
+  c:          { call: ["call_expression"], import: ["preproc_include"] },
+  cpp:        { call: ["call_expression"], import: ["preproc_include", "using_declaration"] },
+  objc:       { call: ["call_expression", "message_expression"], import: ["preproc_include"] },
+  glsl:       { call: ["call_expression"], import: [] },
+  hlsl:       { call: ["call_expression"], import: ["preproc_include"] },
+};
+
+export function edgeTypes(langId) {
+  return EDGE_NODE_TYPES_BY_LANG[langId] ?? { call: [], import: [] };
+}

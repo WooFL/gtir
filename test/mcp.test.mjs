@@ -2,9 +2,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { sanitizeLabel, deriveLabel, resolveIndexes, defaultStatusFn, preflightIndexes } from "../src/mcp.mjs";
 import { loadConfig } from "../src/config.mjs";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { buildIndex } from "../src/indexer.mjs";
 
 test("sanitizeLabel lowercases and collapses non-[a-z0-9_] to _", () => {
   assert.equal(sanitizeLabel("My Wiki!"), "my_wiki");
@@ -46,11 +47,13 @@ test("resolveIndexes throws on label collision, unless --label disambiguates", (
 
 import { buildTools } from "../src/mcp.mjs";
 
-test("buildTools emits search/read/outline/similar per index + gtir_status", () => {
+test("buildTools emits search/read/outline/similar/find/callers/callees/neighbors per index + gtir_status", () => {
   const tools = buildTools([{ label: "code", repo: "/r/code", cfg: {} }, { label: "notes", repo: "/r/wiki", cfg: {} }]);
   assert.deepEqual(tools.map((t) => t.name), [
     "search_code", "read_code", "outline_code", "similar_code", "find_code",
+    "callers_code", "callees_code", "neighbors_code",
     "search_notes", "read_notes", "outline_notes", "similar_notes", "find_notes",
+    "backlinks_notes", "links_notes", "neighbors_notes",
     "gtir_status",
   ]);
   assert.deepEqual(tools[0].inputSchema.required, ["query"]);   // search
@@ -60,6 +63,9 @@ test("buildTools emits search/read/outline/similar per index + gtir_status", () 
   assert.deepEqual(tools[3].inputSchema.required, ["path"]);    // similar
   assert.deepEqual(tools[4].inputSchema.required, ["symbol"]);  // find
   assert.deepEqual(tools[4].inputSchema.properties.kind.enum, ["definition", "references"]);
+  assert.deepEqual(tools[5].inputSchema.required, ["symbol"]);  // callers
+  assert.deepEqual(tools[6].inputSchema.required, ["symbol"]);  // callees
+  assert.deepEqual(tools[7].inputSchema.required, ["symbol"]);  // neighbors
   assert.deepEqual(tools.at(-1).inputSchema.properties, {});    // status takes no args
 });
 
@@ -87,7 +93,8 @@ test("handleRequest: notifications/initialized returns null (no reply)", async (
 test("handleRequest: tools/list returns the tool set", async () => {
   const r = await handleRequest({ jsonrpc: "2.0", id: 2, method: "tools/list" }, baseCtx);
   assert.deepEqual(r.result.tools.map((t) => t.name),
-    ["search_code", "read_code", "outline_code", "similar_code", "find_code", "gtir_status"]);
+    ["search_code", "read_code", "outline_code", "similar_code", "find_code",
+     "callers_code", "callees_code", "neighbors_code", "gtir_status"]);
 });
 
 test("handleRequest: unknown method => JSON-RPC -32601", async () => {
@@ -322,4 +329,108 @@ test("preflightIndexes skips the probe when a custom embedImpl is injected (keep
   ];
   const healthy = await preflightIndexes(indexes, { log: () => {} });
   assert.deepEqual(healthy.map((i) => i.label), ["custom"], "embedImpl set ⇒ no Ollama probe, index kept");
+});
+
+// ---------------------------------------------------------------------------
+// Edge tool tests (callers / callees / neighbors)
+// ---------------------------------------------------------------------------
+
+import { defaultCallersFn, defaultCalleesFn, defaultNeighborsFn } from "../src/mcp.mjs";
+
+// Deterministic fake embedder — same pattern as indexer tests.
+function fakeEmbedEdge(texts) {
+  return Promise.resolve(texts.map((t) => {
+    const n = t.length % 7 + 1;
+    const v = [n, n + 1, n + 2];
+    const len = Math.hypot(...v);
+    return v.map((x) => x / len);
+  }));
+}
+
+// Build a real index (with edges) from an in-memory file map and return the indexes array.
+async function makeIndex(files) {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-mcp-edge-"));
+  for (const [name, body] of Object.entries(files)) writeFileSync(join(repo, name), body);
+  const cfg = { ...loadConfig(repo), embedImpl: fakeEmbedEdge };
+  await buildIndex(cfg, { rebuild: true });
+  return resolveIndexes([repo], {});
+}
+
+test("callers tool returns spans that call a symbol", async () => {
+  const indexes = await makeIndex({
+    "token.ts": [
+      "export function verifyToken(x) {",
+      "  // Verify the supplied token value and return it if valid.",
+      "  // Throws if the token is missing or malformed by the caller.",
+      "  return x;",
+      "}",
+    ].join("\n") + "\n",
+    "mw.ts": [
+      "import { verifyToken } from './token';",
+      "export function mw(req) {",
+      "  // Middleware that verifies the auth token on every request.",
+      "  // Delegates to verifyToken for the actual validation logic.",
+      "  return verifyToken(req);",
+      "}",
+    ].join("\n") + "\n",
+  });
+  const callers = await defaultCallersFn(indexes)(indexes[0].label, { symbol: "verifyToken" });
+  assert.ok(callers.some((c) => c.path === "mw.ts"));
+  assert.equal(callers[0].conf, "resolved");
+});
+
+test("callees tool returns what a function calls (end-to-end)", async () => {
+  const indexes = await makeIndex({
+    "token.ts": [
+      "export function verifyToken(x){",
+      "  // Verify the supplied token value and return it if valid.",
+      "  // Uses the decode helper to process the raw token bytes.",
+      "  return decode(x);",
+      "}",
+      "function decode(x){",
+      "  // Decode the raw token bytes into a usable payload.",
+      "  // Called internally by verifyToken during validation.",
+      "  return x;",
+      "}",
+    ].join("\n") + "\n",
+    "mw.ts": [
+      "import { verifyToken } from './token';",
+      "export function mw(r){",
+      "  // Middleware that verifies the auth token on every request.",
+      "  // Delegates to verifyToken for the actual validation logic.",
+      "  return verifyToken(r);",
+      "}",
+    ].join("\n") + "\n",
+  });
+  const callees = await defaultCalleesFn(indexes)(indexes[0].label, { symbol: "verifyToken" });
+  assert.ok(callees.some((c) => c.symbol === "decode"), `expected decode, got ${JSON.stringify(callees)}`);
+});
+
+test("neighbors tool returns callers, callees, and siblings", async () => {
+  const indexes = await makeIndex({
+    "token.ts": [
+      "export function verifyToken(x) {",
+      "  // Verify the token and decode its contents before returning.",
+      "  // Delegates to decode for the actual decoding operation.",
+      "  return decode(x);",
+      "}",
+      "function decode(x) {",
+      "  // Decode the raw token value and return the parsed result.",
+      "  // Used internally by verifyToken to parse the token bytes.",
+      "  return x;",
+      "}",
+    ].join("\n") + "\n",
+    "mw.ts": [
+      "import { verifyToken } from './token';",
+      "export function mw(req) {",
+      "  // Middleware that verifies the auth token on every request.",
+      "  // Delegates to verifyToken for the actual validation logic.",
+      "  return verifyToken(req);",
+      "}",
+    ].join("\n") + "\n",
+  });
+  const out = await defaultNeighborsFn(indexes)(indexes[0].label, { symbol: "verifyToken", path: "token.ts", lines: "1-5" });
+  assert.ok(out.callers.some((c) => c.path === "mw.ts"));
+  assert.ok(out.callees.some((c) => c.symbol === "decode"));
+  assert.ok(Array.isArray(out.siblings));
 });

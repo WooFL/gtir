@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { langFor, isIndexable, targetTypes } from "../src/languages.mjs";
+import { langFor, isIndexable, targetTypes, edgeTypes } from "../src/languages.mjs";
 
 test("langFor maps known extensions", () => {
   assert.equal(langFor(".ts"), "typescript");
@@ -46,4 +46,20 @@ test("isIndexable gates on extension allowlist", () => {
 test("targetTypes returns node kinds for a lang, [] for unknown", () => {
   assert.ok(targetTypes("python").includes("function_definition"));
   assert.deepEqual(targetTypes("cobol"), []);
+});
+
+test("edgeTypes returns call + import node types for known languages", () => {
+  const ts = edgeTypes("typescript");
+  assert.ok(ts.call.includes("call_expression"));
+  assert.ok(ts.import.includes("import_statement"));
+  const py = edgeTypes("python");
+  assert.ok(py.call.includes("call"));
+  assert.ok(py.import.includes("import_from_statement"));
+  const c = edgeTypes("c");
+  assert.ok(c.import.includes("preproc_include"));
+});
+
+test("edgeTypes returns empty arrays for an unknown language", () => {
+  const e = edgeTypes("does-not-exist");
+  assert.deepEqual(e, { call: [], import: [] });
 });

@@ -7,6 +7,7 @@ import { openStore } from "./store.mjs";
 import { preflight } from "./doctor.mjs";
 import { parseLines } from "./eval.mjs";
 import { watchRepo } from "./watch.mjs";
+import { buildAdjacency, callersOf, calleesOf, neighborsOf } from "./edges.mjs";
 
 export function sanitizeLabel(s) {
   return String(s).toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "index";
@@ -111,6 +112,38 @@ export function buildTools(indexes) {
         required: ["symbol"],
       },
     });
+    const noteMode = /nomic|notes/i.test(ix.label) || /nomic/i.test(ix.cfg?.model || "");
+    const callersName = noteMode ? `backlinks_${ix.label}` : `callers_${ix.label}`;
+    const calleesName = noteMode ? `links_${ix.label}` : `callees_${ix.label}`;
+    tools.push({
+      name: callersName,
+      description: noteMode
+        ? `Notes that link to a note in ${at} (backlinks). Pass the note name.`
+        : `Spans that call a symbol in ${at}. Real call edges (not lexical) — each tagged resolved/ambiguous.`,
+      inputSchema: { type: "object", properties: {
+        symbol: { type: "string", description: "exact symbol or note name" },
+        limit: { type: "integer", description: "max results (default 50)" },
+      }, required: ["symbol"] },
+    });
+    tools.push({
+      name: calleesName,
+      description: noteMode
+        ? `Notes/embeds a note links to in ${at}. Pass the note name.`
+        : `What a symbol calls in ${at} (outgoing call edges).`,
+      inputSchema: { type: "object", properties: {
+        symbol: { type: "string", description: "exact symbol or note name" },
+        limit: { type: "integer", description: "max results (default 50)" },
+      }, required: ["symbol"] },
+    });
+    tools.push({
+      name: `neighbors_${ix.label}`,
+      description: `Blast radius around a span in ${at}: callers + callees + same-file siblings. Returns file:line.`,
+      inputSchema: { type: "object", properties: {
+        symbol: { type: "string", description: "the span's symbol name (drives caller/callee lookup)" },
+        path: { type: "string", description: "file path of the span" },
+        lines: { type: "string", description: 'line range of the span, e.g. "48-79"' },
+      }, required: ["symbol"] },
+    });
   }
   tools.push({
     name: "gtir_status",
@@ -176,38 +209,19 @@ function signatureOf(text) {
   return sig.length > 100 ? sig.slice(0, 99) + "…" : sig;
 }
 
-// Keywords that look like a function name in front of "(...) {" but are control flow / language
-// keywords, not definitions — excluded from the C-family pass below.
-const NOT_A_DEFINITION = new Set([
-  "if", "for", "while", "switch", "catch", "return", "sizeof", "do", "else", "decltype",
-  "constexpr", "requires", "static_assert", "function", "operator", "typedef", "using", "namespace",
-]);
-
-// Every identifier this chunk *declares* — heuristic (not tree-sitter-precise), used to tell a
-// definition site from a mention. Two passes:
-//   1) keyword-declared symbols (function/def/class/struct/… across languages).
-//   2) C-family function/method DEFINITIONS — `[Class::]name(params) [quals] [: init] {`. The body
-//      brace distinguishes a definition from a call (`foo();`) or prototype (`int foo();`); the
-//      optional `Class::` prefix captures the method name (so `void Cache::write(...) {` → `write`).
-export function declaredSymbols(text) {
-  const s = String(text || "");
-  const out = new Set();
-  let m;
-  const kw = /\b(?:function|func|def|class|fn|interface|type|struct|impl|trait|enum|const|let|var)\s+([A-Za-z_$][\w$]*)/g;
-  while ((m = kw.exec(s))) out.add(m[1]);
-  const cfn = /(?:^|[\s;{}*&])(?:[A-Za-z_]\w*\s*::\s*)*([A-Za-z_]\w*)\s*\([^;{}]*\)\s*(?:noexcept|const|override|final|mutable|volatile|->[\w:<>,*&\s]+|\s)*(?::[^{};]*)?\{/g;
-  while ((m = cfn.exec(s))) if (!NOT_A_DEFINITION.has(m[1])) out.add(m[1]);
-  return [...out];
-}
+// declaredSymbols is defined in symbols.mjs (separate module to avoid circular imports through
+// watch.mjs → indexer.mjs → mcp.mjs). Re-exported here so existing importers still work.
+export { declaredSymbols } from "./symbols.mjs";
 
 function formatFind(results, symbol, kind) {
   if (!results.length) return `(no ${kind} found for "${symbol}")`;
-  return results.map((r) =>
-    `### ${r.path}:${r.lines}  _(${r.kind})_\n\`\`\`\n${r.snippet}\n\`\`\``,
-  ).join("\n\n");
+  return results.map((r) => {
+    if (!r.snippet) return `### ${r.path}:${r.lines}  _(${r.kind})_`;
+    return `### ${r.path}:${r.lines}  _(${r.kind})_\n\`\`\`\n${r.snippet}\n\`\`\``;
+  }).join("\n\n");
 }
 
-const TOOL_VERBS = ["search", "read", "outline", "similar", "find"];
+const TOOL_VERBS = ["search", "read", "outline", "similar", "find", "callers", "callees", "neighbors", "backlinks", "links"];
 
 // "search_my_wiki" -> { verb: "search", label: "my_wiki" } (labels may contain underscores).
 export function parseToolName(name) {
@@ -220,7 +234,7 @@ export function parseToolName(name) {
 const stripSnippet = (results) => results.map(({ snippet, ...rest }) => rest);
 
 async function dispatchToolCall(params, ctx) {
-  const { indexes, searchFn, statusFn, readFn, outlineFn, similarFn, findFn } = ctx;
+  const { indexes, searchFn, statusFn, readFn, outlineFn, similarFn, findFn, callersFn, calleesFn, neighborsFn } = ctx;
   const name = params.name;
   const args = params.arguments ?? {};
   const reply = (text, structured) => ({ content: [{ type: "text", text }], structuredContent: structured });
@@ -256,6 +270,18 @@ async function dispatchToolCall(params, ctx) {
         const kind = args.kind === "references" ? "references" : "definition";
         const results = await findFn(label, { symbol: args.symbol, kind, limit: args.limit });
         return reply(formatFind(results, args.symbol, kind), { symbol: args.symbol, kind, results });
+      }
+      if (verb === "callers" || verb === "backlinks") {
+        const results = await callersFn(label, { symbol: args.symbol, limit: args.limit });
+        return reply(JSON.stringify(results, null, 2), { results });
+      }
+      if (verb === "callees" || verb === "links") {
+        const results = await calleesFn(label, { symbol: args.symbol, limit: args.limit });
+        return reply(JSON.stringify(results, null, 2), { results });
+      }
+      if (verb === "neighbors") {
+        const out = await neighborsFn(label, { symbol: args.symbol, path: args.path, lines: args.lines });
+        return reply(JSON.stringify(out, null, 2), out);
       }
     }
     return { content: [{ type: "text", text: `unknown tool: ${name}` }], isError: true };
@@ -368,11 +394,67 @@ export function defaultFindFn(indexes) {
     }
     const word = new RegExp(`(?:^|[^\\w$])${reEsc(symbol)}(?![\\w$])`);
     const isDef = (r) => declaredSymbols(r.text).includes(symbol);
+    if (kind === "references") {
+      const adj = await adjacencyFor(ix).catch(() => null);
+      const edgeCallers = adj ? callersOf(adj, symbol) : [];
+      if (edgeCallers.length) {
+        return edgeCallers.slice(0, k).map((c) => ({
+          path: c.path, lines: c.lines, language: null, kind: "reference", conf: c.conf, snippet: "",
+        }));
+      }
+      // fall through to the existing lexical sweep below
+    }
     const rows = (kind === "references" ? cand.filter((r) => word.test(r.text)) : cand.filter(isDef)).slice(0, k);
     return rows.map((r) => ({
       path: r.path, lines: `${r.line_start}-${r.line_end}`, language: r.language,
       kind: isDef(r) ? "definition" : "reference", snippet: r.text,
     }));
+  };
+}
+
+const adjCache = new Map(); // repo path -> adj
+
+async function adjacencyFor(ix) {
+  const cacheKey = ix.repo;
+  if (adjCache.has(cacheKey)) return adjCache.get(cacheKey);
+  const store = await openStore(ix.cfg);
+  const rows = await store.loadEdges();
+  const adj = buildAdjacency(rows);
+  adjCache.set(cacheKey, adj);
+  return adj;
+}
+
+export function defaultCallersFn(indexes) {
+  return async (label, { symbol, limit = 50 }) => {
+    const ix = indexes.find((i) => i.label === label);
+    if (!symbol) throw new Error("symbol is required");
+    const adj = await adjacencyFor(ix);
+    return callersOf(adj, symbol).slice(0, Math.max(1, Math.min(200, limit | 0 || 50)));
+  };
+}
+
+export function defaultCalleesFn(indexes) {
+  return async (label, { symbol, limit = 50 }) => {
+    const ix = indexes.find((i) => i.label === label);
+    if (!symbol) throw new Error("symbol is required");
+    const adj = await adjacencyFor(ix);
+    return calleesOf(adj, symbol).slice(0, Math.max(1, Math.min(200, limit | 0 || 50)));
+  };
+}
+
+export function defaultNeighborsFn(indexes) {
+  return async (label, { symbol, path = null, lines = null }) => {
+    const ix = indexes.find((i) => i.label === label);
+    if (!symbol) throw new Error("symbol is required");
+    const adj = await adjacencyFor(ix);
+    let siblings = [];
+    if (path) {
+      const store = await openStore(ix.cfg);
+      siblings = (await store.chunksByPath(path)).map((r) => ({
+        line_start: Number(r.line_start), line_end: Number(r.line_end), signature: signatureOf(r.text),
+      }));
+    }
+    return neighborsOf(adj, { symbol, path, lines, siblings });
   };
 }
 
@@ -398,6 +480,8 @@ export function serveStdio(indexes, { version } = {}) {
     searchFn: defaultSearchFn(indexes), statusFn: defaultStatusFn(indexes),
     readFn: defaultReadFn(indexes), outlineFn: defaultOutlineFn(indexes),
     similarFn: defaultSimilarFn(indexes), findFn: defaultFindFn(indexes),
+    callersFn: defaultCallersFn(indexes), calleesFn: defaultCalleesFn(indexes),
+    neighborsFn: defaultNeighborsFn(indexes),
   };
   let buf = "";
   process.stdin.setEncoding("utf8");
@@ -414,7 +498,7 @@ export function serveStdio(indexes, { version } = {}) {
       if (res) process.stdout.write(JSON.stringify(res) + "\n");
     }
   });
-  process.stderr.write(`gtir mcp: serving [${indexes.map((i) => i.label).join(", ")}] × {search,read,outline,similar,find} + gtir_status\n`);
+  process.stderr.write(`gtir mcp: serving [${indexes.map((i) => i.label).join(", ")}] × {search,read,outline,similar,find,callers,callees,neighbors} + gtir_status\n`);
 }
 
 // Start a live file-watcher per served index (`gtir mcp --watch`). Each watcher runs an
@@ -424,7 +508,22 @@ export function serveStdio(indexes, { version } = {}) {
 // channel and any stray write corrupts the protocol. Returns the handles so callers can close them.
 export function startWatchers(indexes, { debounceMs = 1500, sweepMs, log = () => {} } = {}) {
   return indexes.map((ix) => {
-    const handle = watchRepo(ix.cfg, { debounceMs, sweepMs, log: (m) => log(`[${ix.label}] ${m}`) });
+    const handle = watchRepo(ix.cfg, {
+      debounceMs, sweepMs, log: (m) => log(`[${ix.label}] ${m}`),
+      onBatch: async (paths) => {
+        const { buildIndex } = await import("./indexer.mjs");
+        try {
+          const r = await buildIndex(ix.cfg, { rebuild: false, paths });
+          adjCache.delete(ix.repo); // invalidate adjacency cache after any refresh
+          if (r && (r.chunks > 0 || r.evicted > 0)) {
+            log(`[${ix.label}] refreshed — ${r.chunks} chunks (${r.embedded} embedded, ${r.reused} reused, ${r.skipped} skipped, ${r.evicted} evicted)`);
+          }
+          return r;
+        } catch (e) {
+          log(`[${ix.label}] refresh failed — ${e.message} (will retry on next change)`);
+        }
+      },
+    });
     return { label: ix.label, ...handle };
   });
 }

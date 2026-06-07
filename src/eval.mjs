@@ -102,6 +102,25 @@ export async function evalGolden(golden, searchFn, { maxK = 10, ks } = {}) {
   return { ...overall, byTier };
 }
 
+// Is the expected edge present among the extracted edges, and is it resolved?
+export function scoreEdgeGolden(edges, entry) {
+  const match = edges.find((e) =>
+    e.kind === entry.kind &&
+    e.from_path === entry.from &&
+    (entry.symbol == null || e.to_symbol === entry.symbol) &&
+    (entry.to == null || e.to_path === entry.to));
+  return { found: !!match, resolved: !!match && match.conf === "resolved" };
+}
+
+// Recall over a golden set of expected edges + the resolved/ambiguous/external split of all edges.
+export function evalEdges(edges, golden) {
+  const found = golden.filter((g) => scoreEdgeGolden(edges, g).found).length;
+  const recall = golden.length ? round(found / golden.length) : 0;
+  const split = { resolved: 0, ambiguous: 0, external: 0 };
+  for (const e of edges) if (e.conf in split) split[e.conf]++;
+  return { recall, n: golden.length, found, split };
+}
+
 // Compare per-tier metrics. Returns regressions with metric names prefixed "<tier>:".
 // A tier present in cur but absent from base is skipped (mirrors compareBaseline's missing-metric rule).
 export function compareTiers(cur, base, tol = 0.005) {
