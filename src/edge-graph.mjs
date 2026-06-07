@@ -86,3 +86,78 @@ export function impact(graph, startKeys, { direction = "upstream", depth = Infin
   out.sort((a, b) => a.depth - b.depth || a.path.localeCompare(b.path));
   return { nodes: out, truncated };
 }
+
+// Tarjan strongly-connected components over an adjacency Map restricted to `nodes`.
+// Recursive — fine at gtir's scale (thousands of nodes, well under V8's frame limit).
+function tarjanSCC(nodes, adj) {
+  let counter = 0;
+  const index = new Map(), low = new Map(), onStack = new Set(), stack = [];
+  const sccs = [];
+  const connect = (v) => {
+    index.set(v, counter); low.set(v, counter); counter++;
+    stack.push(v); onStack.add(v);
+    for (const w of (adj.get(v) || [])) {
+      if (!nodes.has(w)) continue;
+      if (!index.has(w)) { connect(w); low.set(v, Math.min(low.get(v), low.get(w))); }
+      else if (onStack.has(w)) low.set(v, Math.min(low.get(v), index.get(w)));
+    }
+    if (low.get(v) === index.get(v)) {
+      const comp = [];
+      let w;
+      do { w = stack.pop(); onStack.delete(w); comp.push(w); } while (w !== v);
+      sccs.push(comp);
+    }
+  };
+  for (const v of nodes) if (!index.has(v)) connect(v);
+  return sccs;
+}
+
+// Shortest closed walk through `start` within the induced subgraph on `comp` (BFS).
+// Returns [start, ..., closing, start]; defensively [start] if no cycle (won't happen for |SCC|>1).
+function shortestCycleThrough(start, comp, adj) {
+  const inComp = new Set(comp);
+  const prev = new Map([[start, null]]);
+  let closing = null;
+  const q = [start];
+  bfs: while (q.length) {
+    const v = q.shift();
+    for (const w of (adj.get(v) || [])) {
+      if (!inComp.has(w)) continue;
+      if (w === start) { closing = v; break bfs; }
+      if (!prev.has(w)) { prev.set(w, v); q.push(w); }
+    }
+  }
+  if (closing === null) return [start];
+  const path = [];
+  for (let v = closing; v !== null; v = prev.get(v)) path.push(v);
+  path.reverse();              // start ... closing
+  return path.concat(start);   // start ... closing start
+}
+
+// Circular dependencies, split by edge class. SCCs of size>1 are cycles; size-1 SCCs with a
+// self-edge are counted as excluded self-recursion (intended, not a smell).
+export function cycles(graph) {
+  const classes = [
+    ["call_cycles", (k) => k === "calls"],
+    ["import_cycles", (k) => k === "imports"],
+    ["link_cycles", (k) => k === "links" || k === "embeds"],
+  ];
+  const result = { call_cycles: [], import_cycles: [], link_cycles: [], excluded_self_recursive: 0 };
+  for (const [outKey, pred] of classes) {
+    const adj = new Map();
+    const nodes = new Set();
+    for (const e of graph.edgeList) {
+      if (!pred(e.kind)) continue;
+      nodes.add(e.src); nodes.add(e.dst);
+      if (e.src === e.dst) { result.excluded_self_recursive++; continue; }
+      let s = adj.get(e.src); if (!s) { s = new Set(); adj.set(e.src, s); } s.add(e.dst);
+    }
+    for (const comp of tarjanSCC(nodes, adj)) {
+      if (comp.length < 2) continue;
+      const members = comp.slice().sort();
+      result[outKey].push({ members, example: shortestCycleThrough(members[0], comp, adj) });
+    }
+    result[outKey].sort((a, b) => a.members[0].localeCompare(b.members[0]));
+  }
+  return result;
+}

@@ -91,3 +91,48 @@ test("impact empty when start has no callers", () => {
   assert.deepEqual(r.nodes, []);
   assert.equal(r.truncated, false);
 });
+
+import { cycles } from "../src/edge-graph.mjs";
+
+test("cycles: detects a 2-cycle in calls and reports a sample path", () => {
+  const g = buildGraph([E.call("a.mjs", "f", "b.mjs", "g"), E.call("b.mjs", "g", "a.mjs", "f")]);
+  const r = cycles(g);
+  assert.equal(r.call_cycles.length, 1);
+  assert.deepEqual(r.call_cycles[0].members, ["a.mjs#f", "b.mjs#g"]);
+  // example is a closed walk: first === last, length 3
+  const ex = r.call_cycles[0].example;
+  assert.equal(ex[0], ex[ex.length - 1]);
+  assert.equal(ex.length, 3);
+});
+
+test("cycles: detects a 3-cycle", () => {
+  const g = buildGraph([
+    E.call("a.mjs", "f", "b.mjs", "g"),
+    E.call("b.mjs", "g", "c.mjs", "h"),
+    E.call("c.mjs", "h", "a.mjs", "f"),
+  ]);
+  const r = cycles(g);
+  assert.equal(r.call_cycles.length, 1);
+  assert.equal(r.call_cycles[0].members.length, 3);
+});
+
+test("cycles: acyclic graph yields none", () => {
+  const g = buildGraph([E.call("a.mjs", "f", "b.mjs", "g"), E.call("b.mjs", "g", "c.mjs", "h")]);
+  const r = cycles(g);
+  assert.deepEqual(r.call_cycles, []);
+  assert.deepEqual(r.import_cycles, []);
+});
+
+test("cycles: self-recursion is excluded, not reported", () => {
+  const g = buildGraph([E.call("a.mjs", "f", "a.mjs", "f")]);
+  const r = cycles(g);
+  assert.deepEqual(r.call_cycles, []);
+  assert.equal(r.excluded_self_recursive, 1);
+});
+
+test("cycles: import cycles separate from call cycles", () => {
+  const g = buildGraph([E.imp("a.mjs", "b.mjs"), E.imp("b.mjs", "a.mjs")]);
+  const r = cycles(g);
+  assert.equal(r.import_cycles.length, 1);
+  assert.deepEqual(r.call_cycles, []);
+});
