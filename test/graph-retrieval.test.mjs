@@ -26,3 +26,30 @@ test("centralityMultiplier: 1 at centrality 0; bounded by 1+weight; monotonic", 
   const small = centralityMultiplier("function small(){}", "a.mjs", degree, { weight: 0.15, K: 8 });
   assert.ok(hub > small);          // degree 20 boosts more than degree 1
 });
+
+import { applyCentrality, contextFor } from "../src/graph-retrieval.mjs";
+import { buildGraph } from "../src/edge-graph.mjs";
+
+test("applyCentrality: re-sorts by boosted score and annotates only when >1", () => {
+  const deg = { call: new Map([["a.mjs#hub", 50]]), importIn: new Map() };
+  const hits = [
+    { path: "z.mjs", score: 0.30, snippet: "function lonely(){}" },         // no degree
+    { path: "a.mjs", score: 0.29, snippet: "function hub(){}" },            // high degree
+  ];
+  const out = applyCentrality(hits, deg, { weight: 0.15, K: 8 });
+  assert.equal(out[0].path, "a.mjs");                 // boosted past the 0.30 lonely hit
+  assert.ok(out[0].centrality > 1);
+  assert.equal(out.find((h) => h.path === "z.mjs").centrality, undefined); // ×1 → no annotation
+});
+
+test("contextFor: callers from rev, callees from fwd, precise keys, capped", () => {
+  const g = buildGraph([
+    { kind: "calls", conf: "resolved", from_path: "x.mjs", from_symbol: "caller", to_path: "a.mjs", to_symbol: "mid", candidates: [] },
+    { kind: "calls", conf: "resolved", from_path: "a.mjs", from_symbol: "mid", to_path: "y.mjs", to_symbol: "callee", candidates: [] },
+  ]);
+  const ctx = contextFor("function mid(){}", "a.mjs", g, { cap: 5 });
+  assert.deepEqual(ctx.callers, [{ path: "x.mjs", symbol: "caller" }]);
+  assert.deepEqual(ctx.callees, [{ path: "y.mjs", symbol: "callee" }]);
+  const empty = contextFor("// no symbols", "a.mjs", g);
+  assert.deepEqual(empty, { callers: [], callees: [] });
+});

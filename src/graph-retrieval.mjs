@@ -19,3 +19,30 @@ export function centralityMultiplier(text, path, degree, { weight = 0.15, K = 8 
   if (c <= 0) return 1;
   return 1 + weight * (c / (c + K));
 }
+
+// Re-rank fused hits by centrality (pure): multiply each hit.score by its multiplier, re-sort desc,
+// annotate `centrality` only when ≠1. Does NOT slice — the caller slices to k afterward.
+export function applyCentrality(hits, degree, opts = {}) {
+  const out = hits.map((h) => {
+    const mult = centralityMultiplier(h.snippet ?? "", h.path, degree, opts);
+    return { ...h, score: Number((h.score * mult).toFixed(4)),
+      ...(mult !== 1 ? { centrality: Number(mult.toFixed(3)) } : {}) };
+  });
+  out.sort((a, b) => b.score - a.score);
+  return out;
+}
+
+// Callers/callees of the symbols a chunk declares (precise path#symbol keys), each capped.
+export function contextFor(text, path, graph, { cap = 5 } = {}) {
+  const callers = new Set(), callees = new Set();
+  for (const name of declaredSymbols(text)) {
+    const key = `${path}#${name}`;
+    for (const c of (graph.rev.get(key) || [])) callers.add(c);
+    for (const c of (graph.fwd.get(key) || [])) callees.add(c);
+  }
+  const fmt = (s) => [...s].slice(0, cap).map((k) => {
+    const m = graph.nodeMeta.get(k);
+    return { path: m?.path ?? k, symbol: m?.symbol ?? null };
+  });
+  return { callers: fmt(callers), callees: fmt(callees) };
+}
