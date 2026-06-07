@@ -468,7 +468,7 @@ async function main() {
           kind: args.kind ?? null, conf: args.conf ?? null, pathPrefix: args.pathPrefix ?? null,
         });
         process.stderr.write(`gtir: wrote ${r.out} (${r.nodes} nodes, ${r.edges} edges)\n`);
-        if (r.truncated) process.stderr.write(`gtir: graph truncated — dropped ${r.dropped} lowest-degree node(s); narrow with --focus/--path-prefix or raise --max-nodes\n`);
+        if (r.truncated) process.stderr.write(`gtir: graph truncated by --max-nodes — dropped ${r.dropped} lowest-degree node(s); raise or drop --max-nodes, or narrow with --focus/--path-prefix\n`);
         break;
       }
       default:
