@@ -3,7 +3,7 @@ import { basename } from "node:path";
 import { declaredSymbols } from "./symbols.mjs";
 import { openStore } from "./store.mjs";
 import { isNotesMode } from "./search.mjs";
-import { buildGraph, impact, cycles, orphans, nodeKey } from "./edge-graph.mjs";
+import { buildGraph, impact, cycles, orphans, nodeKey, degreeMap } from "./edge-graph.mjs";
 
 const noteName = (p) => basename(String(p)).replace(/\.(md|mdx)$/i, "");
 
@@ -86,3 +86,23 @@ export async function cyclesQuery(cfg, { includeAmbiguous = false } = {}) {
   if (!hasEdges) return { error: "no edge index — run: gtir index" };
   return cycles(graph);
 }
+
+const _graphCache = new Map(); // indexDir -> { graph, degree }
+
+// Build (once per indexDir) the graph + degree maps used by centrality/context at search time.
+// Empty edges → empty graph (degrees 0) → the search flags become no-ops. Cached for the process
+// lifetime (like adjCache in mcp.mjs); rebuilt on restart or after clearGraphCache.
+export async function graphForSearch(cfg) {
+  const key = cfg.indexDir;
+  if (_graphCache.has(key)) return _graphCache.get(key);
+  const store = await openStore(cfg);
+  const graph = buildGraph(await store.loadEdges());
+  const degree = {
+    call: degreeMap(graph, { kinds: ["calls"] }),
+    importIn: degreeMap(graph, { kinds: ["imports"], direction: "in" }),
+  };
+  const entry = { graph, degree };
+  _graphCache.set(key, entry);
+  return entry;
+}
+export function clearGraphCache(indexDir) { indexDir ? _graphCache.delete(indexDir) : _graphCache.clear(); }
