@@ -235,19 +235,18 @@ export function renderHtml({ nodes, edges, meta = {} }, cosmosSource) {
   #counts{margin-top:8px;color:#8b949e}
   #info{position:fixed;bottom:8px;left:8px;z-index:10;background:#161b22e6;border:1px solid #30363d;border-radius:6px;padding:8px 10px;max-width:340px;display:none}
   #msg{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:20;color:#f85149;font-size:16px}
-  #labels{position:fixed;inset:0;pointer-events:none;z-index:5;overflow:hidden}
-  .nl{position:absolute;top:0;left:0;color:#e6edf3;font-size:10px;white-space:nowrap;text-shadow:0 0 3px #000,0 0 3px #000,0 0 3px #000;will-change:transform}
+  #lblcv{position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:5}
   button{background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:3px 8px;cursor:pointer}
 </style></head>
 <body>
 <canvas id="cv"></canvas>
-<div id="labels"></div>
+<canvas id="lblcv"></canvas>
 <div id="msg"></div>
 <div id="panel">
   <h1>gtir graph <button id="pause">⏸ pause</button></h1>
   <input id="search" placeholder="find node…" autocomplete="off">
   <div class="row">min degree <span id="minDegV">0</span><br><input id="minDeg" type="range" min="0" max="20" value="0" style="width:100%"></div>
-  <div class="row">spacing <span id="spaceV">22</span><br><input id="space" type="range" min="6" max="80" value="22" style="width:100%"></div>
+  <div class="row">spacing <span id="spaceV">30</span><br><input id="space" type="range" min="6" max="140" value="30" style="width:100%"></div>
   <label><input type="checkbox" id="lbls" checked> hub labels</label>
   <div class="row"><b>kind</b>
     <label><input type="checkbox" class="k" value="calls" checked> calls</label>
@@ -283,9 +282,9 @@ ALLE.forEach(e => { e.color = CONF[e.conf] || "#666"; e.width = Math.min(4, e.co
 
 // Seed each node near its cluster's grid cell (wide cells + jitter) so the GPU force opens up
 // into separated neighborhoods instead of one ball.
-const cols = Math.max(1, Math.ceil(Math.sqrt(clusters.length))), CELL = 1400;
+const cols = Math.max(1, Math.ceil(Math.sqrt(clusters.length))), CELL = 2600;
 const cIdx = new Map(clusters.map((c, i) => [c, i]));
-ALLN.forEach(n => { const i = cIdx.get(n.cluster); n.x = (i % cols) * CELL + (Math.random() * 400 - 200); n.y = Math.floor(i / cols) * CELL + (Math.random() * 400 - 200); });
+ALLN.forEach(n => { const i = cIdx.get(n.cluster); n.x = (i % cols) * CELL + (Math.random() * 700 - 350); n.y = Math.floor(i / cols) * CELL + (Math.random() * 700 - 350); });
 
 function showInfo(n) {
   const refs = (n.refs || []).map(r => esc(r.path) + ":" + r.line).join("<br>");
@@ -295,34 +294,46 @@ function showInfo(n) {
 }
 function hideInfo() { $("info").style.display = "none"; }
 
-// Layout forces. Low gravity + strong repulsion + long links = spread, not clumped. The spacing
-// slider scales linkDistance and repulsion together at runtime via setConfig.
-const SIM = { gravity: 0.08, repulsion: 1.8, repulsionTheta: 1.15, linkSpring: 0.5, linkDistance: 22, friction: 0.9, decay: 100000, onTick: () => positionLabels() };
+// Layout forces. With tens of thousands of edges, link springs pull everything into a ball — so:
+// big space, strong repulsion, long+soft links, low gravity. The spacing slider scales
+// linkDistance + repulsion together at runtime via setConfig.
+const SIM = { gravity: 0.05, repulsion: 2.0, repulsionTheta: 1.2, linkSpring: 0.3, linkDistance: 30, friction: 0.9, decay: 100000 };
 
-// Always-on text labels for the top-degree hubs (cosmos renders GPU points, no native text):
-// DOM spans positioned over the canvas, re-synced from GPU node positions each tick/zoom.
+// Top-degree hub labels. cosmos renders GPU points (no native text), so labels are drawn on a 2D
+// canvas LAYER over the graph and redrawn every animation frame from live node positions — they
+// stay frame-locked to the nodes (no DOM-div drift) and read as part of the same scene.
 const shortName = n => (n.label.includes(" · ") ? n.label.split(" · ")[0] : (n.label.split(/[\\/]/).pop() || n.label));
 const LABELN = [...ALLN].sort((a, b) => (b.degree || 0) - (a.degree || 0)).slice(0, 30);
-const labelEls = new Map();
-const labelBox = $("labels");
-LABELN.forEach(n => { const el = document.createElement("div"); el.className = "nl"; el.textContent = shortName(n); labelBox.appendChild(el); labelEls.set(n.id, el); });
+const labelText = new Map(LABELN.map(n => [n.id, shortName(n)]));
 let showLabels = true;
-function positionLabels() {
-  if (!graph) return;
+const lcv = $("lblcv"), lctx = lcv.getContext("2d");
+function sizeLabelCanvas() {
+  const dpr = window.devicePixelRatio || 1;
+  lcv.width = window.innerWidth * dpr; lcv.height = window.innerHeight * dpr;
+  lctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+sizeLabelCanvas();
+window.addEventListener("resize", sizeLabelCanvas);
+function drawLabels() {
+  lctx.clearRect(0, 0, lcv.width, lcv.height);
+  if (!graph || !showLabels) return;
   const pos = graph.getTrackedNodePositionsMap();
-  labelEls.forEach((el, id) => {
-    const p = showLabels && pos.get(id);
-    if (!p) { el.style.display = "none"; return; }
+  lctx.font = "10px system-ui,sans-serif";
+  lctx.textBaseline = "middle";
+  lctx.lineWidth = 3; lctx.strokeStyle = "rgba(0,0,0,0.85)"; lctx.fillStyle = "#e6edf3";
+  labelText.forEach((txt, id) => {
+    const p = pos.get(id);
+    if (!p) return;
     const [sx, sy] = graph.spaceToScreenPosition(p);
-    el.style.display = "block";
-    el.style.transform = "translate(" + (sx + 7) + "px," + (sy - 6) + "px)";
+    lctx.strokeText(txt, sx + 7, sy);
+    lctx.fillText(txt, sx + 7, sy);
   });
 }
 
 let graph = null, paused = false;
 try {
   graph = new window.cosmos.Graph($("cv"), {
-    spaceSize: 8192,
+    spaceSize: 16384,
     backgroundColor: "#0d1117",
     nodeColor: n => n.color,
     nodeSize: n => n.size,
@@ -331,7 +342,6 @@ try {
     linkWidth: l => l.width,
     scaleNodesOnZoom: true,
     simulation: SIM,
-    onZoom: () => positionLabels(),
     events: {
       onClick: (n) => { if (n) { graph.selectNodeById(n.id, true); showInfo(n); } else { graph.unselectNodes(); hideInfo(); } },
       onNodeMouseOver: (n) => { if (n) showInfo(n); },
@@ -341,6 +351,8 @@ try {
   $("msg").style.display = "flex";
   $("msg").textContent = "WebGL is required to view this graph.";
 }
+// Redraw labels every frame so they track nodes during sim, drag, and inertial pan/zoom.
+(function loop() { drawLabels(); requestAnimationFrame(loop); })();
 
 function recompute() {
   const minDeg = +$("minDeg").value;
@@ -354,7 +366,6 @@ function recompute() {
   if (graph) {
     graph.setData(vN, vE); graph.start(0.3);
     graph.trackNodePositionsByIds(LABELN.map(n => n.id));   // re-track hubs against the new data
-    positionLabels();
   }
   $("counts").textContent = vN.length + " nodes · " + vE.length + " edges" + (meta && meta.truncated ? " · dropped " + meta.dropped : "");
 }
@@ -373,10 +384,10 @@ $("minDeg").addEventListener("input", () => { $("minDegV").textContent = $("minD
 $("space").addEventListener("input", () => {
   const d = +$("space").value;
   $("spaceV").textContent = d;
-  SIM.linkDistance = d; SIM.repulsion = Math.max(1, d / 12);
+  SIM.linkDistance = d; SIM.repulsion = Math.max(1.5, d / 10);
   if (graph) { graph.setConfig({ simulation: SIM }); graph.start(0.5); }
 });
-$("lbls").addEventListener("change", () => { showLabels = $("lbls").checked; positionLabels(); });
+$("lbls").addEventListener("change", () => { showLabels = $("lbls").checked; });
 document.querySelectorAll(".k,.cf").forEach(el => el.addEventListener("change", recompute));
 $("search").addEventListener("input", () => {
   const q = $("search").value.toLowerCase();
