@@ -14,9 +14,9 @@ function edgeToLinks(e, includeAmbiguous) {
   if (e.conf === "ambiguous" && !includeAmbiguous) return [];
   if (e.kind === "calls") {
     const src = nodeKey(e.from_path, e.from_symbol || null);
-    if (e.conf === "resolved") {
+    if (e.conf === "resolved" || e.conf === "inferred") {
       if (!e.to_path || !e.to_symbol) return [];
-      return [{ src, dst: nodeKey(e.to_path, e.to_symbol), kind: "calls", conf: "resolved" }];
+      return [{ src, dst: nodeKey(e.to_path, e.to_symbol), kind: "calls", conf: e.conf }];
     }
     const name = e.ref_name;
     if (!name || !Array.isArray(e.candidates)) return [];

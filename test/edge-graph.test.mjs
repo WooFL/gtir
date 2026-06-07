@@ -195,3 +195,13 @@ test("degreeMap: call-degree keyed by symbol; import in-degree by file", () => {
 test("degreeMap: empty graph yields empty map", () => {
   assert.equal(degreeMap(buildGraph([])).size, 0);
 });
+
+test("buildGraph: inferred call edge wires like resolved (one link, not fan-out)", () => {
+  const g = buildGraph([{ kind: "calls", conf: "inferred", from_path: "a.mjs", from_symbol: "f",
+    to_path: "b.mjs", to_symbol: "g", ref_name: "g", candidates: [], score: 0.71 }]);
+  assert.deepEqual([...g.fwd.get("a.mjs#f")], ["b.mjs#g"]);
+  assert.ok(g.rev.get("b.mjs#g").has("a.mjs#f"));
+  assert.equal(g.edgeList.length, 1);
+  assert.equal(g.edgeList[0].conf, "inferred");
+  assert.equal(degreeMap(g, { kinds: ["calls"] }).get("b.mjs#g"), 1);
+});
