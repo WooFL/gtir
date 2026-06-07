@@ -207,7 +207,7 @@ function resolveSourceStem(fromPath, source) {
 
 const noteKey = (s) => basename(String(s)).replace(/\.(md|mdx)$/i, "").toLowerCase();
 
-function row(kind, from, to, conf, candidates, contentHash, refName) {
+function row(kind, from, to, conf, candidates, contentHash, refName, score = null) {
   return {
     kind, conf,
     from_path: from.path, from_lines: from.lines ?? `${from.fromLine}`, from_symbol: from.symbol ?? null,
@@ -216,6 +216,7 @@ function row(kind, from, to, conf, candidates, contentHash, refName) {
     ref_name: refName ?? null,
     candidates: candidates ?? [],
     content_hash: contentHash ?? null,
+    score: score ?? null,
   };
 }
 
@@ -289,9 +290,11 @@ export function buildAdjacency(rows) {
   return { callers, callees };
 }
 
-const callerRec = (r) => ({ path: r.from_path, lines: r.from_lines, kind: r.kind, conf: r.conf });
+const callerRec = (r) => ({ path: r.from_path, lines: r.from_lines, kind: r.kind, conf: r.conf,
+  ...(r.score ? { score: r.score } : {}) });
 const calleeRec = (r) => ({ path: r.to_path, lines: r.to_lines, symbol: r.to_symbol, kind: r.kind,
-  conf: r.conf, ...(r.candidates?.length ? { candidates: r.candidates } : {}) });
+  conf: r.conf, ...(r.score ? { score: r.score } : {}),
+  ...(r.candidates?.length ? { candidates: r.candidates } : {}) });
 
 export function callersOf(adj, symbol) {
   return (adj.callers.get(symbol) ?? []).map(callerRec);

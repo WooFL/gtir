@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { getParser } from "../src/parser.mjs";
-import { extractCodeEdges, extractNotesEdges, resolveEdges } from "../src/edges.mjs";
+import { extractCodeEdges, extractNotesEdges, resolveEdges, buildAdjacency, calleesOf } from "../src/edges.mjs";
 
 const symIndex = new Map([
   ["verifyToken", [{ path: "src/auth/token.ts", line_start: 48, line_end: 79 }]],
@@ -234,7 +234,7 @@ test("extractNotesEdges ignores wikilinks inside code fences", () => {
   assert.ok(!edges.some((e) => e.target === "NotALink"));
 });
 
-import { buildAdjacency, callersOf, calleesOf, neighborsOf } from "../src/edges.mjs";
+import { callersOf, neighborsOf } from "../src/edges.mjs";
 
 const rows = [
   { kind: "calls", conf: "resolved", from_path: "mw.ts", from_lines: "12", from_symbol: null,
@@ -270,4 +270,22 @@ test("neighborsOf folds in derived siblings from the chunk list", () => {
   assert.ok(out.callees.some((c) => c.symbol === "decode"));
   assert.ok(out.siblings.some((s) => s.signature === "refreshToken()"));
   assert.ok(!out.siblings.some((s) => s.signature === "verifyToken()")); // self excluded
+});
+
+test("resolveEdges rows carry a score field (null by default)", () => {
+  const idx = new Map([["verifyToken", [{ path: "src/auth/token.ts", line_start: 48, line_end: 79 }]]]);
+  const raw = [{ kind: "calls", refName: "verifyToken", fromPath: "src/mw.ts", fromLine: 12, fromSymbol: "mw" }];
+  const [row] = resolveEdges(raw, idx, new Map());
+  assert.ok("score" in row);
+  assert.equal(row.score, null);
+});
+
+test("calleesOf surfaces score when an edge has one", () => {
+  const adj = buildAdjacency([
+    { kind: "calls", conf: "inferred", from_path: "a.ts", from_lines: "1", from_symbol: "f",
+      to_path: "b.ts", to_lines: "10-20", to_symbol: "g", ref_name: "g", candidates: [], content_hash: "h", score: 0.71 },
+  ]);
+  const [callee] = calleesOf(adj, "f");
+  assert.equal(callee.conf, "inferred");
+  assert.equal(callee.score, 0.71);
 });
