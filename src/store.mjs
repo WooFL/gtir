@@ -137,6 +137,59 @@ export async function openStore(cfg) {
     if (names.includes("chunks")) await db.dropTable("chunks");
   }
 
+  async function edgesTable() {
+    const names = await tableNames();
+    return names.includes("edges") ? await db.openTable("edges") : null;
+  }
+
+  // Serialize candidates[] to JSON so an empty array never breaks list-type inference.
+  function toEdgeRow(e) {
+    return {
+      kind: e.kind, conf: e.conf,
+      from_path: e.from_path, from_lines: String(e.from_lines ?? ""), from_symbol: e.from_symbol ?? "",
+      to_path: e.to_path ?? "", to_lines: e.to_lines ?? "", to_symbol: e.to_symbol ?? "",
+      candidates_json: JSON.stringify(e.candidates ?? []),
+      content_hash: e.content_hash ?? "",
+    };
+  }
+  function fromEdgeRow(r) {
+    return {
+      kind: r.kind, conf: r.conf,
+      from_path: r.from_path, from_lines: r.from_lines, from_symbol: r.from_symbol || null,
+      to_path: r.to_path || null, to_lines: r.to_lines || null, to_symbol: r.to_symbol || null,
+      candidates: (() => { try { return JSON.parse(r.candidates_json || "[]"); } catch { return []; } })(),
+      content_hash: r.content_hash || null,
+    };
+  }
+
+  async function upsertEdges(edges) {
+    if (!edges.length) return;
+    const rows = edges.map(toEdgeRow);
+    const paths = [...new Set(rows.map((r) => r.from_path))];
+    let tbl = await edgesTable();
+    if (!tbl) { await db.createTable("edges", rows); return; }
+    await tbl.delete(`from_path IN (${inList(paths)})`);
+    await tbl.add(rows);
+  }
+
+  async function loadEdges() {
+    const tbl = await edgesTable();
+    if (!tbl) return [];
+    const rows = await tbl.query().toArray();
+    return rows.map(fromEdgeRow);
+  }
+
+  async function evictEdgePaths(paths) {
+    if (!paths.length) return;
+    const tbl = await edgesTable();
+    if (tbl) await tbl.delete(`from_path IN (${inList(paths)})`);
+  }
+
+  async function dropEdges() {
+    const names = await tableNames();
+    if (names.includes("edges")) await db.dropTable("edges");
+  }
+
   // All chunks for one file, ordered by start line — the source for `outline`.
   async function chunksByPath(path) {
     const tbl = await chunksTable();
@@ -158,5 +211,5 @@ export async function openStore(cfg) {
     return rows.find((r) => Number(r.line_start) <= line && line <= Number(r.line_end)) || rows[0];
   }
 
-  return { chunksTable, upsertRows, loadManifest, evictPaths, writeMeta, readMeta, hasContentHash, chunkColumns, loadEmbedCache, dropChunks, chunksByPath, chunkAt };
+  return { chunksTable, upsertRows, loadManifest, evictPaths, writeMeta, readMeta, hasContentHash, chunkColumns, loadEmbedCache, dropChunks, chunksByPath, chunkAt, upsertEdges, loadEdges, evictEdgePaths, dropEdges };
 }
