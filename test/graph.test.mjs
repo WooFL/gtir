@@ -185,3 +185,10 @@ test("renderHtml: shows truncation note when capped", () => {
   const html = renderHtml({ nodes: [], edges: [], meta: { truncated: true, dropped: 12 } }, "var d3={};");
   assert.ok(html.includes("dropped 12"));
 });
+
+test("renderHtml: tooltip escapes user data (esc helper present)", () => {
+  const g = buildGraph([E({ from_symbol: "f", from_path: "a.ts", to_symbol: "g", to_path: "b.ts", ref_name: "g" })]);
+  const html = renderHtml({ nodes: g.nodes, edges: g.edges, meta: {} }, "var d3={};");
+  assert.ok(html.includes("&amp;") && html.includes("&lt;"));   // esc map literal embedded
+  assert.ok(html.includes("esc(d.label)"));                      // label is escaped at render time
+});

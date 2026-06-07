@@ -174,7 +174,8 @@ function safeJson(obj) {
 export function renderHtml({ nodes, edges, meta = {} }, d3Source) {
   const data = safeJson({ nodes, edges });
   const colors = safeJson({ conf: CONF_COLOR, cls: CLS_COLOR });
-  const trunc = meta.truncated ? `truncated: dropped ${meta.dropped}` : "";
+  const trunc = meta.truncated ? `truncated: dropped ${meta.dropped ?? 0}` : "";
+  const d3Safe = String(d3Source).replace(/<\/script>/gi, "<\\/script>");
   return `<!doctype html>
 <html><head><meta charset="utf-8"><title>gtir graph</title>
 <style>
@@ -207,7 +208,7 @@ export function renderHtml({ nodes, edges, meta = {} }, d3Source) {
 </div>
 <div id="tip"></div>
 <svg></svg>
-<script>${d3Source}</script>
+<script>${d3Safe}</script>
 <script>
 window.__GTIR_GRAPH__ = ${data};
 const COLORS = ${colors};
@@ -242,13 +243,14 @@ node.call(d3.drag()
   .on("drag", (ev, d) => { d.fx = ev.x; d.fy = ev.y; })
   .on("end", (ev, d) => { if (!ev.active) sim.alphaTarget(0); }));
 
+const esc = s => String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 const tip = document.getElementById("tip");
 function show(html, ev) { tip.innerHTML = html; tip.style.display = "block"; tip.style.left = (ev.clientX + 12) + "px"; tip.style.top = (ev.clientY + 12) + "px"; }
 function hide() { tip.style.display = "none"; }
 node.on("mousemove", (ev, d) => {
-  const refs = (d.refs || []).map(r => \`\${r.path}:\${r.line}\`).join("<br>");
-  const cand = (d.candidates || []).length ? "<br><i>candidates:</i><br>" + d.candidates.join("<br>") : "";
-  show(\`<b>\${d.label}</b><br><span style="color:#8b949e">\${d.cls}</span><br>\${refs}\${cand}\`, ev);
+  const refs = (d.refs || []).map(r => \`\${esc(r.path)}:\${r.line}\`).join("<br>");
+  const cand = (d.candidates || []).length ? "<br><i>candidates:</i><br>" + d.candidates.map(esc).join("<br>") : "";
+  show(\`<b>\${esc(d.label)}</b><br><span style="color:#8b949e">\${d.cls}</span><br>\${refs}\${cand}\`, ev);
 }).on("mouseleave", hide);
 link.on("mousemove", (ev, d) => show(\`\${d.kind} · <span style="color:\${COLORS.conf[d.conf]}">\${d.conf}</span>\`, ev)).on("mouseleave", hide);
 
