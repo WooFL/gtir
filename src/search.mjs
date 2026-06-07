@@ -1,6 +1,7 @@
 import { openStore } from "./store.mjs";
 import { embedTexts } from "./embed.mjs";
 import { rerankDocs } from "./rerank.mjs";
+import { applyCentrality, contextFor } from "./graph-retrieval.mjs";
 
 const RRF_K = 60; // canonical default (Cormack et al.), as in the original server.mjs
 
@@ -93,7 +94,8 @@ export function applyRerank(fused, ranked, limit) {
   return out.slice(0, limit);
 }
 
-export async function search(query, cfg, { k = 8, pathPrefix = null, language = null } = {}) {
+export async function search(query, cfg, { k = 8, pathPrefix = null, language = null,
+  centrality = false, edges = false, graphData = null } = {}) {
   if (!query || typeof query !== "string") throw new Error("query is required (string)");
   const store = await openStore(cfg);
   const tbl = await store.chunksTable();
@@ -137,9 +139,22 @@ export async function search(query, cfg, { k = 8, pathPrefix = null, language = 
   }
 
   const priorOf = (p) => pathPrior(p, query, cfg);
-  const fused = fuseRRF(vecRows, ftsRows, cfg.rerank ? rcand : limit, ftsW, priorOf);
-  if (!cfg.rerank) return fused;
+  // Centrality re-ranks the fused set; fuse a wider candidate pool so the multiplier can lift a
+  // high-degree item from just outside the top-k into it, then slice to k.
+  const fuseLimit = cfg.rerank ? rcand : (centrality ? Math.min(fanout, Math.max(limit * 3, 24)) : limit);
+  const fused = fuseRRF(vecRows, ftsRows, fuseLimit, ftsW, priorOf);
+
+  if (!cfg.rerank) {
+    let out = fused;
+    if (centrality && graphData) out = applyCentrality(out, graphData.degree, { weight: cfg.centralityWeight, K: cfg.centralityK });
+    out = out.slice(0, limit);
+    if (edges && graphData) out = out.map((h) => ({ ...h, ...contextFor(h.snippet, h.path, graphData.graph, { cap: cfg.contextCap }) }));
+    return out;
+  }
   const rerankImpl = cfg.rerankImpl ?? ((q, docs) => rerankDocs(q, docs, cfg));
   const ranked = await rerankImpl(query, fused.map((r) => r.snippet));
-  return applyRerank(fused, ranked, limit);
+  const reranked = applyRerank(fused, ranked, limit);
+  // Rerank stays authoritative — centrality is NOT applied here; edges still annotate.
+  if (edges && graphData) return reranked.map((h) => ({ ...h, ...contextFor(h.snippet, h.path, graphData.graph, { cap: cfg.contextCap }) }));
+  return reranked;
 }

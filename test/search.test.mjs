@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { fuseRRF, isSymbolQuery } from "../src/search.mjs";
+import { fuseRRF, isSymbolQuery, search } from "../src/search.mjs";
 
 test("isSymbolQuery: a single bare identifier is symbol-like; multi-word/NL queries are not", () => {
   assert.equal(isSymbolQuery("fetchWithRetry"), true);
@@ -110,4 +110,49 @@ test("applyRerank ignores out-of-range indices from the server", () => {
   const ranked = [{ index: 9, score: 0.9 }, { index: 0, score: 0.5 }];
   const out = applyRerank(fused, ranked, 5);
   assert.deepEqual(out.map((r) => r.path), ["a", "b"]);  // index 9 dropped; b appended
+});
+
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { openStore } from "../src/store.mjs";
+import { graphForSearch } from "../src/graph-queries.mjs";
+
+// Deterministic fake embedder: both chunks embed identically to the query so vector ranks tie,
+// letting the centrality multiplier decide order.
+const fakeEmbed = (texts) => Promise.resolve(texts.map(() => [1, 0, 0]));
+
+function seedCfg() {
+  const dir = mkdtempSync(join(tmpdir(), "gtir-search-gq-"));
+  return { indexDir: join(dir, ".gtir"), model: "qwen3", embedImpl: fakeEmbed,
+    ftsWeight: 0, ftsWeightSymbol: 0, ftsWeightMixed: 0, testPenalty: 1,
+    centralityWeight: 0.15, centralityK: 8, contextCap: 5, _root: dir };
+}
+
+test("search: --edges attaches callers/callees; --centrality annotates high-degree hits", async () => {
+  const cfg = seedCfg();
+  try {
+    const store = await openStore(cfg);
+    await store.upsertRows([
+      { id: "1", path: "hub.mjs", line_start: 1, line_end: 3, language: "js", text: "function hub(){}", embedding: [1, 0, 0], mtime_ms: 1, content_hash: "h1" },
+      { id: "2", path: "leaf.mjs", line_start: 1, line_end: 3, language: "js", text: "function leaf(){}", embedding: [1, 0, 0], mtime_ms: 1, content_hash: "h2" },
+    ]);
+    // Many callers of hub() -> high degree; leaf has none.
+    const callHub = (i) => ({ kind: "calls", conf: "resolved", from_path: `c${i}.mjs`, from_lines: "1", from_symbol: `f${i}`, to_path: "hub.mjs", to_lines: "1", to_symbol: "hub", candidates: [], content_hash: "h" });
+    await store.upsertEdges([0, 1, 2, 3, 4].map(callHub));
+    const graphData = await graphForSearch(cfg);
+
+    const ctx = await search("hub leaf", cfg, { k: 5, edges: true, graphData });
+    const hubHit = ctx.find((h) => h.path === "hub.mjs");
+    assert.ok(hubHit.callers.length >= 1);
+    assert.ok(Array.isArray(hubHit.callees));
+
+    const cen = await search("hub leaf", cfg, { k: 5, centrality: true, graphData });
+    const hubCen = cen.find((h) => h.path === "hub.mjs");
+    assert.ok(hubCen.centrality > 1);                  // high-degree hub annotated
+    assert.equal(cen[0].path, "hub.mjs");              // boosted to the top
+
+    const plain = await search("hub leaf", cfg, { k: 5 });
+    assert.ok(plain.every((h) => h.centrality === undefined && h.callers === undefined));
+  } finally { rmSync(cfg._root, { recursive: true, force: true }); }
 });
