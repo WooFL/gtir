@@ -146,7 +146,7 @@ export async function search(query, cfg, { k = 8, pathPrefix = null, language = 
 
   if (!cfg.rerank) {
     let out = fused;
-    if (centrality && graphData) out = applyCentrality(out, graphData.degree, { weight: cfg.centralityWeight, K: cfg.centralityK });
+    if (centrality && graphData) out = applyCentrality(out, graphData.degree, { weight: cfg.centralityWeight, K: cfg.centralityK, eps: cfg.centralityTieEps });
     out = out.slice(0, limit);
     if (edges && graphData) out = out.map((h) => ({ ...h, ...contextFor(h.snippet, h.path, graphData.graph, { cap: cfg.contextCap }) }));
     return out;

@@ -37,6 +37,7 @@ export const DEFAULTS = {
   findCandidates: 200,                     // MCP `find`: how many BM25 candidates to scan for the symbol's declaration. Wider = catches definitions of heavily-referenced symbols (whose decl ranks below many mentions), at more scan cost. Capped at 1000.
   centralityWeight: 0.15,   // `--centrality`/centrality:true: ceiling of the degree multiplier (1 → 1.15)
   centralityK: 8,           // half-saturation degree for the centrality multiplier
+  centralityTieEps: 0.000001, // `--centrality` is tiebreaker-only: reorder hits only within this RRF-score band. Must be << the inter-rank RRF gap (~2.6e-4) so only genuine ties move; larger values demote exact matches (measured: 0.001 cost 25pp recall@1, a score-multiplier cost ~4.5pp).
   contextCap: 5,            // `--edges`/edges:true: max callers + max callees attached per hit
   disambiguate: true,        // promote ambiguous call edges to conf:"inferred" via embedding similarity
   disambigThreshold: 0.55,   // min cosine(call-site, candidate def) to promote (precision-first)
