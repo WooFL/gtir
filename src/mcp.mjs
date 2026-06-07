@@ -8,6 +8,7 @@ import { preflight } from "./doctor.mjs";
 import { parseLines } from "./eval.mjs";
 import { watchRepo } from "./watch.mjs";
 import { buildAdjacency, callersOf, calleesOf, neighborsOf } from "./edges.mjs";
+import { impactQuery, orphansQuery, cyclesQuery } from "./graph-queries.mjs";
 
 export function sanitizeLabel(s) {
   return String(s).toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "index";
@@ -144,6 +145,36 @@ export function buildTools(indexes) {
         lines: { type: "string", description: 'line range of the span, e.g. "48-79"' },
       }, required: ["symbol"] },
     });
+    tools.push({
+      name: `impact_${ix.label}`,
+      description: noteMode
+        ? `Transitive backlinks of a note in ${at} — everything that (transitively) links to it.`
+        : `Transitive blast radius in ${at}: who (transitively) calls a symbol. downstream:true returns what it depends on instead. Resolved edges only unless include_ambiguous.`,
+      inputSchema: { type: "object", properties: {
+        symbol: { type: "string", description: "exact symbol or note name" },
+        path: { type: "string", description: "file path to disambiguate a symbol defined in multiple files" },
+        downstream: { type: "boolean", description: "walk dependencies (callees) instead of callers" },
+        depth: { type: "integer", description: "max hops (default unlimited)" },
+        include_ambiguous: { type: "boolean", description: "also traverse ambiguous (name-coincidence) edges" },
+        limit: { type: "integer", description: "max nodes returned (default 500)" },
+      }, required: ["symbol"] },
+    });
+    tools.push({
+      name: `orphans_${ix.label}`,
+      description: noteMode
+        ? `Notes in ${at} with no backlinks (candidates for orphaned notes).`
+        : `Likely-dead symbols in ${at}: definitions with no inbound call/import edges, entrypoints filtered out heuristically.`,
+      inputSchema: { type: "object", properties: {
+        include_ambiguous: { type: "boolean", description: "count ambiguous inbound edges as references (fewer false positives)" },
+      } },
+    });
+    tools.push({
+      name: `cycles_${ix.label}`,
+      description: `Circular dependencies in ${at}: call cycles + import cycles (SCC groups with a sample path).`,
+      inputSchema: { type: "object", properties: {
+        include_ambiguous: { type: "boolean", description: "include ambiguous edges in cycle detection" },
+      } },
+    });
   }
   tools.push({
     name: "gtir_status",
@@ -221,7 +252,7 @@ function formatFind(results, symbol, kind) {
   }).join("\n\n");
 }
 
-const TOOL_VERBS = ["search", "read", "outline", "similar", "find", "callers", "callees", "neighbors", "backlinks", "links"];
+const TOOL_VERBS = ["search", "read", "outline", "similar", "find", "callers", "callees", "neighbors", "backlinks", "links", "impact", "orphans", "cycles"];
 
 // "search_my_wiki" -> { verb: "search", label: "my_wiki" } (labels may contain underscores).
 export function parseToolName(name) {
@@ -234,7 +265,7 @@ export function parseToolName(name) {
 const stripSnippet = (results) => results.map(({ snippet, ...rest }) => rest);
 
 async function dispatchToolCall(params, ctx) {
-  const { indexes, searchFn, statusFn, readFn, outlineFn, similarFn, findFn, callersFn, calleesFn, neighborsFn } = ctx;
+  const { indexes, searchFn, statusFn, readFn, outlineFn, similarFn, findFn, callersFn, calleesFn, neighborsFn, impactFn, orphansFn, cyclesFn } = ctx;
   const name = params.name;
   const args = params.arguments ?? {};
   const reply = (text, structured) => ({ content: [{ type: "text", text }], structuredContent: structured });
@@ -281,6 +312,19 @@ async function dispatchToolCall(params, ctx) {
       }
       if (verb === "neighbors") {
         const out = await neighborsFn(label, { symbol: args.symbol, path: args.path, lines: args.lines });
+        return reply(JSON.stringify(out, null, 2), out);
+      }
+      if (verb === "impact") {
+        const out = await impactFn(label, { symbol: args.symbol, path: args.path, downstream: !!args.downstream,
+          depth: args.depth, includeAmbiguous: !!args.include_ambiguous, limit: args.limit });
+        return reply(JSON.stringify(out, null, 2), out);
+      }
+      if (verb === "orphans") {
+        const out = await orphansFn(label, { includeAmbiguous: !!args.include_ambiguous });
+        return reply(JSON.stringify(out, null, 2), out);
+      }
+      if (verb === "cycles") {
+        const out = await cyclesFn(label, { includeAmbiguous: !!args.include_ambiguous });
         return reply(JSON.stringify(out, null, 2), out);
       }
     }
@@ -458,6 +502,16 @@ export function defaultNeighborsFn(indexes) {
   };
 }
 
+export function defaultImpactFn(indexes) {
+  return async (label, opts) => impactQuery(indexes.find((i) => i.label === label).cfg, opts);
+}
+export function defaultOrphansFn(indexes) {
+  return async (label, opts) => orphansQuery(indexes.find((i) => i.label === label).cfg, opts);
+}
+export function defaultCyclesFn(indexes) {
+  return async (label, opts) => cyclesQuery(indexes.find((i) => i.label === label).cfg, opts);
+}
+
 // Gate each served index on a readiness probe before serving. A broken/unready index is dropped
 // with a logged note (stderr) — the healthy ones still serve, matching defaultStatusFn's per-index
 // tolerance. The server must not refuse to start because one index's daemon/model is unready.
@@ -482,6 +536,7 @@ export function serveStdio(indexes, { version } = {}) {
     similarFn: defaultSimilarFn(indexes), findFn: defaultFindFn(indexes),
     callersFn: defaultCallersFn(indexes), calleesFn: defaultCalleesFn(indexes),
     neighborsFn: defaultNeighborsFn(indexes),
+    impactFn: defaultImpactFn(indexes), orphansFn: defaultOrphansFn(indexes), cyclesFn: defaultCyclesFn(indexes),
   };
   let buf = "";
   process.stdin.setEncoding("utf8");

@@ -51,9 +51,9 @@ test("buildTools emits search/read/outline/similar/find/callers/callees/neighbor
   const tools = buildTools([{ label: "code", repo: "/r/code", cfg: {} }, { label: "notes", repo: "/r/wiki", cfg: {} }]);
   assert.deepEqual(tools.map((t) => t.name), [
     "search_code", "read_code", "outline_code", "similar_code", "find_code",
-    "callers_code", "callees_code", "neighbors_code",
+    "callers_code", "callees_code", "neighbors_code", "impact_code", "orphans_code", "cycles_code",
     "search_notes", "read_notes", "outline_notes", "similar_notes", "find_notes",
-    "backlinks_notes", "links_notes", "neighbors_notes",
+    "backlinks_notes", "links_notes", "neighbors_notes", "impact_notes", "orphans_notes", "cycles_notes",
     "gtir_status",
   ]);
   assert.deepEqual(tools[0].inputSchema.required, ["query"]);   // search
@@ -94,7 +94,7 @@ test("handleRequest: tools/list returns the tool set", async () => {
   const r = await handleRequest({ jsonrpc: "2.0", id: 2, method: "tools/list" }, baseCtx);
   assert.deepEqual(r.result.tools.map((t) => t.name),
     ["search_code", "read_code", "outline_code", "similar_code", "find_code",
-     "callers_code", "callees_code", "neighbors_code", "gtir_status"]);
+     "callers_code", "callees_code", "neighbors_code", "impact_code", "orphans_code", "cycles_code", "gtir_status"]);
 });
 
 test("handleRequest: unknown method => JSON-RPC -32601", async () => {
@@ -404,6 +404,37 @@ test("callees tool returns what a function calls (end-to-end)", async () => {
   });
   const callees = await defaultCalleesFn(indexes)(indexes[0].label, { symbol: "verifyToken" });
   assert.ok(callees.some((c) => c.symbol === "decode"), `expected decode, got ${JSON.stringify(callees)}`);
+});
+
+import { openStore } from "../src/store.mjs";
+import { defaultImpactFn, defaultOrphansFn, defaultCyclesFn } from "../src/mcp.mjs";
+
+test("buildTools registers impact_/orphans_/cycles_ per index", () => {
+  const tools = buildTools([{ label: "code", repo: "/r", cfg: { model: "qwen3" } }]);
+  const names = tools.map((t) => t.name);
+  assert.ok(names.includes("impact_code"));
+  assert.ok(names.includes("orphans_code"));
+  assert.ok(names.includes("cycles_code"));
+  const impact = tools.find((t) => t.name === "impact_code");
+  assert.deepEqual(impact.inputSchema.required, ["symbol"]);
+});
+
+test("tools/call dispatches impact_ and returns parseable JSON", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "gtir-mcp-gq-"));
+  const cfg = { indexDir: join(dir, ".gtir"), model: "qwen3" };
+  try {
+    const store = await openStore(cfg);
+    await store.upsertRows([
+      { id: "1", path: "a.mjs", line_start: 1, line_end: 3, language: "js", text: "function f(){ g(); }", embedding: [0.1, 0.2], mtime_ms: 1, content_hash: "h1" },
+      { id: "2", path: "b.mjs", line_start: 1, line_end: 3, language: "js", text: "function g(){}", embedding: [0.1, 0.2], mtime_ms: 1, content_hash: "h2" },
+    ]);
+    await store.upsertEdges([{ kind: "calls", conf: "resolved", from_path: "a.mjs", from_lines: "1", from_symbol: "f", to_path: "b.mjs", to_lines: "1", to_symbol: "g", candidates: [], content_hash: "h1" }]);
+    const indexes = [{ label: "code", repo: dir, cfg }];
+    const ctx = { indexes, impactFn: defaultImpactFn(indexes), orphansFn: defaultOrphansFn(indexes), cyclesFn: defaultCyclesFn(indexes) };
+    const res = await handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "impact_code", arguments: { symbol: "g" } } }, ctx);
+    const payload = JSON.parse(res.result.content[0].text);
+    assert.deepEqual(payload.nodes.map((n) => n.symbol), ["f"]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test("neighbors tool returns callers, callees, and siblings", async () => {
