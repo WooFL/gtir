@@ -95,6 +95,7 @@ test("disambiguateEdges: member-call to a denylisted name is NOT promoted", () =
     ref_name: "get", candidates: ["store.ts"], content_hash: "hc", isMethod: true };
   const [r] = disambiguateEdges([row], { symbolIndex: si, callSiteVec: csv });
   assert.equal(r.conf, "ambiguous"); // suppressed despite cosine 1.0
+  assert.deepEqual(r.candidates, ["store.ts"]); // returned unchanged — candidates preserved
 });
 
 test("disambiguateEdges: a BARE denylisted name still promotes (free function)", () => {

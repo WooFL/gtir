@@ -41,6 +41,8 @@ function calleeOf(node) {
 // A value member-call's callee is a member/attribute/field/selector expression (obj.method()).
 // Rust module paths (mod::func()) are `scoped_identifier` and are intentionally NOT matched —
 // they stay disambiguatable. Used to gate embedding-disambiguation away from method-name coincidences.
+// Known gap: ObjC `[obj method]` (message_expression) has a non-member callee, so isMethod stays
+// false there — an acceptable under-filter (leaves it disambiguatable rather than wrongly suppressing).
 const MEMBER_CALL = /^(member_expression|attribute|selector_expression|field_expression)$/;
 function isMemberCall(callee) {
   return !!callee && MEMBER_CALL.test(callee.type);
