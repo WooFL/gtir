@@ -1,0 +1,112 @@
+# Edge-Layer Arc — What we built, what improved, what's next
+
+**Date:** 2026-06-07
+**Scope:** Three sub-projects that turn gtir's edge layer from a 1-hop lookup into a queryable, search-integrated, embedding-fused graph. All merged to `main`. Tests **334 → 399** (+65). No new runtime dependencies.
+
+---
+
+## What we shipped
+
+### A — Graph engine + analysis queries
+The edge graph was only ever read 1 hop deep (`callers`/`callees`/`neighbors`). Now it's traversed.
+
+- **`gtir impact <symbol>`** — transitive blast radius (who calls this, recursively). `--downstream` for dependencies, `--depth N`, `--path` to disambiguate a name in multiple files. Capped at 500 nodes (`--limit`, `truncated` flag).
+- **`gtir orphans`** — likely-dead symbols (zero inbound edges). Real entrypoints (exports, `bin/`/`main`/`index`/`cli`, test files, Go-exported, handler names) split into a `possible_entrypoint` list, not flagged dead.
+- **`gtir cycles`** — circular dependencies via Tarjan SCC: call cycles + import cycles, each with a sample path. Self-recursion excluded.
+- Exposed on **both CLI and MCP** (`impact_<label>`, `orphans_<label>`, `cycles_<label>`).
+- Traversal trusts **resolved edges only** by default; `--include-ambiguous` widens.
+
+New: `src/edge-graph.mjs` (pure engine — `buildGraph`, `impact`, `cycles`, `orphans`, `degreeMap`), `src/graph-queries.mjs` (I/O), `store.allChunkRows`/`hasEdges`.
+Key fix vs the old `buildAdjacency`: node identity is now precise (`path#symbol`), not bare name — two `parse`s in different files no longer collide.
+
+### C — Graph-aware search
+Folds the edge graph into retrieval. Both opt-in, query-time, cached in memory (no schema change).
+
+- **`gtir search "<q>" --edges`** — attach each hit's `callers`/`callees`. One call returns the result *and* its neighborhood. `read_` takes `edges:true` too.
+- **`gtir search "<q>" --centrality`** — gentle, bounded degree re-rank (≤ +15%); widely-called/imported code floats up. Off by default; skipped when reranking is on.
+
+New: `src/graph-retrieval.mjs` (pure — `chunkCentrality`, `centralityMultiplier`, `applyCentrality`, `contextFor`), `graphForSearch` cache in `graph-queries.mjs`, config knobs `centralityWeight`/`centralityK`/`contextCap`.
+
+### B — Embedding-disambiguation (the layer fusion)
+The unique win: gtir is the only tool with both a call graph and per-chunk embeddings. We use one to repair the other.
+
+- An `ambiguous` call edge (name matches several defs) is promoted to a new **`conf:"inferred"`** tier when the call-site chunk embedding is a confident cosine match to one candidate definition's embedding.
+- Conservative thresholds (`disambigThreshold` 0.55, `disambigMargin` 0.05), default-on, **reuses vectors already in the store — zero new embedding calls**.
+- Inferred edges traverse like resolved everywhere (callers/callees/impact/cycles/centrality/viz/eval), carry a cosine `score`, but stay a distinct tier so a proven edge reads differently from a guessed one.
+- Persisted `score` column with a one-time **edge-schema heal** on upgrade.
+
+New: `src/disambiguate.mjs` (pure — `cosine`, `disambiguateEdges`); wiring in `indexer.mjs`; `inferred` taught to `edge-graph.mjs`, `graph.mjs` (viz), `eval.mjs` (metrics).
+
+---
+
+## What improved (concretely)
+
+- **The edge layer is now actionable, not just inspectable.** "What breaks if I change X", "what's dead", "what's circular" are one command each — for humans and for agents (MCP).
+- **Agents get the neighborhood in one round-trip** (`--edges`) instead of search → callers → callees.
+- **Ambiguous edges stopped being dead weight.** They were skipped by default and useless; now the confident ones become real, traversable, scored edges — improving impact/cycles/orphans recall and search context for free.
+- **Node identity is correct** (`path#symbol`), fixing a latent same-name collision in the old adjacency.
+- **Process quality:** every sub-project went brainstorm → spec → plan → subagent-driven build (implementer + spec-review + quality-review per task) → final whole-feature review. The final reviews caught two real cross-consumer gaps the specs missed — the graph-cache watch-invalidation parity (C) and the `inferred` tier being invisible/mis-rendered in `graph.mjs`/`eval.mjs` (B) — both fixed before merge.
+
+---
+
+## Known limitations (carried, from the reviews)
+
+1. **Disambiguation thresholds are guessed, not tuned.** 0.55/0.05 are reasonable priors with no empirical validation on a real corpus.
+2. **Incremental refresh doesn't re-disambiguate unchanged files.** A pre-existing `ambiguous` edge in a file you don't touch stays ambiguous until a `--rebuild` (the schema-heal rebuild is the only backstop). Acceptable but undocumented in user-facing terms.
+3. **Graph caches are process-lifetime, invalidated only on watch refresh.** Matches the existing `adjCache`; a non-watch long-running MCP server could serve slightly stale graph data.
+4. **Centrality is unmeasured.** We made it gentle and opt-in to be safe, but we never proved it helps (or doesn't hurt) retrieval on a golden set.
+5. **`contextFor` output is thin** — `--edges` shows `{path, symbol}` only, not the edge `conf`/`score`, so you can't tell an inferred neighbor from a proven one in search output.
+6. **Centrality nearest-chunk fallback** (when a call line falls outside every chunk interval — rare, line-window files) uses `line_start` distance, not midpoint. Low-frequency.
+7. **Minor test gaps** flagged in review: `link_cycles` path, `contextFor` cap-stress, candidate-absent-from-symbolIndex.
+
+---
+
+## How to improve further (prioritized)
+
+### High leverage
+1. **Tune disambiguation empirically.** Build a golden set of known ambiguous→correct call mappings, then sweep `disambigThreshold`/`disambigMargin` with a harness like the existing fusion `gtir eval --tune`. Report precision/recall of promotions. Turns the guessed defaults into measured ones. *(touches `eval.mjs`, a new golden file)*
+2. **Measure centrality's retrieval effect.** Extend the eval golden runner to compare `--centrality` on/off (and `--edges` context value). Either justify the default weight or auto-tune it. Without this, #4 above stays a hunch.
+3. **Surface conf/score in `--edges` output.** Make `contextFor` carry `conf` (and `score` when inferred) per caller/callee, so agents see edge provenance inline. Small change to `graph-retrieval.mjs` + the MCP/CLI formatters.
+
+### Medium
+4. **`gtir path <A> <B>`** — shortest call path between two symbols (BFS over the graph already exists in `impact`; add a two-endpoint variant). Great for "how does A reach B" debugging, and a natural MCP tool.
+5. **Re-disambiguate without full rebuild.** A `gtir refresh --redisambiguate` (or a maintenance pass) that re-scores all stored `ambiguous` edges using current embeddings — closes limitation #2 cheaply.
+6. **Richer disambiguation signal.** Blend the cosine score with cheap structural priors: import-graph reachability (does the call-site file transitively import the candidate?), same-package proximity, arg-count match. Cosine alone is one signal; a tiny weighted blend would lift precision.
+7. **Configurable orphan entrypoints.** The brainstorm's deferred option — let users declare entrypoint globs/names in config so odd codebases (frameworks, plugins) stop false-flagging.
+
+### Lower / polish
+8. **Viz: dashed inferred edges + a focus/path-highlight mode.** Inferred edges are now teal-toggleable; making them dashed (vs solid resolved) reads provenance at a glance. Click-to-highlight reachable subgraph was in the original viz brainstorm and never built.
+9. **Persist degree/SCC** only if MCP `impact`/`cycles`/`centrality` become hot — measure first; today's rebuild is sub-ms.
+10. **Close the minor test gaps** (#7 above).
+11. **Calibrate the cosine score** into a 0–1 confidence (Platt-style) once a golden set exists, so `score` is interpretable as "probability this edge is right," not raw cosine.
+
+### Operational
+12. **Push to origin** — `main` is many commits ahead locally; nothing has been pushed.
+
+---
+
+## Field findings (measured on mediaTraktor + the gtir golden set)
+
+Two of the backlog items above were investigated empirically. Both shipped to `main`.
+
+### Finding 1 — disambiguation self-comparison artifact (improvement candidate #1)
+
+Diagnosed on mediaTraktor (31,571 edges). Disambiguation is doing real work — it promoted **3,490 of 8,846 ambiguous calls (39%)**, more than doubling targeted call edges (resolved 3,050 → 6,540). Thresholds (0.55/0.05) are well-placed: the rejected pool's top-1 sims bulk at 0.3–0.6 (correctly murky), and loosening would mostly add method-name coincidences (`get`/`max`/`color` matching test-file decls).
+
+But the **highest-confidence promotions were the least trustworthy**: 602 inferred edges scored ≈1.0, *all* same-file, because the call-site chunk **was** the candidate's def chunk — `cosine(chunk, itself) ≈ 1.0`, a degenerate signal. 446/602 targeted test files; names were `l`/`off`/`next`/`get`/`emit` (method calls colliding with a same-chunk decl).
+
+**Fix shipped** (`fix(disambiguate): exclude self-chunk from candidate scoring`): skip any candidate def whose `content_hash` equals the call site's. Result on mediaTraktor: degenerate `score≥0.97` promotions **602 → 0**; net inferred 3,490 → 3,141 (349 correctly demoted to ambiguous, ~253 redirected to a real different-chunk target); score max 1.0 → 0.933. Different-chunk intra-file calls unaffected.
+
+*Takeaway:* threshold tuning was the wrong lever; candidate-set quality (self-comparison, test-file pollution, method-name coincidences) is where disambiguation precision lives. Items #6 (structural priors) and a test-path demotion remain the next levers.
+
+### Finding 2 — centrality re-rank hurts retrieval; tiebreaker form is neutral (improvement candidate #2)
+
+Measured `--centrality` on the 110-query golden set (labeled) and on mediaTraktor (reorder magnitude).
+
+The original **score-multiplier** form (×[1, 1.15] on RRF score, re-sort) **hurt**: recall@1 0.918 → **0.873 (−4.5pp)**, MRR 0.949 → 0.927, order changed on 91/110 queries; 50% top-1 flips on mediaTraktor. A degree multiplier competes too directly with relevance and demotes exact matches.
+
+A first **broad tiebreaker** (reorder within RRF bands) was *worse* at eps 0.001 — recall@1 −25pp — because 0.001 exceeds the inter-rank RRF gap (~2.6e-4), merging the whole top of the list into one band.
+
+**Fix shipped** (`fix(search): make --centrality tiebreaker-only`): reorder only within bands of *near-identical* RRF score (eps **1e-6**, far below the inter-rank gap), scores left unchanged, so an exact match can never be demoted. Re-measured: recall@1/@5/@10 and MRR **all unchanged vs off** (neutral); 16/110 genuine ties reordered toward central code; mediaTraktor top-1 flips **6/12 → 0/12**; still annotates 68/120 hits as central.
+
+*Takeaway:* centrality is **not** a useful retrieval re-ranker on this data in any reordering-by-magnitude form. `--centrality` is now safe + informational: it breaks genuine RRF ties toward important code and tags central hits, without ever demoting a relevant result. The off-by-default decision was vindicated. A real win would require a different signal (e.g. learned blend) and labels on a connected codebase — not worth it now.
