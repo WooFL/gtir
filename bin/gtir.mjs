@@ -62,7 +62,7 @@ export async function runSetup({ repo } = {}) {
 }
 
 export async function runGraph({ repo, out = "gtir-graph.html", focus = null, depth = 2, rollup = false,
-  maxNodes = 400, kind = null, conf = null, pathPrefix = null, edgesImpl = null } = {}) {
+  maxNodes = Infinity, kind = null, conf = null, pathPrefix = null, edgesImpl = null } = {}) {
   const cfg = loadConfig(repo);
   const edges = edgesImpl ? await edgesImpl() : await (await openStore(cfg)).loadEdges();
   if (!edges.length) throw new Error("no edge index — run 'gtir index' first");
@@ -70,15 +70,15 @@ export async function runGraph({ repo, out = "gtir-graph.html", focus = null, de
   const graph = buildGraph(edges, { focus, depth, rollup, maxNodes, kind, conf, pathPrefix });
   if (focus && graph.nodes.length === 0) throw new Error(`no symbol matching '${focus}' in the edge graph`);
 
-  const d3Path = fileURLToPath(new URL("../vendor/d3.v7.min.js", import.meta.url));
-  let d3Source;
-  try { d3Source = readFileSync(d3Path, "utf8"); }
+  const cosmosPath = fileURLToPath(new URL("../vendor/cosmos.min.js", import.meta.url));
+  let cosmosSource;
+  try { cosmosSource = readFileSync(cosmosPath, "utf8"); }
   catch (e) {
-    if (e.code === "ENOENT") throw new Error(`missing vendored d3 at ${d3Path} — reinstall gtir`);
-    throw new Error(`cannot read vendored d3 at ${d3Path}: ${e.message}`);
+    if (e.code === "ENOENT") throw new Error(`missing vendored cosmos at ${cosmosPath} — run 'npm run bundle:cosmos'`);
+    throw new Error(`cannot read vendored cosmos at ${cosmosPath}: ${e.message}`);
   }
 
-  const html = renderHtml({ nodes: graph.nodes, edges: graph.edges, meta: { truncated: graph.truncated, dropped: graph.dropped } }, d3Source);
+  const html = renderHtml({ nodes: graph.nodes, edges: graph.edges, meta: { truncated: graph.truncated, dropped: graph.dropped } }, cosmosSource);
   writeFileSync(out, html);
   return { out, nodes: graph.nodes.length, edges: graph.edges.length, truncated: graph.truncated, dropped: graph.dropped };
 }
@@ -464,11 +464,11 @@ async function main() {
       case "graph": {
         const r = await runGraph({
           repo, out: args.out, focus: args.focus ?? null, depth: args.depth ?? 2,
-          rollup: !!args.rollup, maxNodes: args.maxNodes ?? 400,
+          rollup: !!args.rollup, maxNodes: args.maxNodes ?? Infinity,
           kind: args.kind ?? null, conf: args.conf ?? null, pathPrefix: args.pathPrefix ?? null,
         });
         process.stderr.write(`gtir: wrote ${r.out} (${r.nodes} nodes, ${r.edges} edges)\n`);
-        if (r.truncated) process.stderr.write(`gtir: graph truncated — dropped ${r.dropped} lowest-degree node(s); narrow with --focus/--path-prefix or raise --max-nodes\n`);
+        if (r.truncated) process.stderr.write(`gtir: graph truncated by --max-nodes — dropped ${r.dropped} lowest-degree node(s); raise or drop --max-nodes, or narrow with --focus/--path-prefix\n`);
         break;
       }
       default:

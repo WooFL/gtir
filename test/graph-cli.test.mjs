@@ -21,6 +21,7 @@ test("runGraph: writes a self-contained HTML file and returns counts", async () 
     assert.equal(r.edges, 1);
     const html = readFileSync(out, "utf8");
     assert.ok(html.includes("__GTIR_GRAPH__"));
+    assert.ok(html.includes("window.cosmos"));
     assert.ok(!html.includes("<script src"));
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -44,6 +45,19 @@ test("runGraph: focus with no match throws", async () => {
     await assert.rejects(
       () => runGraph({ repo: dir, out: path.join(dir, "g.html"), focus: "nope", edgesImpl: async () => ROWS }),
       /no symbol matching/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("runGraph: emits the full graph by default (uncapped, >400 nodes)", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "gtir-graph-"));
+  try {
+    const rows = [];
+    for (let i = 0; i < 250; i++) rows.push({ kind: "calls", conf: "resolved", from_path: `f${i}.ts`, from_lines: "1", from_symbol: `f${i}`, to_path: `g${i}.ts`, to_lines: "2", to_symbol: `g${i}`, ref_name: `g${i}`, candidates: [], content_hash: "h" });
+    const r = await runGraph({ repo: dir, out: path.join(dir, "g.html"), edgesImpl: async () => rows });
+    assert.equal(r.nodes, 500);
+    assert.equal(r.truncated, false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

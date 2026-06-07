@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mapEdges, applyFilters, egoGraph, capByDegree, rollupToFiles, buildGraph, worstConf, renderHtml } from "../src/graph.mjs";
+import { mapEdges, applyFilters, egoGraph, capByDegree, rollupToFiles, buildGraph, worstConf, renderHtml, withDegree, clusterOf } from "../src/graph.mjs";
 
 // Edge factory matching the store.loadEdges() row shape.
 const E = (o = {}) => ({
@@ -170,27 +170,40 @@ test("buildGraph: focus prunes, rollup collapses, cap bounds", () => {
   assert.ok(rolled.nodes.every((n) => !n.id.includes("\x00")));
 });
 
-test("renderHtml: self-contained — inlines d3, embeds data, no external refs", () => {
+test("renderHtml: self-contained cosmos page — inlines cosmos, embeds data, no external refs", () => {
   const g = buildGraph([E({ from_symbol: "verifyToken", from_path: "auth/jwt.ts", to_symbol: "signToken", to_path: "auth/jwt.ts", ref_name: "signToken" })]);
-  const html = renderHtml({ nodes: g.nodes, edges: g.edges, meta: { truncated: false, dropped: 0 } }, "/* D3SRC */ var d3={};");
+  const html = renderHtml({ nodes: g.nodes, edges: g.edges, meta: { truncated: false, dropped: 0 } }, "/* COSMOSSRC */ window.cosmos={Graph:function(){}};");
   assert.match(html, /<!doctype html>/i);
-  assert.ok(html.includes("/* D3SRC */"));            // inlined d3 present
-  assert.ok(html.includes("__GTIR_GRAPH__"));          // data hook present
-  assert.ok(html.includes("verifyToken"));             // a node label present
-  assert.ok(!html.includes("<script src"));            // nothing fetched
+  assert.ok(html.includes("/* cosmos (vendored) */"));
+  assert.ok(html.includes("/* COSMOSSRC */"));
+  assert.ok(html.includes("window.cosmos"));
+  assert.ok(html.includes("__GTIR_GRAPH__"));
+  assert.ok(html.includes('id="minDeg"'));
+  assert.ok(html.includes('class="cf"'));
+  assert.ok(html.includes("verifyToken"));
+  assert.ok(!html.includes("<script src"));
   assert.ok(!html.includes("//unpkg") && !html.includes("//cdn"));
 });
 
+test("renderHtml: external confidence checkbox is unchecked by default", () => {
+  const g = buildGraph([E()]);
+  const html = renderHtml({ nodes: g.nodes, edges: g.edges, meta: {} }, "x");
+  assert.match(html, /value="resolved"[^>]*checked/);
+  assert.match(html, /value="ambiguous"[^>]*checked/);
+  assert.ok(!/value="external"[^>]*checked/.test(html));
+});
+
 test("renderHtml: shows truncation note when capped", () => {
-  const html = renderHtml({ nodes: [], edges: [], meta: { truncated: true, dropped: 12 } }, "var d3={};");
+  const html = renderHtml({ nodes: [], edges: [], meta: { truncated: true, dropped: 12 } }, "x");
   assert.ok(html.includes("dropped 12"));
 });
 
-test("renderHtml: tooltip escapes user data (esc helper present)", () => {
-  const g = buildGraph([E({ from_symbol: "f", from_path: "a.ts", to_symbol: "g", to_path: "b.ts", ref_name: "g" })]);
-  const html = renderHtml({ nodes: g.nodes, edges: g.edges, meta: {} }, "var d3={};");
-  assert.ok(html.includes("&amp;") && html.includes("&lt;"));   // esc map literal embedded
-  assert.ok(html.includes("esc(d.label)"));                      // label is escaped at render time
+test("renderHtml: tooltip/info escapes user data (esc helper present)", () => {
+  const g = buildGraph([E()]);
+  const html = renderHtml({ nodes: g.nodes, edges: g.edges, meta: {} }, "x");
+  assert.ok(html.includes("&amp;") && html.includes("&lt;"));
+  assert.ok(html.includes("esc(n.label)"));
+  assert.ok(html.includes("&#39;") && html.includes("&quot;"));   // esc covers quotes too
 });
 
 test("buildGraph: conf filter reaches the pipeline (whole-repo)", () => {
@@ -237,4 +250,51 @@ test("buildGraph: whole-repo rollup caps FILE degree, not symbol degree", () => 
   // Rolling up BEFORE the cap ranks hub.ts (file-degree 5) above the degree-1 leaf files, so it
   // survives. Capping symbols first drops all 5 low-degree hub symbols and hub.ts would vanish.
   assert.ok(g.nodes.some((n) => n.id === "hub.ts"));
+});
+
+test("withDegree: counts incident edges per node (both endpoints)", () => {
+  const { nodes, edges } = mapEdges([
+    E({ from_symbol: "h", from_path: "h.ts", to_symbol: "a", to_path: "a.ts", ref_name: "a" }),
+    E({ from_symbol: "h", from_path: "h.ts", to_symbol: "b", to_path: "b.ts", ref_name: "b" }),
+  ]);
+  const out = withDegree(nodes, edges);
+  assert.equal(out.find((n) => n.id === "h\x00h.ts").degree, 2);
+  assert.equal(out.find((n) => n.id === "a\x00a.ts").degree, 1);
+});
+
+test("withDegree: isolated node gets degree 0 and inputs are not mutated", () => {
+  const nodes = [{ id: "x", label: "x", cls: "code", refs: [], candidates: [] }];
+  const out = withDegree(nodes, []);
+  assert.equal(out[0].degree, 0);
+  assert.equal(nodes[0].degree, undefined); // pure — original untouched
+});
+
+test("clusterOf: directory-based clusters", () => {
+  assert.equal(clusterOf({ id: "packages/ui/Button.tsx", cls: "code" }), "packages/ui");
+  assert.equal(clusterOf({ id: "apps/web/src/Foo.tsx", cls: "code" }), "apps/web");
+  assert.equal(clusterOf({ id: "Button.tsx", cls: "code" }), "(root)");
+  assert.equal(clusterOf({ id: "verifyToken\x00auth/jwt.ts", cls: "code" }), "auth");
+  assert.equal(clusterOf({ id: "ext:Error", cls: "external" }), "external");
+  assert.equal(clusterOf({ id: "amb:log", cls: "ambiguous" }), "ambiguous");
+  assert.equal(clusterOf({ id: "note:Auth", cls: "note", refs: [{ path: "concepts/auth.md", line: 0 }] }), "concepts");
+  assert.equal(clusterOf({ id: "note:Loose", cls: "note", refs: [] }), "notes");
+});
+
+test("buildGraph: every node carries degree (number) and cluster (string)", () => {
+  const g = buildGraph([E({ from_symbol: "f", from_path: "packages/a/x.ts", to_symbol: "g", to_path: "packages/a/y.ts", ref_name: "g" })]);
+  for (const n of g.nodes) {
+    assert.equal(typeof n.degree, "number");
+    assert.equal(typeof n.cluster, "string");
+  }
+  assert.ok(g.nodes.some((n) => n.cluster === "packages/a"));
+});
+
+test("buildGraph: maxNodes defaults to uncapped (>400 nodes survive)", () => {
+  // 250 edges → 500 nodes. Under the OLD default (400) this truncates; uncapped it must not.
+  const rows = [];
+  for (let i = 0; i < 250; i++) rows.push(E({ from_symbol: `f${i}`, from_path: `f${i}.ts`, to_symbol: `g${i}`, to_path: `g${i}.ts`, ref_name: `g${i}` }));
+  const g = buildGraph(rows); // no maxNodes
+  assert.equal(g.nodes.length, 500);
+  assert.equal(g.truncated, false);
+  assert.equal(g.dropped, 0);
 });
