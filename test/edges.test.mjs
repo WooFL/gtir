@@ -11,13 +11,23 @@ const symIndex = new Map([
   ]],
 ]);
 
-test("resolveEdges: unique call name resolves", () => {
-  const raw = [{ kind: "calls", refName: "verifyToken", fromPath: "src/x.ts", fromLine: 10 }];
+test("resolveEdges: unique same-file call resolves", () => {
+  // Caller lives in the same file as the single candidate — a real intra-file call.
+  const raw = [{ kind: "calls", refName: "verifyToken", fromPath: "src/auth/token.ts", fromLine: 90 }];
   const [e] = resolveEdges(raw, symIndex, new Map());
   assert.equal(e.conf, "resolved");
   assert.equal(e.to_path, "src/auth/token.ts");
-  assert.equal(e.from_path, "src/x.ts");
   assert.equal(e.kind, "calls");
+});
+
+test("resolveEdges: cross-file unique name with no import is ambiguous, not resolved", () => {
+  // The single candidate is in another file and no import vouches for it — a name coincidence
+  // (e.g. a builtin `Error`, a method `.split`). Surface it as a guess, never a fact.
+  const raw = [{ kind: "calls", refName: "verifyToken", fromPath: "src/x.ts", fromLine: 10 }];
+  const [e] = resolveEdges(raw, symIndex, new Map());
+  assert.equal(e.conf, "ambiguous");
+  assert.deepEqual(e.candidates, ["src/auth/token.ts"]);
+  assert.equal(e.to_path, null);
 });
 
 test("resolveEdges: import scoping disambiguates a duplicate name", () => {

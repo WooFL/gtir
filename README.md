@@ -361,11 +361,13 @@ MCP server exposes them as traversal tools:
 - **`callees_<label>`** `{ symbol }` — what a symbol calls (notes: `links_<label>` — what a note links to).
 - **`neighbors_<label>`** `{ symbol, path, lines }` — the blast radius: callers + callees + same-file siblings.
 
-Each edge carries a confidence tag: **`resolved`** (a unique definition, or import-scoped to one),
-**`ambiguous`** (several same-named definitions, no import to disambiguate — candidates returned, not a
-guess), or **`external`** (a library/builtin not in the index). Resolution is import-scoped *heuristic*,
-not type-resolved — it uses the imports a file declares to pick the right same-named symbol, but it is not
-an LSP. `find … references` now prefers real call edges and falls back to the lexical sweep when none exist.
+Each edge carries a confidence tag: **`resolved`** (a same-file definition, or an import-scoped one),
+**`ambiguous`** (a cross-file match no import vouches for, or several same-named definitions — the
+candidate path(s) returned, never a guess passed off as fact), or **`external`** (a library/builtin not in
+the index). Resolution is import-scoped *heuristic*, not type-resolved — a cross-file call only counts as
+`resolved` when an import links the two files; otherwise a same-name coincidence (a builtin `Error`, a
+method `.split`) stays `ambiguous`. It is not an LSP. `find … references` prefers real call edges and falls
+back to the lexical sweep when none exist.
 
 ## 🤖 Model
 
@@ -395,9 +397,10 @@ embed call fails. Fix: use a pooling-native model — the default `qwen3-embeddi
   dim.)
 - **`find … references` is lexical, not type-resolved.** Same-named methods both surface and a name in a
   comment counts. `find … definition` (the default) is precise; use an LSP for exact type-aware references.
-- **Edge resolution is import-scoped heuristic, not type-resolved.** A call to a name with several
-  same-named definitions and no disambiguating import is tagged `ambiguous` (candidates returned), not
-  resolved to one. Use an LSP for exact type-aware references; `find … references` uses edges when present.
+- **Edge resolution is import-scoped heuristic, not type-resolved.** A cross-file call is only
+  `resolved` when an import links the files; a same-name coincidence with no import (or several same-named
+  definitions) is tagged `ambiguous` with its candidate path(s), not resolved to one. Use an LSP for exact
+  type-aware references; `find … references` uses edges when present.
 
 ## 🛠️ Development
 
