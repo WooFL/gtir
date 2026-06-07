@@ -27,6 +27,9 @@ async function indexEdges(cfg, store, toIndex, { rebuild, deleted = [] }) {
   const changedSet = new Set(toIndex.map((f) => f.relPath));
   const deletedSet = new Set(deleted);
   const symbolIndex = new Map(), noteIndex = new Map(), callSiteVec = new Map(), chunkByPath = new Map();
+  // Symbols declared by the changed files (drives the "a new def appeared" caller re-resolution).
+  // Relies on buildIndex having already upsertRows'd the changed files BEFORE calling indexEdges —
+  // so the chunks table here reflects the new state. Keep that ordering.
   const changedSymbols = new Set();
   const rows = await tbl.query().select(["path", "line_start", "line_end", "text", "language", "embedding", "content_hash"]).toArray();
   for (const r of rows) {
