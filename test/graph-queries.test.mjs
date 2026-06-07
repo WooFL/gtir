@@ -118,3 +118,24 @@ test("cyclesQuery finds the import cycle", async () => {
     assert.deepEqual(r.import_cycles[0].members, ["p.mjs", "q.mjs"]);
   } finally { rmSync(cfg._root, { recursive: true, force: true }); }
 });
+
+import { graphForSearch, clearGraphCache } from "../src/graph-queries.mjs";
+
+test("graphForSearch builds {graph,degree}, caches, and clears", async () => {
+  const cfg = tmpCfg();
+  try {
+    const store = await openStore(cfg);
+    await store.upsertEdges([
+      { kind: "calls", conf: "resolved", from_path: "a.mjs", from_lines: "1", from_symbol: "f", to_path: "b.mjs", to_lines: "1", to_symbol: "g", candidates: [], content_hash: "h" },
+      { kind: "calls", conf: "resolved", from_path: "c.mjs", from_lines: "1", from_symbol: "x", to_path: "b.mjs", to_lines: "1", to_symbol: "g", candidates: [], content_hash: "h" },
+    ]);
+    const a = await graphForSearch(cfg);
+    assert.equal(a.degree.call.get("b.mjs#g"), 2);     // two callers of g
+    assert.ok(a.graph.rev.get("b.mjs#g").has("a.mjs#f"));
+    const b = await graphForSearch(cfg);
+    assert.equal(a, b);                                 // cached: same object
+    clearGraphCache(cfg.indexDir);
+    const c = await graphForSearch(cfg);
+    assert.notEqual(a, c);                              // rebuilt after clear
+  } finally { rmSync(cfg._root, { recursive: true, force: true }); }
+});

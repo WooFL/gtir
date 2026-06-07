@@ -73,3 +73,19 @@ test("runImpact/runOrphans/runCycles delegate to the query layer", async () => {
   const cyc = await runCycles({ repo });
   assert.deepEqual(cyc.call_cycles, []);
 });
+
+test("runSearch --edges/--centrality plumb graph data into results", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-cli-gr-"));
+  const cfg = loadConfig(repo);
+  cfg.embedImpl = (texts) => Promise.resolve(texts.map(() => [1, 0, 0]));
+  const store = await openStore(cfg);
+  await store.upsertRows([
+    { id: "1", path: "hub.mjs", line_start: 1, line_end: 3, language: "js", text: "function hub(){}", embedding: [1, 0, 0], mtime_ms: 1, content_hash: "h1" },
+  ]);
+  await store.upsertEdges([0, 1, 2].map((i) => ({ kind: "calls", conf: "resolved", from_path: `c${i}.mjs`, from_lines: "1", from_symbol: `f${i}`, to_path: "hub.mjs", to_lines: "1", to_symbol: "hub", candidates: [], content_hash: "h" })));
+
+  const hits = await runSearch({ repo, query: "hub", k: 5, embedImpl: cfg.embedImpl, edges: true, centrality: true });
+  const hub = hits.find((h) => h.path === "hub.mjs");
+  assert.ok(hub.callers.length >= 1);
+  assert.ok(hub.centrality > 1);
+});

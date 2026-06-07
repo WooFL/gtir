@@ -65,3 +65,9 @@ test("DEFAULTS carry embed-resilience knobs", () => {
   assert.equal(cfg.embedRetryBackoffMs, 500);
   assert.equal(cfg.warmupOnStart, true);
 });
+
+test("DEFAULTS include centrality + context-cap knobs", () => {
+  assert.equal(DEFAULTS.centralityWeight, 0.15);
+  assert.equal(DEFAULTS.centralityK, 8);
+  assert.equal(DEFAULTS.contextCap, 5);
+});

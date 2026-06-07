@@ -252,7 +252,7 @@ test("defaultStatusFn: an unbuilt index reports healthy:false + a note, never th
   assert.match(status[0].note, /not built/);
 });
 
-import { parseToolName, defaultReadFn, declaredSymbols } from "../src/mcp.mjs";
+import { parseToolName, defaultReadFn, defaultSearchFn, declaredSymbols } from "../src/mcp.mjs";
 
 test("declaredSymbols extracts all declared names across languages, de-duped", () => {
   assert.deepEqual(declaredSymbols("export function fuseRRF(a) {}\nconst RRF_K = 60"), ["fuseRRF", "RRF_K"]);
@@ -501,4 +501,27 @@ test("neighbors tool returns callers, callees, and siblings", async () => {
   assert.ok(out.callers.some((c) => c.path === "mw.ts"));
   assert.ok(out.callees.some((c) => c.symbol === "decode"));
   assert.ok(Array.isArray(out.siblings));
+});
+
+test("search_ schema has centrality+edges; read_ schema has edges", () => {
+  const tools = buildTools([{ label: "code", repo: "/r", cfg: { model: "qwen3" } }]);
+  const search = tools.find((t) => t.name === "search_code");
+  assert.ok(search.inputSchema.properties.centrality);
+  assert.ok(search.inputSchema.properties.edges);
+  const read = tools.find((t) => t.name === "read_code");
+  assert.ok(read.inputSchema.properties.edges);
+});
+
+test("tools/call search_ with edges:true attaches callers/callees", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "gtir-mcp-gr-"));
+  const cfg = { indexDir: join(dir, ".gtir"), model: "qwen3", embedImpl: (t) => Promise.resolve(t.map(() => [1, 0, 0])), ftsWeight: 0, ftsWeightSymbol: 0, ftsWeightMixed: 0, testPenalty: 1, centralityWeight: 0.15, centralityK: 8, contextCap: 5 };
+  try {
+    const store = await openStore(cfg);
+    await store.upsertRows([{ id: "1", path: "hub.mjs", line_start: 1, line_end: 3, language: "js", text: "function hub(){}", embedding: [1, 0, 0], mtime_ms: 1, content_hash: "h1" }]);
+    await store.upsertEdges([{ kind: "calls", conf: "resolved", from_path: "c0.mjs", from_lines: "1", from_symbol: "f0", to_path: "hub.mjs", to_lines: "1", to_symbol: "hub", candidates: [], content_hash: "h" }]);
+    const indexes = [{ label: "code", repo: dir, cfg }];
+    const ctx = { indexes, searchFn: defaultSearchFn(indexes) };
+    const res = await handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "search_code", arguments: { query: "hub", edges: true } } }, ctx);
+    assert.ok(res.result.structuredContent.results.some((r) => Array.isArray(r.callers)));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

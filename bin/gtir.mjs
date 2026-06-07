@@ -18,7 +18,7 @@ import { runDemo, formatDemo } from "../src/demo.mjs";
 import { runDoctor, preflight } from "../src/doctor.mjs";
 import { fetchGrammars } from "../src/fetch-grammars.mjs";
 import { buildGraph, renderHtml } from "../src/graph.mjs";
-import { impactQuery, orphansQuery, cyclesQuery } from "../src/graph-queries.mjs";
+import { impactQuery, orphansQuery, cyclesQuery, graphForSearch } from "../src/graph-queries.mjs";
 
 // --- programmatic entrypoints (used by tests and the dispatcher) ---
 
@@ -41,11 +41,12 @@ export async function runIndex({ repo, rebuild = false, noCache = false, embedIm
   return buildIndex(cfg, { rebuild });
 }
 
-export async function runSearch({ repo, query, k = 8, pathPrefix = null, language = null, embedImpl = null, rerank = false } = {}) {
+export async function runSearch({ repo, query, k = 8, pathPrefix = null, language = null, embedImpl = null, rerank = false, centrality = false, edges = false } = {}) {
   const cfg = loadConfig(repo);
   if (embedImpl) cfg.embedImpl = embedImpl;
   if (rerank) cfg.rerank = true;
-  return search(query, cfg, { k, pathPrefix, language });
+  const graphData = (centrality || edges) ? await graphForSearch(cfg) : null;
+  return search(query, cfg, { k, pathPrefix, language, centrality, edges, graphData });
 }
 
 export async function runStatus({ repo } = {}) {
@@ -150,6 +151,8 @@ function parseArgs(argv) {
     else if (a === "--path") args.path = argv[++i];
     else if (a === "--symbol") args.symbol = argv[++i];
     else if (a === "--limit") { const v = Number(argv[++i]); if (Number.isFinite(v)) args.limit = v; }
+    else if (a === "--centrality") args.centrality = true;
+    else if (a === "--edges") args.edges = true;
     else args._.push(a);
   }
   return args;
@@ -391,7 +394,7 @@ async function main() {
       }
       case "search": {
         const query = args._.join(" ");
-        const hits = await runSearch({ repo, query, k: args.k || 8, pathPrefix: args.pathPrefix, language: args.language, rerank: args.rerank });
+        const hits = await runSearch({ repo, query, k: args.k || 8, pathPrefix: args.pathPrefix, language: args.language, rerank: args.rerank, centrality: !!args.centrality, edges: !!args.edges });
         process.stdout.write(JSON.stringify(hits, null, 2) + "\n");
         break;
       }
