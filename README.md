@@ -372,13 +372,13 @@ back to the lexical sweep when none exist.
 
 ### Visualizing the edge graph
 
-`gtir graph` renders the edge layer as a single self-contained interactive HTML file — open it in any browser, no server, no network. It uses a WebGL renderer (cosmograph/cosmos) so it stays smooth at thousands of nodes. **Node color = directory cluster**, **node size = connection count**, **edge color = confidence** (green resolved, amber ambiguous, grey external).
+`gtir graph` renders the edge layer as a single self-contained interactive HTML file — open it in any browser, no server, no network. A WebGL renderer (cosmograph/cosmos) keeps it smooth at thousands of nodes, and each directory/package is laid out as its own **territory** — a packed disc on a grid — so the structure reads at a glance. **Node color = directory cluster**, **node size = connection count**, **edge color = confidence** (within-package edges solid; cross-package bridges faded). Translucent **islands** mark each package; hub files are labeled.
 
     gtir graph --repo .                         # whole repo (full graph, GPU-rendered)
     gtir graph --repo . --focus verifyToken     # ego-graph: 2 hops around one symbol
     gtir graph --repo . --rollup                # collapse symbols to files (architecture view)
 
-In the page, a control panel filters live: a **min-degree** slider hides leaf nodes, **kind** and **confidence** toggles carve the graph (external edges start hidden), search centers a node, the cluster legend isolates a package, and pause/resume stops the layout. The full graph is embedded and filtered in-browser, so no regeneration is needed.
+In the page, a control panel filters live: a **min-degree** slider hides leaf nodes, **kind** and **confidence** toggles carve the graph (external edges start hidden), a **spacing** slider sizes the territories, a **labels** slider sets how many hubs are named, search centers a node, and the cluster legend isolates a package. The full graph is embedded and filtered in-browser, so no regeneration is needed.
 
 Flags: `--out FILE` (default `gtir-graph.html`), `--focus SYM [--depth N]`, `--rollup`, `--kind`/`--conf`/`--path-prefix` pre-filters, `--max-nodes N` (optional hard cap; off by default). The graph reads edges built during `gtir index`.
 
