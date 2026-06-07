@@ -178,8 +178,8 @@ test("renderHtml: self-contained cosmos-2.x page — inlines cosmos, embeds data
   assert.ok(html.includes("/* COSMOSSRC */"));
   assert.ok(html.includes("window.cosmos"));
   assert.ok(html.includes("__GTIR_GRAPH__"));
-  assert.ok(html.includes("setPointClusters"));
-  assert.ok(html.includes("setClusterPositions"));
+  assert.ok(html.includes("disableSimulation"));      // deterministic placement
+  assert.ok(html.includes("setPointPositions"));
   assert.ok(html.includes('id="minDeg"') && html.includes('id="lblN"') && html.includes('id="isles"') && html.includes('id="space"'));
   assert.ok(html.includes("verifyToken"));
   assert.ok(!html.includes("<script src"));

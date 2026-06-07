@@ -313,7 +313,7 @@ function showInfo(n) {
 }
 function hideInfo() { $("info").style.display = "none"; }
 
-let graph = null, paused = false;
+let graph = null, paused = false, spread = 1;
 let curVisIdx = [], curLocal = new Int32Array(NODES.length).fill(-1);
 let labelMap = new Map(), showIslands = true, islandR = new Map(), frame = 0;
 
@@ -321,14 +321,7 @@ try {
   graph = new window.cosmos.Graph($("cv"), {
     spaceSize: 16384,
     backgroundColor: "#0d1117",
-    simulationGravity: 0.05,
-    simulationRepulsion: 1.4,
-    simulationRepulsionTheta: 1.15,
-    simulationCluster: 1.0,
-    simulationLinkSpring: 0.01,
-    simulationLinkDistance: 20,
-    simulationFriction: 0.9,
-    simulationDecay: 3000,
+    disableSimulation: true,        // deterministic placement — we position every point ourselves
     scalePointsOnZoom: true,
     onClick: (index) => {
       if (index != null) { graph.selectPointByIndex(index, true); const n = NODES[curVisIdx[index]]; if (n) showInfo(n); }
@@ -365,14 +358,29 @@ function recompute() {
   const local = new Int32Array(NODES.length).fill(-1); const visIdx = [];
   for (let i = 0; i < NODES.length; i++) if (used[i]) { local[i] = visIdx.length; visIdx.push(i); }
   const N = visIdx.length, L = vE.length;
-  const pos = new Float32Array(N * 2), col = new Float32Array(N * 4), siz = new Float32Array(N), clu = new Array(N);
+  const pos = new Float32Array(N * 2), col = new Float32Array(N * 4), siz = new Float32Array(N);
   for (let k = 0; k < N; k++) {
-    const i = visIdx[k], cc = clusterOfNode[i], xy = clusterXY[cc], rgb = clusterRGB[cc];
-    pos[k * 2] = xy[0] + (Math.random() * cell * 0.5 - cell * 0.25);
-    pos[k * 2 + 1] = xy[1] + (Math.random() * cell * 0.5 - cell * 0.25);
+    const i = visIdx[k], rgb = clusterRGB[clusterOfNode[i]];
     col[k * 4] = rgb[0]; col[k * 4 + 1] = rgb[1]; col[k * 4 + 2] = rgb[2]; col[k * 4 + 3] = 1;
-    siz[k] = NODES[i]._size; clu[k] = cc;
+    siz[k] = NODES[i]._size;
   }
+  // Deterministic placement: pack each cluster's visible nodes into a disc at its grid cell, hubs
+  // at the center (sunflower spiral). No simulation runs — positions ARE these, so territories are
+  // clean by construction and the islands (cell center + disc radius) align exactly.
+  const byCluster = new Map();
+  for (let k = 0; k < N; k++) { const cc = clusterOfNode[visIdx[k]]; let a = byCluster.get(cc); if (!a) { a = []; byCluster.set(cc, a); } a.push(k); }
+  islandR = new Map();
+  const GA = 2.399963229728653;
+  byCluster.forEach((ks, cc) => {
+    ks.sort((p, q) => (NODES[visIdx[q]].degree || 0) - (NODES[visIdx[p]].degree || 0));
+    const cnt = ks.length, xy = clusterXY[cc];
+    const R = Math.min(cell * 0.42, 30 + Math.sqrt(cnt) * cell * 0.02) * spread;
+    for (let j = 0; j < cnt; j++) {
+      const k = ks[j], rr = R * Math.sqrt((j + 0.5) / cnt), th = j * GA;
+      pos[k * 2] = xy[0] + rr * Math.cos(th); pos[k * 2 + 1] = xy[1] + rr * Math.sin(th);
+    }
+    islandR.set(cc, R + 14);
+  });
   const lnk = new Float32Array(L * 2), lcol = new Float32Array(L * 4), lwid = new Float32Array(L);
   for (let k = 0; k < L; k++) {
     const s = vE[k][0], t = vE[k][1], e = vE[k][2], rgb = confRGB[e.conf] || [120, 120, 120];
@@ -383,32 +391,12 @@ function recompute() {
   }
   if (graph) {
     graph.setPointPositions(pos); graph.setPointColors(col); graph.setPointSizes(siz);
-    graph.setPointClusters(clu); graph.setClusterPositions(clusterPosFlat);
     graph.setLinks(lnk); graph.setLinkColors(lcol); graph.setLinkWidths(lwid);
-    graph.render(0.9);
+    graph.render(0.1);
   }
   curVisIdx = visIdx; curLocal = local;
   rebuildLabelMap(+$("lblN").value);
   $("counts").textContent = N + " nodes · " + L + " edges" + (meta && meta.truncated ? " · dropped " + meta.dropped : "");
-}
-
-function computeIslandRadii() {
-  if (!graph) return;
-  const pp = graph.getPointPositions();
-  const byC = new Map();
-  for (let li = 0; li < curVisIdx.length; li++) {
-    const cc = clusterOfNode[curVisIdx[li]];
-    let a = byC.get(cc); if (!a) { a = []; byC.set(cc, a); }
-    a.push(pp[li * 2], pp[li * 2 + 1]);
-  }
-  islandR = new Map();
-  byC.forEach((xy, cc) => {
-    const n = xy.length / 2; if (n < 3) return;
-    const c = clusterXY[cc]; const ds = [];
-    for (let i = 0; i < xy.length; i += 2) { const dx = xy[i] - c[0], dy = xy[i + 1] - c[1]; ds.push(Math.sqrt(dx * dx + dy * dy)); }
-    ds.sort((u, v) => u - v);
-    islandR.set(cc, Math.max(ds[Math.floor(n * 0.7)] * 1.2 + 10, cell * 0.12));
-  });
 }
 
 function draw() {
@@ -416,7 +404,6 @@ function draw() {
   if (!graph) return;
   frame++;
   if (showIslands) {
-    if (frame % 12 === 1) computeIslandRadii();
     lctx.textAlign = "center"; lctx.textBaseline = "middle"; lctx.font = "11px system-ui,sans-serif";
     islandR.forEach((r, cc) => {
       const c = clusterXY[cc];
@@ -456,7 +443,8 @@ $("lblN").addEventListener("input", () => { $("lblNV").textContent = $("lblN").v
 $("isles").addEventListener("change", () => { showIslands = $("isles").checked; });
 $("space").addEventListener("input", () => {
   const d = +$("space").value; $("spaceV").textContent = d;
-  if (graph) { graph.setConfig({ simulationRepulsion: Math.max(0.5, d / 30), simulationCluster: Math.min(1, d / 40) }); graph.start(0.5); }
+  spread = Math.max(0.2, d / 30);   // scales each cluster's disc radius; re-pack
+  recompute();
 });
 document.querySelectorAll(".k,.cf").forEach(el => el.addEventListener("change", recompute));
 $("search").addEventListener("input", () => {
@@ -471,7 +459,7 @@ $("pause").addEventListener("click", () => {
 });
 
 function fitAll(ms) { if (graph && curVisIdx.length) graph.fitViewByPointIndices(curVisIdx.map((_, i) => i), ms); }
-if (graph) { recompute(); setTimeout(() => fitAll(600), 2200); setTimeout(() => fitAll(600), 5000); }
+if (graph) { recompute(); setTimeout(() => fitAll(0), 100); setTimeout(() => fitAll(400), 700); }
 </script>
 </body></html>`;
 }
