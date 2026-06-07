@@ -218,3 +218,23 @@ test("buildGraph: focus + rollup compose (file nodes within the ego-graph)", () 
   assert.ok(g.nodes.some((n) => n.id === "a.ts"));
   assert.ok(!g.nodes.some((n) => n.id === "z.ts" || n.id === "y.ts"));
 });
+
+test("buildGraph: whole-repo rollup caps FILE degree, not symbol degree", () => {
+  const rows = [];
+  // Noise FIRST: BIG in big.ts fans out to 8 leaf files — symbol-degree 8, so at the symbol level
+  // BIG and its leaves dominate the ranking and fill the degree-1 cap slots before any hub symbol.
+  for (let i = 0; i < 8; i++) {
+    rows.push(E({ from_symbol: "BIG", from_path: "big.ts", to_symbol: `bl${i}`, to_path: `bl${i}.ts`, ref_name: `bl${i}` }));
+  }
+  // Hub: 5 distinct functions in hub.ts, each calling one leaf once — symbol-degree 1 apiece,
+  // but hub.ts as a FILE has degree 5.
+  for (let i = 0; i < 5; i++) {
+    rows.push(E({ from_symbol: `h${i}`, from_path: "hub.ts", to_symbol: `g${i}`, to_path: `leaf${i}.ts`, ref_name: `g${i}` }));
+  }
+  const g = buildGraph(rows, { rollup: true, maxNodes: 4 });
+  assert.ok(g.nodes.every((n) => !n.id.includes("\x00")));   // file-level
+  assert.ok(g.nodes.length <= 4);
+  // Rolling up BEFORE the cap ranks hub.ts (file-degree 5) above the degree-1 leaf files, so it
+  // survives. Capping symbols first drops all 5 low-degree hub symbols and hub.ts would vanish.
+  assert.ok(g.nodes.some((n) => n.id === "hub.ts"));
+});

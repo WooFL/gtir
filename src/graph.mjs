@@ -144,7 +144,10 @@ export function rollupToFiles({ nodes, edges }) {
   return { nodes: [...out.values()], edges: [...merged.values()] };
 }
 
-// Compose the pipeline: filter → map → (focus | cap) → optional rollup.
+// Compose the pipeline: filter → map → focus|cap, with rollup placed so the cap acts on the
+// FINAL node grain. Focus: bound by depth first, then collapse the small ego-graph. Whole-repo:
+// collapse to files BEFORE capping so the cap keeps the highest-degree FILES (a real file-level
+// overview) rather than the highest-degree symbols that happen to survive a symbol-grain cap.
 export function buildGraph(edges, opts = {}) {
   const { focus = null, depth = 2, rollup = false, kind = null, conf = null, pathPrefix = null, maxNodes = 400 } = opts;
   const rows = applyFilters(edges, { kind, conf, pathPrefix });
@@ -153,13 +156,14 @@ export function buildGraph(edges, opts = {}) {
 
   if (focus) {
     g = egoGraph(g, focus, depth);
+    if (rollup) g = rollupToFiles(g);
   } else {
+    if (rollup) g = rollupToFiles(g);
     const capped = capByDegree(g, maxNodes);
     g = { nodes: capped.nodes, edges: capped.edges };
     truncated = capped.truncated; dropped = capped.dropped;
   }
 
-  if (rollup) g = rollupToFiles(g);
   return { nodes: g.nodes, edges: g.edges, truncated, dropped };
 }
 
