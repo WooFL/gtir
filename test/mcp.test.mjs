@@ -525,3 +525,10 @@ test("tools/call search_ with edges:true attaches callers/callees", async () => 
     assert.ok(res.result.structuredContent.results.some((r) => Array.isArray(r.callers)));
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("orphans_ tool no longer advertises include_ambiguous (always-on now)", () => {
+  const tools = buildTools([{ label: "code", repo: "/r", cfg: { model: "qwen3" } }]);
+  const orphans = tools.find((t) => t.name === "orphans_code");
+  assert.ok(orphans);
+  assert.equal(orphans.inputSchema.properties.include_ambiguous, undefined);
+});

@@ -167,10 +167,8 @@ export function buildTools(indexes) {
       name: `orphans_${ix.label}`,
       description: noteMode
         ? `Notes in ${at} with no backlinks (candidates for orphaned notes).`
-        : `Likely-dead symbols in ${at}: definitions with no inbound call/import edges, entrypoints filtered out heuristically.`,
-      inputSchema: { type: "object", properties: {
-        include_ambiguous: { type: "boolean", description: "count ambiguous inbound edges as references (fewer false positives)" },
-      } },
+        : `Likely-dead callable symbols in ${at}: functions/classes/methods with NO inbound reference (resolved, inferred, or ambiguous). Local variables, types, and entrypoints are excluded.`,
+      inputSchema: { type: "object", properties: {} },
     });
     tools.push({
       name: `cycles_${ix.label}`,
@@ -324,7 +322,7 @@ async function dispatchToolCall(params, ctx) {
         return reply(JSON.stringify(out, null, 2), out);
       }
       if (verb === "orphans") {
-        const out = await orphansFn(label, { includeAmbiguous: !!args.include_ambiguous });
+        const out = await orphansFn(label, {});
         return reply(JSON.stringify(out, null, 2), out);
       }
       if (verb === "cycles") {
