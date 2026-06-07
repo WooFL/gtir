@@ -289,3 +289,22 @@ test("calleesOf surfaces score when an edge has one", () => {
   assert.equal(callee.conf, "inferred");
   assert.equal(callee.score, 0.71);
 });
+
+test("extractCodeEdges marks isMethod for member calls, not bare calls", async () => {
+  const edges = await edgesFor("typescript", `function a(){ obj.get(x); free(y); }`);
+  const member = edges.find((e) => e.kind === "calls" && e.refName === "get");
+  const bare = edges.find((e) => e.kind === "calls" && e.refName === "free");
+  assert.equal(member.isMethod, true);
+  assert.equal(bare.isMethod, false);
+});
+
+test("resolveEdges threads isMethod onto ambiguous calls rows", () => {
+  const idx = new Map([["get", [
+    { path: "a.ts", line_start: 1, line_end: 3 },
+    { path: "b.ts", line_start: 1, line_end: 3 },
+  ]]]);
+  const raw = [{ kind: "calls", refName: "get", fromPath: "c.ts", fromLine: 5, fromSymbol: "f", isMethod: true }];
+  const [r] = resolveEdges(raw, idx, new Map());
+  assert.equal(r.conf, "ambiguous");
+  assert.equal(r.isMethod, true);
+});
