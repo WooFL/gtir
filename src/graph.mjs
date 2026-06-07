@@ -281,11 +281,15 @@ const clusterColor = new Map(clusters.map((c, i) =>
 ALLN.forEach(n => { n.color = clusterColor.get(n.cluster); n.size = 3 + Math.min(12, Math.sqrt(n.degree || 0)); });
 ALLE.forEach(e => { e.color = CONF[e.conf] || "#666"; e.width = Math.min(4, e.count || 1); });
 
-// Seed each node near its cluster's grid cell (wide cells + jitter) so the GPU force opens up
-// into separated neighborhoods instead of one ball.
-const cols = Math.max(1, Math.ceil(Math.sqrt(clusters.length))), CELL = 2600;
+// Seed each node in its cluster's grid cell, sized to fill the layout space. With near-zero link
+// spring (below), the GPU force preserves this grid — clusters stay as separated territories
+// instead of collapsing into one ball.
+const SPACE = 16384;
+const cols = Math.max(1, Math.ceil(Math.sqrt(clusters.length)));
+const CELL = Math.floor(SPACE / (cols + 1));
 const cIdx = new Map(clusters.map((c, i) => [c, i]));
-ALLN.forEach(n => { const i = cIdx.get(n.cluster); n.x = (i % cols) * CELL + (Math.random() * 700 - 350); n.y = Math.floor(i / cols) * CELL + (Math.random() * 700 - 350); });
+const jit = () => Math.random() * CELL * 0.5 - CELL * 0.25;
+ALLN.forEach(n => { const i = cIdx.get(n.cluster); n.x = ((i % cols) + 0.5) * CELL + jit(); n.y = (Math.floor(i / cols) + 0.5) * CELL + jit(); });
 
 function showInfo(n) {
   const refs = (n.refs || []).map(r => esc(r.path) + ":" + r.line).join("<br>");
@@ -298,8 +302,10 @@ function hideInfo() { $("info").style.display = "none"; }
 // Layout forces. With tens of thousands of edges, link springs pull everything into a ball — so:
 // big space, strong repulsion, long+soft links, low gravity. The spacing slider scales
 // linkDistance + repulsion together at runtime via setConfig.
-// Low decay so the layout COOLS and comes to rest (high decay = never settles).
-const SIM = { gravity: 0.05, repulsion: 2.0, repulsionTheta: 1.2, linkSpring: 0.3, linkDistance: 30, friction: 0.9, decay: 3000 };
+// Cluster-preserving forces: near-zero link spring (links stop dragging packages into one ball),
+// strong repulsion (spreads within a cluster + pushes clusters apart), low gravity, low decay so
+// it cools to rest near the seeded grid. The spacing slider scales repulsion + linkDistance live.
+const SIM = { gravity: 0.02, repulsion: 1.6, repulsionTheta: 1.2, linkSpring: 0.05, linkDistance: 30, friction: 0.9, decay: 2500 };
 
 const shortName = n => (n.label.includes(" · ") ? n.label.split(" · ")[0] : (n.label.split(/[\\/]/).pop() || n.label));
 const hexA = (h, a) => { const n = parseInt(h.slice(1), 16); return "rgba(" + ((n >> 16) & 255) + "," + ((n >> 8) & 255) + "," + (n & 255) + "," + a + ")"; };
@@ -374,7 +380,7 @@ function draw() {
 let graph = null, paused = false;
 try {
   graph = new window.cosmos.Graph($("cv"), {
-    spaceSize: 16384,
+    spaceSize: SPACE,
     backgroundColor: "#0d1117",
     nodeColor: n => n.color,
     nodeSize: n => n.size,
@@ -382,6 +388,7 @@ try {
     linkColor: l => l.color,
     linkWidth: l => l.width,
     scaleNodesOnZoom: true,
+    fitViewOnInit: true,
     simulation: SIM,
     events: {
       onClick: (n) => { if (n) { graph.selectNodeById(n.id, true); showInfo(n); } else { graph.unselectNodes(); hideInfo(); } },
