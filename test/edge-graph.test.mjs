@@ -174,3 +174,24 @@ test("orphans: includeAmbiguous suppresses flag when ambiguous inbound exists", 
   const inv = [{ name: "maybe", path: "util.mjs", line_start: 1, line_end: 2, text: "function maybe(){}" }];
   assert.deepEqual(orphans(inv, g, { includeAmbiguous: true }).likely_dead, []);
 });
+
+import { degreeMap } from "../src/edge-graph.mjs";
+
+test("degreeMap: call-degree keyed by symbol; import in-degree by file", () => {
+  const g = buildGraph([
+    E.call("a.mjs", "f", "b.mjs", "g"),   // g gains in-degree 1
+    E.call("c.mjs", "x", "b.mjs", "g"),   // g gains in-degree 1 -> total 2
+    E.imp("d.mjs", "b.mjs"),              // b.mjs imported once
+    E.imp("e.mjs", "b.mjs"),              // b.mjs imported twice
+  ]);
+  const call = degreeMap(g, { kinds: ["calls"] });
+  assert.equal(call.get("b.mjs#g"), 2);        // 2 incoming calls
+  assert.equal(call.get("a.mjs#f"), 1);        // 1 outgoing call
+  const imp = degreeMap(g, { kinds: ["imports"], direction: "in" });
+  assert.equal(imp.get("b.mjs"), 2);           // imported by d and e
+  assert.equal(imp.get("d.mjs"), undefined);   // d has only out, in-only map omits it
+});
+
+test("degreeMap: empty graph yields empty map", () => {
+  assert.equal(degreeMap(buildGraph([])).size, 0);
+});

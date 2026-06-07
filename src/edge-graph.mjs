@@ -184,6 +184,20 @@ export function orphans(inventory, graph, { includeAmbiguous = false } = {}) {
   return { likely_dead, possible_entrypoint };
 }
 
+// Degree per node key over selected edge kinds/direction. direction: "both"|"in"|"out".
+// Used by centrality scoring: call-degree (kinds:["calls"]) keys symbol nodes; import in-degree
+// (kinds:["imports"], direction:"in") keys file nodes.
+export function degreeMap(graph, { kinds = null, direction = "both" } = {}) {
+  const deg = new Map();
+  const ok = kinds ? (k) => kinds.includes(k) : () => true;
+  for (const e of graph.edgeList) {
+    if (!ok(e.kind)) continue;
+    if (direction !== "in") deg.set(e.src, (deg.get(e.src) || 0) + 1);
+    if (direction !== "out") deg.set(e.dst, (deg.get(e.dst) || 0) + 1);
+  }
+  return deg;
+}
+
 // Circular dependencies, split by edge class. SCCs of size>1 are cycles; size-1 SCCs with a
 // self-edge are counted as excluded self-recursion (intended, not a smell).
 export function cycles(graph) {
