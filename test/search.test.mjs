@@ -126,7 +126,7 @@ function seedCfg() {
   const dir = mkdtempSync(join(tmpdir(), "gtir-search-gq-"));
   return { indexDir: join(dir, ".gtir"), model: "qwen3", embedImpl: fakeEmbed,
     ftsWeight: 0, ftsWeightSymbol: 0, ftsWeightMixed: 0, testPenalty: 1,
-    centralityWeight: 0.15, centralityK: 8, contextCap: 5, _root: dir };
+    centralityWeight: 0.15, centralityK: 8, centralityTieEps: 0.000001, contextCap: 5, _root: dir };
 }
 
 test("search: --edges attaches callers/callees; --centrality annotates high-degree hits", async () => {
@@ -149,8 +149,9 @@ test("search: --edges attaches callers/callees; --centrality annotates high-degr
 
     const cen = await search("hub leaf", cfg, { k: 5, centrality: true, graphData });
     const hubCen = cen.find((h) => h.path === "hub.mjs");
-    assert.ok(hubCen.centrality > 1);                  // high-degree hub annotated
-    assert.equal(cen[0].path, "hub.mjs");              // boosted to the top
+    assert.ok(hubCen.centrality > 1);                  // high-degree hub annotated central
+    // tiebreaker-only: hub/leaf aren't a true RRF tie here, so order is NOT changed (annotation only).
+    // Within-tie reordering is covered by the pure applyCentrality band tests.
 
     const plain = await search("hub leaf", cfg, { k: 5 });
     assert.ok(plain.every((h) => h.centrality === undefined && h.callers === undefined));

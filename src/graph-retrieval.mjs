@@ -26,7 +26,10 @@ export function centralityMultiplier(text, path, degree, { weight = 0.15, K = 8 
 // relevant top hit (measured: the score-multiplier variant cost ~4.5pp recall@1; this is neutral).
 // Scores are left unchanged; `centrality` is annotated on items whose multiplier ≠ 1. Does NOT
 // slice — the caller slices to k afterward. Assumes hits are already sorted by score desc.
-export function applyCentrality(hits, degree, { weight = 0.15, K = 8, eps = 0.001 } = {}) {
+// NOTE: fuseRRF rounds scores to 4 decimals, so in practice this band fires only on post-rounding
+// ties — eps just needs to be < the rounding step (1e-4). The 1e-6 default keeps that property even
+// if a caller omits it; never raise it above the inter-rank RRF gap (~2.6e-4) or exact matches demote.
+export function applyCentrality(hits, degree, { weight = 0.15, K = 8, eps = 0.000001 } = {}) {
   const withC = hits.map((h) => ({ h, c: centralityMultiplier(h.snippet ?? "", h.path, degree, { weight, K }) }));
   const out = [];
   for (let i = 0; i < withC.length;) {
