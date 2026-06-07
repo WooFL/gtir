@@ -372,14 +372,17 @@ back to the lexical sweep when none exist.
 
 ### Visualizing the edge graph
 
-`gtir graph` renders the edge layer as a single self-contained interactive HTML file — open it in any browser, no server, no network. Edge **color = confidence** (green resolved, amber ambiguous, grey external) and **line style = kind** (calls solid, imports dashed, links dotted), so resolution quality is auditable at a glance.
+`gtir graph` renders the edge layer as a single self-contained interactive HTML file — open it in any browser, no server, no network. It uses a WebGL renderer (cosmograph/cosmos) so it stays smooth at thousands of nodes. **Node color = directory cluster**, **node size = connection count**, **edge color = confidence** (green resolved, amber ambiguous, grey external).
 
-    gtir graph --repo .                         # whole repo (capped at 400 nodes)
+    gtir graph --repo .                         # whole repo (full graph, GPU-rendered)
     gtir graph --repo . --focus verifyToken     # ego-graph: 2 hops around one symbol
     gtir graph --repo . --rollup                # collapse symbols to files (architecture view)
-    gtir graph --repo . --conf ambiguous        # only the suspect edges
 
-Flags: `--out FILE` (default `gtir-graph.html`), `--depth N` (focus hops, default 2), `--max-nodes N` (whole-repo cap, default 400), `--kind`/`--conf`/`--path-prefix` filters. Non-resolved edges show the referenced name (an ambiguous `Error` node lists the files resolution guessed between; an external `now` node marks a call outside the index). The graph reads edges built during `gtir index`; run `gtir index --rebuild` once after upgrading so non-resolved nodes show names.
+In the page, a control panel filters live: a **min-degree** slider hides leaf nodes, **kind** and **confidence** toggles carve the graph (external edges start hidden), search centers a node, the cluster legend isolates a package, and pause/resume stops the layout. The full graph is embedded and filtered in-browser, so no regeneration is needed.
+
+Flags: `--out FILE` (default `gtir-graph.html`), `--focus SYM [--depth N]`, `--rollup`, `--kind`/`--conf`/`--path-prefix` pre-filters, `--max-nodes N` (optional hard cap; off by default). The graph reads edges built during `gtir index`.
+
+> The vendored WebGL bundle (`vendor/cosmos.min.js`) is regenerated with `npm run bundle:cosmos` (needs dev deps); it ships in the npm package.
 
 ## 🤖 Model
 
