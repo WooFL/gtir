@@ -192,6 +192,7 @@ gtir doctor  [--repo <project>] [--no-pull]            # check Ollama + model, p
 gtir mcp     --repo <project> [--label name:<repo>] [--watch] [--print-config]   # run the MCP server
 gtir eval    --repo <corpus> --golden <f> [--save] [--json]            # score retrieval quality
 gtir eval    --repo <corpus> --tune ["ftsWeight=0,0.2;ftsWeightMixed=0,1"]   # sweep fusion weights
+gtir graph   --repo <project> [--focus <symbol>] [--rollup] [--out FILE]    # render edge graph as HTML
 ```
 
 `search` prints JSON to stdout; everything human-readable goes to stderr. The index lives in
@@ -368,6 +369,17 @@ the index). Resolution is import-scoped *heuristic*, not type-resolved — a cro
 `resolved` when an import links the two files; otherwise a same-name coincidence (a builtin `Error`, a
 method `.split`) stays `ambiguous`. It is not an LSP. `find … references` prefers real call edges and falls
 back to the lexical sweep when none exist.
+
+### Visualizing the edge graph
+
+`gtir graph` renders the edge layer as a single self-contained interactive HTML file — open it in any browser, no server, no network. Edge **color = confidence** (green resolved, amber ambiguous, grey external) and **line style = kind** (calls solid, imports dashed, links dotted), so resolution quality is auditable at a glance.
+
+    gtir graph --repo .                         # whole repo (capped at 400 nodes)
+    gtir graph --repo . --focus verifyToken     # ego-graph: 2 hops around one symbol
+    gtir graph --repo . --rollup                # collapse symbols to files (architecture view)
+    gtir graph --repo . --conf ambiguous        # only the suspect edges
+
+Flags: `--out FILE` (default `gtir-graph.html`), `--depth N` (focus hops, default 2), `--max-nodes N` (whole-repo cap, default 400), `--kind`/`--conf`/`--path-prefix` filters. Non-resolved edges show the referenced name (an ambiguous `Error` node lists the files resolution guessed between; an external `now` node marks a call outside the index). The graph reads edges built during `gtir index`; run `gtir index --rebuild` once after upgrading so non-resolved nodes show names.
 
 ## 🤖 Model
 

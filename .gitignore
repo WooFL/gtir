@@ -8,3 +8,6 @@ node_modules/
 vendor/grammars/*.wasm
 # local planning/spec scratch — not part of the shipped project
 docs/superpowers/
+# smoke-test / throwaway graph outputs
+/gtir-graph.html
+/focus.html
