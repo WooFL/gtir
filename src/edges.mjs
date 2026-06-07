@@ -56,7 +56,7 @@ function unquote(s) {
 // Strip a known source-file extension to get a path stem, so an import source ("./token")
 // and an indexed candidate path ("src/token.ts") compare equal.
 const SRC_EXT = /\.(m?[jt]sx?|d\.ts|py|rs|go|c|cc|cpp|cxx|h|hpp|hh)$/i;
-function stripExt(p) { return String(p).replace(SRC_EXT, ""); }
+export function stripExt(p) { return String(p).replace(SRC_EXT, ""); }
 
 // Collect named import specifiers from an import node (best-effort; precise for JS/TS-style
 // `import { a, b } from "..."` and Python `from module import a, b`). Returns a Set of identifier names.
