@@ -233,6 +233,16 @@ test("evalEdges reports recall and resolution split", () => {
   assert.equal(m.split.external, 1);
 });
 
+test("evalEdges split counts inferred edges", () => {
+  const edges = [
+    { kind: "calls", conf: "inferred", from_symbol: "f", to_symbol: "g", to_path: "b.mjs", ref_name: "g" },
+    { kind: "calls", conf: "resolved", from_symbol: "x", to_symbol: "y", to_path: "c.mjs", ref_name: "y" },
+  ];
+  const r = evalEdges(edges, []);
+  assert.equal(r.split.inferred, 1);
+  assert.equal(r.split.resolved, 1);
+});
+
 test("edges-golden.json is a non-empty array of well-formed entries", () => {
   const golden = JSON.parse(readFileSync(new URL("../eval/edges-golden.json", import.meta.url)));
   assert.ok(Array.isArray(golden) && golden.length >= 8);

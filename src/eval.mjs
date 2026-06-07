@@ -116,7 +116,7 @@ export function scoreEdgeGolden(edges, entry) {
 export function evalEdges(edges, golden) {
   const found = golden.filter((g) => scoreEdgeGolden(edges, g).found).length;
   const recall = golden.length ? round(found / golden.length) : 0;
-  const split = { resolved: 0, ambiguous: 0, external: 0 };
+  const split = { resolved: 0, inferred: 0, ambiguous: 0, external: 0 };
   for (const e of edges) if (e.conf in split) split[e.conf]++;
   return { recall, n: golden.length, found, split };
 }

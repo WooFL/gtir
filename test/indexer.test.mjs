@@ -255,3 +255,45 @@ test("buildIndex populates the edges table for code", async () => {
   assert.equal(call.from_path, "mw.ts");
   assert.equal(call.conf, "resolved");
 });
+
+test("indexer: ambiguous call promoted to inferred toward the embedding-closest def", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-disambig-"));
+  writeFileSync(join(repo, "near.js"), "function target(){ /* MARKER */ return 1; }\n");
+  writeFileSync(join(repo, "far.js"), "function target(){ return 2; }\n");
+  writeFileSync(join(repo, "caller.js"), "function use(){ /* MARKER */ return target(); }\n");
+  // Embedder: chunks containing MARKER → [1,0,0]; others → [0,1,0]. So caller≈near, far orthogonal.
+  const markerEmbed = (texts) => Promise.resolve(texts.map((t) => (/MARKER/.test(t) ? [1, 0, 0] : [0, 1, 0])));
+  try {
+    await buildIndex({ ...loadConfig(repo), embedImpl: markerEmbed, minChars: 1 }, { rebuild: true });
+    const store = await openStore(loadConfig(repo));
+    const edges = await store.loadEdges();
+    const call = edges.find((e) => e.kind === "calls" && e.ref_name === "target");
+    assert.ok(call, "expected a calls edge for target");
+    assert.equal(call.conf, "inferred");
+    assert.equal(call.to_path, "near.js");
+    assert.ok(call.score > 0.5);
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
+test("indexer: pre-score edges table triggers a one-time rebuild (edge-schema heal)", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-edgeheal-"));
+  // a() calls b() (same file, unique) → a resolved call edge, so the rebuilt edges table is
+  // non-empty and therefore carries the `score` column after the heal.
+  writeFileSync(join(repo, "a.js"), "function a(){ return b(); }\nfunction b(){ return 1; }\n");
+  try {
+    const cfg = { ...loadConfig(repo), embedImpl: fakeEmbed, minChars: 1 };
+    await buildIndex(cfg, { rebuild: true });
+    // Simulate a legacy edges table with no `score` column by recreating it without one.
+    const db = await lancedb.connect(loadConfig(repo).indexDir);
+    if ((await db.tableNames()).includes("edges")) await db.dropTable("edges");
+    await db.createTable("edges", [{ kind: "calls", conf: "resolved", from_path: "a.js", from_lines: "1",
+      from_symbol: "a", to_path: "a.js", to_lines: "1", to_symbol: "a", ref_name: "a",
+      candidates_json: "[]", content_hash: "h" }]); // NOTE: no `score` field
+    const store0 = await openStore(loadConfig(repo));
+    assert.equal((await store0.edgeColumns()).has("score"), false);
+    const r = await buildIndex({ ...loadConfig(repo), embedImpl: fakeEmbed, minChars: 1 }, {});
+    const store = await openStore(loadConfig(repo));
+    assert.ok((await store.edgeColumns()).has("score"), "edges table should carry score after heal");
+    assert.ok((r.warnings || []).some((w) => /schema/i.test(w)), "expected a schema-heal warning");
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});

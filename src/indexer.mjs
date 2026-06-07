@@ -8,6 +8,7 @@ import { contextualizeChunk } from "./contextualize.mjs";
 import { embedTexts, contentHash } from "./embed.mjs";
 import { openStore } from "./store.mjs";
 import { extractCodeEdges, extractNotesEdges, resolveEdges } from "./edges.mjs";
+import { disambiguateEdges } from "./disambiguate.mjs";
 import { declaredSymbols } from "./symbols.mjs";
 
 // Columns the current row shape ALWAYS writes. content_hash is deliberately excluded — it's
@@ -25,12 +26,21 @@ async function indexEdges(cfg, store, toIndex, { rebuild }) {
   const tbl = await store.chunksTable();
   const symbolIndex = new Map();
   const noteIndex = new Map();
+  const callSiteVec = new Map();
+  // chunkByPath: path → [{line_start, line_end, content_hash}] for mapping call-site lines → chunk hash.
+  const chunkByPath = new Map();
   if (tbl) {
-    const rows = await tbl.query().select(["path", "line_start", "line_end", "text", "language"]).toArray();
+    const rows = await tbl.query().select(["path", "line_start", "line_end", "text", "language", "embedding", "content_hash"]).toArray();
     for (const r of rows) {
+      if (r.content_hash && r.embedding) callSiteVec.set(r.content_hash, Array.from(r.embedding));
+      if (r.content_hash) {
+        if (!chunkByPath.has(r.path)) chunkByPath.set(r.path, []);
+        chunkByPath.get(r.path).push({ line_start: Number(r.line_start), line_end: Number(r.line_end), content_hash: r.content_hash });
+      }
       for (const name of declaredSymbols(r.text)) {
         if (!symbolIndex.has(name)) symbolIndex.set(name, []);
-        symbolIndex.get(name).push({ path: r.path, line_start: Number(r.line_start), line_end: Number(r.line_end) });
+        symbolIndex.get(name).push({ path: r.path, line_start: Number(r.line_start), line_end: Number(r.line_end),
+          embedding: r.embedding ? Array.from(r.embedding) : null });
       }
     }
     for (const r of rows) {
@@ -42,7 +52,7 @@ async function indexEdges(cfg, store, toIndex, { rebuild }) {
     }
   }
 
-  const all = [];
+  let all = [];
   for (const f of toIndex) {
     let text;
     try { text = readFileSync(f.absPath, "utf8"); } catch { continue; }
@@ -59,6 +69,22 @@ async function indexEdges(cfg, store, toIndex, { rebuild }) {
       }
     }
     if (raw.length) all.push(...resolveEdges(raw, symbolIndex, noteIndex));
+  }
+  // Annotate ambiguous call edges with the content_hash of the chunk containing the call site,
+  // so disambiguateEdges can look up the call-site embedding via callSiteVec.
+  if (chunkByPath.size) {
+    all = all.map((e) => {
+      if (e.kind !== "calls" || e.conf !== "ambiguous" || e.content_hash) return e;
+      const chunks = chunkByPath.get(e.from_path) ?? [];
+      const line = Number(String(e.from_lines).split("-")[0]);
+      const chunk = chunks.find((c) => line >= c.line_start && line <= c.line_end)
+        ?? chunks.reduce((best, c) => (!best || Math.abs(c.line_start - line) < Math.abs(best.line_start - line) ? c : best), null);
+      return chunk ? { ...e, content_hash: chunk.content_hash } : e;
+    });
+  }
+  if (cfg.disambiguate !== false && all.length) {
+    all = disambiguateEdges(all, { symbolIndex, callSiteVec,
+      threshold: cfg.disambigThreshold, margin: cfg.disambigMargin });
   }
   const changed = [...new Set(toIndex.map((f) => f.relPath))];
   await store.evictEdgePaths(changed);
@@ -79,6 +105,10 @@ export async function buildIndex(cfg, { rebuild = false, paths = null } = {}) {
     const cols = await store.chunkColumns();
     tableExists = cols !== null;
     if (cols && REQUIRED_CHUNK_COLUMNS.some((c) => !cols.has(c))) { rebuild = true; schemaHealed = true; }
+    if (!rebuild) {
+      const ecols = await store.edgeColumns();
+      if (ecols && !ecols.has("score")) { rebuild = true; schemaHealed = true; }
+    }
   }
 
   const manifest = rebuild ? {} : await store.loadManifest();

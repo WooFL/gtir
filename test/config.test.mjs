@@ -71,3 +71,9 @@ test("DEFAULTS include centrality + context-cap knobs", () => {
   assert.equal(DEFAULTS.centralityK, 8);
   assert.equal(DEFAULTS.contextCap, 5);
 });
+
+test("DEFAULTS include disambiguation knobs", () => {
+  assert.equal(DEFAULTS.disambiguate, true);
+  assert.equal(DEFAULTS.disambigThreshold, 0.55);
+  assert.equal(DEFAULTS.disambigMargin, 0.05);
+});

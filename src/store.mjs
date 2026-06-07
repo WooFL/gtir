@@ -151,6 +151,7 @@ export async function openStore(cfg) {
       ref_name: e.ref_name ?? "",
       candidates_json: JSON.stringify(e.candidates ?? []),
       content_hash: e.content_hash ?? "",
+      score: e.score ?? 0,
     };
   }
   function fromEdgeRow(r) {
@@ -161,7 +162,18 @@ export async function openStore(cfg) {
       ref_name: r.ref_name || null,
       candidates: (() => { try { return JSON.parse(r.candidates_json || "[]"); } catch { return []; } })(),
       content_hash: r.content_hash || null,
+      score: r.score || null,
     };
+  }
+
+  async function edgeColumns() {
+    const tbl = await edgesTable();
+    if (!tbl) return null;
+    try { return new Set((await tbl.schema()).fields.map((f) => f.name)); }
+    catch {
+      try { const rows = await tbl.query().limit(1).toArray(); return rows.length ? new Set(Object.keys(rows[0])) : null; }
+      catch { return null; }
+    }
   }
 
   async function upsertEdges(edges) {
@@ -227,5 +239,5 @@ export async function openStore(cfg) {
     return rows.find((r) => Number(r.line_start) <= line && line <= Number(r.line_end)) || rows[0];
   }
 
-  return { chunksTable, upsertRows, loadManifest, evictPaths, writeMeta, readMeta, hasContentHash, chunkColumns, loadEmbedCache, dropChunks, chunksByPath, allChunkRows, hasEdges, chunkAt, upsertEdges, loadEdges, evictEdgePaths, dropEdges };
+  return { chunksTable, upsertRows, loadManifest, evictPaths, writeMeta, readMeta, hasContentHash, chunkColumns, loadEmbedCache, dropChunks, chunksByPath, allChunkRows, hasEdges, chunkAt, upsertEdges, loadEdges, evictEdgePaths, dropEdges, edgeColumns };
 }
