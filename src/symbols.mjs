@@ -20,3 +20,23 @@ export function declaredSymbols(text) {
   while ((m = cfn.exec(s))) if (!NOT_A_DEFINITION.has(m[1])) out.add(m[1]);
   return [...out];
 }
+
+// Every identifier this chunk declares that is CALLABLE — functions, classes, methods, and
+// function-valued bindings. Unlike declaredSymbols (the symbol index, which captures every declared
+// name), this excludes type/interface/enum and plain value const/let/var. Used by `orphans` so
+// dead-code detection isn't drowned in local variables and type names.
+export function declaredCallables(text) {
+  const s = String(text || "");
+  const out = new Set();
+  let m;
+  // keyword-declared callables (function/class across languages); NOT interface/type/enum/const/let/var.
+  const kw = /\b(?:function\*?|func|def|fn|class|struct|impl|trait)\s+([A-Za-z_$][\w$]*)/g;
+  while ((m = kw.exec(s))) out.add(m[1]);
+  // const/let/var name = (arrow | function expression) — function-valued bindings only.
+  const arrow = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=;]+)?=\s*(?:async\s+)?(?:function\b|\(?[\w$,\s]*\)?\s*(?::[^=;{]+)?=>)/g;
+  while ((m = arrow.exec(s))) out.add(m[1]);
+  // C-family function/method DEFINITIONS — `[Class::]name(params) [quals] {` (same as declaredSymbols' 2nd pass).
+  const cfn = /(?:^|[\s;{}*&])(?:[A-Za-z_]\w*\s*::\s*)*([A-Za-z_]\w*)\s*\([^;{}]*\)\s*(?:noexcept|const|override|final|mutable|volatile|->[\w:<>,*&\s]+|\s)*(?::[^{};]*)?\{/g;
+  while ((m = cfn.exec(s))) if (!NOT_A_DEFINITION.has(m[1])) out.add(m[1]);
+  return [...out];
+}
