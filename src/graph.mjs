@@ -247,7 +247,8 @@ export function renderHtml({ nodes, edges, meta = {} }, cosmosSource) {
   <input id="search" placeholder="find node…" autocomplete="off">
   <div class="row">min degree <span id="minDegV">0</span><br><input id="minDeg" type="range" min="0" max="20" value="0" style="width:100%"></div>
   <div class="row">spacing <span id="spaceV">30</span><br><input id="space" type="range" min="6" max="140" value="30" style="width:100%"></div>
-  <label><input type="checkbox" id="lbls" checked> hub labels</label>
+  <div class="row">labels <span id="lblNV">30</span><br><input id="lblN" type="range" min="0" max="200" value="30" style="width:100%"></div>
+  <label><input type="checkbox" id="isles" checked> cluster islands</label>
   <div class="row"><b>kind</b>
     <label><input type="checkbox" class="k" value="calls" checked> calls</label>
     <label><input type="checkbox" class="k" value="imports" checked> imports</label>
@@ -297,15 +298,22 @@ function hideInfo() { $("info").style.display = "none"; }
 // Layout forces. With tens of thousands of edges, link springs pull everything into a ball — so:
 // big space, strong repulsion, long+soft links, low gravity. The spacing slider scales
 // linkDistance + repulsion together at runtime via setConfig.
-const SIM = { gravity: 0.05, repulsion: 2.0, repulsionTheta: 1.2, linkSpring: 0.3, linkDistance: 30, friction: 0.9, decay: 100000 };
+// Low decay so the layout COOLS and comes to rest (high decay = never settles).
+const SIM = { gravity: 0.05, repulsion: 2.0, repulsionTheta: 1.2, linkSpring: 0.3, linkDistance: 30, friction: 0.9, decay: 3000 };
 
-// Top-degree hub labels. cosmos renders GPU points (no native text), so labels are drawn on a 2D
-// canvas LAYER over the graph and redrawn every animation frame from live node positions — they
-// stay frame-locked to the nodes (no DOM-div drift) and read as part of the same scene.
 const shortName = n => (n.label.includes(" · ") ? n.label.split(" · ")[0] : (n.label.split(/[\\/]/).pop() || n.label));
-const LABELN = [...ALLN].sort((a, b) => (b.degree || 0) - (a.degree || 0)).slice(0, 30);
-const labelText = new Map(LABELN.map(n => [n.id, shortName(n)]));
-let showLabels = true;
+const hexA = (h, a) => { const n = parseInt(h.slice(1), 16); return "rgba(" + ((n >> 16) & 255) + "," + ((n >> 8) & 255) + "," + (n & 255) + "," + a + ")"; };
+
+// Hub labels (top-N by degree) — adjustable count. cosmos renders GPU points (no native text),
+// so labels + cluster "islands" are drawn on a 2D canvas LAYER over the graph, redrawn every frame
+// from live node positions so they stay frame-locked (no DOM drift) and read as one scene.
+let LABELN = [], labelText = new Map();
+function rebuildLabels(count) {
+  LABELN = [...ALLN].sort((a, b) => (b.degree || 0) - (a.degree || 0)).slice(0, count);
+  labelText = new Map(LABELN.map(n => [n.id, shortName(n)]));
+  if (graph) graph.trackNodePositionsByIds(LABELN.map(n => n.id));
+}
+let showIslands = true;
 const lcv = $("lblcv"), lctx = lcv.getContext("2d");
 function sizeLabelCanvas() {
   const dpr = window.devicePixelRatio || 1;
@@ -314,20 +322,41 @@ function sizeLabelCanvas() {
 }
 sizeLabelCanvas();
 window.addEventListener("resize", sizeLabelCanvas);
-function drawLabels() {
+
+// Island geometry (per-cluster centroid + radius in graph space) is recomputed every ~12 frames
+// from all visible node positions; each frame we just convert the ≤N centroids to screen + draw.
+let islandGeo = [], frame = 0;
+function computeIslands(pos) {
+  const sum = new Map();
+  ALLN.forEach(n => { const p = pos.get(n.id); if (!p) return; let a = sum.get(n.cluster); if (!a) { a = [0, 0, 0]; sum.set(n.cluster, a); } a[0] += p[0]; a[1] += p[1]; a[2]++; });
+  const cen = new Map(); sum.forEach((a, c) => cen.set(c, [a[0] / a[2], a[1] / a[2], 0]));
+  ALLN.forEach(n => { const p = pos.get(n.id); if (!p) return; const c = cen.get(n.cluster); const dx = p[0] - c[0], dy = p[1] - c[1], d = dx * dx + dy * dy; if (d > c[2]) c[2] = d; });
+  islandGeo = [...cen.entries()].map(([name, c]) => ({ cx: c[0], cy: c[1], r: Math.sqrt(c[2]) + 90, name, color: clusterColor.get(name) || "#888" }));
+}
+function draw() {
   lctx.clearRect(0, 0, lcv.width, lcv.height);
-  if (!graph || !showLabels) return;
-  const pos = graph.getTrackedNodePositionsMap();
-  lctx.font = "10px system-ui,sans-serif";
-  lctx.textBaseline = "middle";
-  lctx.lineWidth = 3; lctx.strokeStyle = "rgba(0,0,0,0.85)"; lctx.fillStyle = "#e6edf3";
-  labelText.forEach((txt, id) => {
-    const p = pos.get(id);
-    if (!p) return;
-    const [sx, sy] = graph.spaceToScreenPosition(p);
-    lctx.strokeText(txt, sx + 7, sy);
-    lctx.fillText(txt, sx + 7, sy);
-  });
+  if (!graph) return;
+  frame++;
+  if (showIslands) {
+    if (frame % 12 === 1) computeIslands(graph.getNodePositionsMap());
+    lctx.textAlign = "center"; lctx.textBaseline = "middle"; lctx.font = "11px system-ui,sans-serif";
+    for (const g of islandGeo) {
+      const [sx, sy] = graph.spaceToScreenPosition([g.cx, g.cy]); const sr = graph.spaceToScreenRadius(g.r);
+      lctx.fillStyle = hexA(g.color, 0.10); lctx.beginPath(); lctx.arc(sx, sy, sr, 0, 6.2832); lctx.fill();
+      lctx.fillStyle = "rgba(230,237,243,0.22)"; lctx.fillText(g.name, sx, sy);
+    }
+    lctx.textAlign = "left";
+  }
+  if (labelText.size) {
+    const lp = graph.getTrackedNodePositionsMap();
+    lctx.font = "10px system-ui,sans-serif"; lctx.textBaseline = "middle";
+    lctx.lineWidth = 3; lctx.strokeStyle = "rgba(0,0,0,0.85)"; lctx.fillStyle = "#e6edf3";
+    labelText.forEach((txt, id) => {
+      const p = lp.get(id); if (!p) return;
+      const [sx, sy] = graph.spaceToScreenPosition(p);
+      lctx.strokeText(txt, sx + 7, sy); lctx.fillText(txt, sx + 7, sy);
+    });
+  }
 }
 
 let graph = null, paused = false;
@@ -351,8 +380,8 @@ try {
   $("msg").style.display = "flex";
   $("msg").textContent = "WebGL is required to view this graph.";
 }
-// Redraw labels every frame so they track nodes during sim, drag, and inertial pan/zoom.
-(function loop() { drawLabels(); requestAnimationFrame(loop); })();
+// Redraw islands + labels every frame so they track nodes during sim, drag, and inertial pan/zoom.
+(function loop() { draw(); requestAnimationFrame(loop); })();
 
 function recompute() {
   const minDeg = +$("minDeg").value;
@@ -387,7 +416,8 @@ $("space").addEventListener("input", () => {
   SIM.linkDistance = d; SIM.repulsion = Math.max(1.5, d / 10);
   if (graph) { graph.setConfig({ simulation: SIM }); graph.start(0.5); }
 });
-$("lbls").addEventListener("change", () => { showLabels = $("lbls").checked; });
+$("lblN").addEventListener("input", () => { $("lblNV").textContent = $("lblN").value; rebuildLabels(+$("lblN").value); });
+$("isles").addEventListener("change", () => { showIslands = $("isles").checked; });
 document.querySelectorAll(".k,.cf").forEach(el => el.addEventListener("change", recompute));
 $("search").addEventListener("input", () => {
   const q = $("search").value.toLowerCase();
@@ -401,6 +431,7 @@ $("pause").addEventListener("click", () => {
   if (paused) { graph.pause(); $("pause").textContent = "▶ resume"; } else { graph.restart(); $("pause").textContent = "⏸ pause"; }
 });
 
+rebuildLabels(30);
 if (graph) recompute();
 </script>
 </body></html>`;

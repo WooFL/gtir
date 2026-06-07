@@ -181,6 +181,8 @@ test("renderHtml: self-contained cosmos page — inlines cosmos, embeds data, no
   assert.ok(html.includes('id="minDeg"'));
   assert.ok(html.includes('id="space"'));     // spacing control
   assert.ok(html.includes('id="lblcv"'));      // hub-label canvas overlay
+  assert.ok(html.includes('id="lblN"'));       // label-count control
+  assert.ok(html.includes('id="isles"'));      // cluster-islands toggle
   assert.ok(html.includes('class="cf"'));
   assert.ok(html.includes("verifyToken"));
   assert.ok(!html.includes("<script src"));
