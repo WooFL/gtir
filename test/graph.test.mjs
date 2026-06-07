@@ -179,6 +179,7 @@ test("renderHtml: self-contained cosmos page — inlines cosmos, embeds data, no
   assert.ok(html.includes("window.cosmos"));
   assert.ok(html.includes("__GTIR_GRAPH__"));
   assert.ok(html.includes('id="minDeg"'));
+  assert.ok(html.includes('id="space"'));     // spacing control
   assert.ok(html.includes('class="cf"'));
   assert.ok(html.includes("verifyToken"));
   assert.ok(!html.includes("<script src"));

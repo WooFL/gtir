@@ -244,6 +244,7 @@ export function renderHtml({ nodes, edges, meta = {} }, cosmosSource) {
   <h1>gtir graph <button id="pause">⏸ pause</button></h1>
   <input id="search" placeholder="find node…" autocomplete="off">
   <div class="row">min degree <span id="minDegV">0</span><br><input id="minDeg" type="range" min="0" max="20" value="0" style="width:100%"></div>
+  <div class="row">spacing <span id="spaceV">22</span><br><input id="space" type="range" min="6" max="80" value="22" style="width:100%"></div>
   <div class="row"><b>kind</b>
     <label><input type="checkbox" class="k" value="calls" checked> calls</label>
     <label><input type="checkbox" class="k" value="imports" checked> imports</label>
@@ -272,12 +273,15 @@ const $ = id => document.getElementById(id);
 const clusters = [...new Set(ALLN.map(n => n.cluster))];
 const clusterColor = new Map(clusters.map((c, i) =>
   [c, c === "external" ? CONF.external : c === "ambiguous" ? CONF.ambiguous : PAL[i % PAL.length]]));
-ALLN.forEach(n => { n.color = clusterColor.get(n.cluster); n.size = 2 + Math.sqrt(n.degree || 0) * 1.4; });
+// Size ∝ sqrt(degree) but capped so a few mega-hubs don't swallow the canvas.
+ALLN.forEach(n => { n.color = clusterColor.get(n.cluster); n.size = 3 + Math.min(12, Math.sqrt(n.degree || 0)); });
 ALLE.forEach(e => { e.color = CONF[e.conf] || "#666"; e.width = Math.min(4, e.count || 1); });
 
-const cols = Math.max(1, Math.ceil(Math.sqrt(clusters.length))), CELL = 600;
+// Seed each node near its cluster's grid cell (wide cells + jitter) so the GPU force opens up
+// into separated neighborhoods instead of one ball.
+const cols = Math.max(1, Math.ceil(Math.sqrt(clusters.length))), CELL = 1400;
 const cIdx = new Map(clusters.map((c, i) => [c, i]));
-ALLN.forEach(n => { const i = cIdx.get(n.cluster); n.x = (i % cols) * CELL + (Math.random() * 120 - 60); n.y = Math.floor(i / cols) * CELL + (Math.random() * 120 - 60); });
+ALLN.forEach(n => { const i = cIdx.get(n.cluster); n.x = (i % cols) * CELL + (Math.random() * 400 - 200); n.y = Math.floor(i / cols) * CELL + (Math.random() * 400 - 200); });
 
 function showInfo(n) {
   const refs = (n.refs || []).map(r => esc(r.path) + ":" + r.line).join("<br>");
@@ -287,6 +291,9 @@ function showInfo(n) {
 }
 function hideInfo() { $("info").style.display = "none"; }
 
+// Layout forces. Low gravity + strong repulsion + long links = spread, not clumped. The spacing
+// slider scales linkDistance and repulsion together at runtime via setConfig.
+const SIM = { gravity: 0.08, repulsion: 1.8, repulsionTheta: 1.15, linkSpring: 0.5, linkDistance: 22, friction: 0.9, decay: 100000 };
 let graph = null, paused = false;
 try {
   graph = new window.cosmos.Graph($("cv"), {
@@ -298,7 +305,7 @@ try {
     linkColor: l => l.color,
     linkWidth: l => l.width,
     scaleNodesOnZoom: true,
-    simulation: { gravity: 0.2, repulsion: 1.0, linkSpring: 1.2, linkDistance: 8, friction: 0.85, decay: 100000 },
+    simulation: SIM,
     events: { onClick: (n) => { if (n) { graph.selectNodeById(n.id, true); showInfo(n); } else { graph.unselectNodes(); hideInfo(); } } },
   });
 } catch (err) {
@@ -330,6 +337,12 @@ $("legend").querySelectorAll(".lg").forEach(el => el.addEventListener("click", (
 
 $("minDeg").max = String(Math.max(1, ...ALLN.map(n => n.degree || 0)));
 $("minDeg").addEventListener("input", () => { $("minDegV").textContent = $("minDeg").value; recompute(); });
+$("space").addEventListener("input", () => {
+  const d = +$("space").value;
+  $("spaceV").textContent = d;
+  SIM.linkDistance = d; SIM.repulsion = Math.max(1, d / 12);
+  if (graph) { graph.setConfig({ simulation: SIM }); graph.start(0.5); }
+});
 document.querySelectorAll(".k,.cf").forEach(el => el.addEventListener("change", recompute));
 $("search").addEventListener("input", () => {
   const q = $("search").value.toLowerCase();
