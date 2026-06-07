@@ -313,3 +313,63 @@ test("indexer: pre-score edges table triggers a one-time rebuild (edge-schema he
     assert.ok((r.warnings || []).some((w) => /schema/i.test(w)), "expected a schema-heal warning");
   } finally { rmSync(repo, { recursive: true, force: true }); }
 });
+
+test("refresh: deleting a definition file re-resolves its callers (no stale resolved edge)", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-del-"));
+  writeFileSync(join(repo, "a.ts"), `import { helper } from "./b";\nexport function caller(){ return helper(); }\n`);
+  writeFileSync(join(repo, "b.ts"), `export function helper(){ return 1; }\n`);
+  try {
+    await buildIndex({ ...loadConfig(repo), embedImpl: fakeEmbed, minChars: 1 }, { rebuild: true });
+    let call = (await openStore(loadConfig(repo)).then((s) => s.loadEdges())).find((e) => e.kind === "calls" && e.ref_name === "helper");
+    assert.equal(call.conf, "resolved"); assert.equal(call.to_path, "b.ts");
+    await new Promise((r) => setTimeout(r, 1100));
+    rmSync(join(repo, "b.ts"));
+    await buildIndex({ ...loadConfig(repo), embedImpl: fakeEmbed, minChars: 1 }, { rebuild: false });
+    call = (await openStore(loadConfig(repo)).then((s) => s.loadEdges())).find((e) => e.kind === "calls" && e.ref_name === "helper");
+    assert.equal(call.conf, "external"); assert.equal(call.to_path, null);
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
+test("refresh: adding a definition rebinds a previously-external UNCHANGED caller", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-add-"));
+  writeFileSync(join(repo, "a.ts"), `import { helper } from "./b";\nexport function caller(){ return helper(); }\n`);
+  try {
+    await buildIndex({ ...loadConfig(repo), embedImpl: fakeEmbed, minChars: 1 }, { rebuild: true });
+    let call = (await openStore(loadConfig(repo)).then((s) => s.loadEdges())).find((e) => e.kind === "calls" && e.ref_name === "helper");
+    assert.equal(call.conf, "external");
+    await new Promise((r) => setTimeout(r, 1100));
+    writeFileSync(join(repo, "b.ts"), `export function helper(){ return 1; }\n`); // a.ts UNCHANGED; only b.ts added
+    await buildIndex({ ...loadConfig(repo), embedImpl: fakeEmbed, minChars: 1 }, { rebuild: false });
+    call = (await openStore(loadConfig(repo)).then((s) => s.loadEdges())).find((e) => e.kind === "calls" && e.ref_name === "helper");
+    assert.equal(call.conf, "resolved"); assert.equal(call.to_path, "b.ts");
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
+test("refresh: modifying a definition's body leaves caller edges correct", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-mod-"));
+  writeFileSync(join(repo, "a.ts"), `import { helper } from "./b";\nexport function caller(){ return helper(); }\n`);
+  writeFileSync(join(repo, "b.ts"), `export function helper(){ return 1; }\n`);
+  try {
+    await buildIndex({ ...loadConfig(repo), embedImpl: fakeEmbed, minChars: 1 }, { rebuild: true });
+    await new Promise((r) => setTimeout(r, 1100));
+    writeFileSync(join(repo, "b.ts"), `export function helper(){ return 42; }\nfunction extra(){ return 0; }\n`);
+    await buildIndex({ ...loadConfig(repo), embedImpl: fakeEmbed, minChars: 1 }, { rebuild: false });
+    const call = (await openStore(loadConfig(repo)).then((s) => s.loadEdges())).find((e) => e.kind === "calls" && e.ref_name === "helper");
+    assert.equal(call.conf, "resolved"); assert.equal(call.to_path, "b.ts");
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
+test("refresh: deleting an isolated file with no callers is a clean no-op", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-delonly-"));
+  writeFileSync(join(repo, "a.ts"), `export function alone(){ return 1; }\n`);
+  writeFileSync(join(repo, "b.ts"), `export function other(){ return 2; }\n`);
+  try {
+    await buildIndex({ ...loadConfig(repo), embedImpl: fakeEmbed, minChars: 1 }, { rebuild: true });
+    await new Promise((r) => setTimeout(r, 1100));
+    rmSync(join(repo, "a.ts"));
+    const r = await buildIndex({ ...loadConfig(repo), embedImpl: fakeEmbed, minChars: 1 }, { rebuild: false });
+    assert.ok(r);
+    const edges = await openStore(loadConfig(repo)).then((s) => s.loadEdges());
+    assert.ok(!edges.some((e) => e.from_path === "a.ts"));
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
