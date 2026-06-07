@@ -53,6 +53,30 @@ test("disambiguateEdges: missing call-site vector leaves the row unchanged", () 
   assert.equal(r.conf, "ambiguous");
 });
 
+test("disambiguateEdges: excludes the call-site's own chunk (self-comparison artifact)", () => {
+  // 'self' def lives in the SAME chunk as the call site (content_hash "hc") → cosine 1.0 but degenerate.
+  // 'other' def is a different chunk, orthogonal. Without exclusion, self would promote at 1.0.
+  const si = new Map([["g", [
+    { path: "self.mjs", line_start: 1, line_end: 5, embedding: [1, 0, 0], content_hash: "hc" },
+    { path: "other.mjs", line_start: 1, line_end: 5, embedding: [0, 1, 0], content_hash: "h2" },
+  ]]]);
+  const csv = new Map([["hc", [1, 0, 0]]]);
+  const row = { kind: "calls", conf: "ambiguous", from_path: "self.mjs", from_symbol: "f",
+    to_path: null, to_symbol: null, ref_name: "g", candidates: ["self.mjs", "other.mjs"], content_hash: "hc" };
+  const [r] = disambiguateEdges([row], { symbolIndex: si, callSiteVec: csv });
+  assert.equal(r.conf, "ambiguous"); // self excluded; other scores 0 < threshold → not promoted
+});
+
+test("disambiguateEdges: a different-chunk same-name def still promotes (no over-exclusion)", () => {
+  const si = new Map([["g", [{ path: "real.mjs", line_start: 1, line_end: 5, embedding: [1, 0, 0], content_hash: "h2" }]]]);
+  const csv = new Map([["hc", [1, 0, 0]]]);
+  const row = { kind: "calls", conf: "ambiguous", from_path: "caller.mjs", from_symbol: "f",
+    to_path: null, to_symbol: null, ref_name: "g", candidates: ["real.mjs"], content_hash: "hc" };
+  const [r] = disambiguateEdges([row], { symbolIndex: si, callSiteVec: csv });
+  assert.equal(r.conf, "inferred");
+  assert.equal(r.to_path, "real.mjs");
+});
+
 test("disambiguateEdges: non-calls / resolved / external pass through untouched", () => {
   const rows = [
     { kind: "calls", conf: "resolved", to_path: "x.mjs", to_symbol: "y", ref_name: "y", candidates: [], content_hash: "h" },

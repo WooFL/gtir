@@ -40,7 +40,7 @@ async function indexEdges(cfg, store, toIndex, { rebuild }) {
       for (const name of declaredSymbols(r.text)) {
         if (!symbolIndex.has(name)) symbolIndex.set(name, []);
         symbolIndex.get(name).push({ path: r.path, line_start: Number(r.line_start), line_end: Number(r.line_end),
-          embedding: r.embedding ? Array.from(r.embedding) : null });
+          embedding: r.embedding ? Array.from(r.embedding) : null, content_hash: r.content_hash || null });
       }
     }
     for (const r of rows) {
