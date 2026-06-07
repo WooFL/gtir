@@ -50,3 +50,26 @@ test("gtir mcp --print-config prints a valid .mcp.json snippet and exits", () =>
   assert.equal(snippet.gtir.command, "node");
   assert.ok(snippet.gtir.args.includes("G:/p/code"));
 });
+
+import { runImpact, runOrphans, runCycles } from "../bin/gtir.mjs";
+import { openStore } from "../src/store.mjs";
+import { loadConfig } from "../src/config.mjs";
+
+test("runImpact/runOrphans/runCycles delegate to the query layer", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-cli-gq-"));
+  const cfg = loadConfig(repo);
+  const store = await openStore(cfg);
+  await store.upsertRows([
+    { id: "1", path: "a.mjs", line_start: 1, line_end: 3, language: "js", text: "function f(){ g(); }", embedding: [0.1, 0.2], mtime_ms: 1, content_hash: "h1" },
+    { id: "2", path: "b.mjs", line_start: 1, line_end: 3, language: "js", text: "function g(){}", embedding: [0.1, 0.2], mtime_ms: 1, content_hash: "h2" },
+    { id: "3", path: "u.mjs", line_start: 1, line_end: 2, language: "js", text: "function dead(){}", embedding: [0.1, 0.2], mtime_ms: 1, content_hash: "h3" },
+  ]);
+  await store.upsertEdges([{ kind: "calls", conf: "resolved", from_path: "a.mjs", from_lines: "1", from_symbol: "f", to_path: "b.mjs", to_lines: "1", to_symbol: "g", candidates: [], content_hash: "h1" }]);
+
+  const imp = await runImpact({ repo, symbol: "g" });
+  assert.deepEqual(imp.nodes.map((n) => n.symbol), ["f"]);
+  const orph = await runOrphans({ repo });
+  assert.ok(orph.likely_dead.some((d) => d.symbol === "dead"));
+  const cyc = await runCycles({ repo });
+  assert.deepEqual(cyc.call_cycles, []);
+});
