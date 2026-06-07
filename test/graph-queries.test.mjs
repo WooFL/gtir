@@ -119,6 +119,25 @@ test("cyclesQuery finds the import cycle", async () => {
   } finally { rmSync(cfg._root, { recursive: true, force: true }); }
 });
 
+test("orphansQuery: callable-only inventory + ambiguous inbound counts as referenced", async () => {
+  const cfg = tmpCfg();
+  try {
+    const store = await openStore(cfg);
+    await store.upsertRows([
+      chunk("1", "a.mjs", 1, 3, "function deadFn(){ return 1; }"),       // callable, no inbound -> dead
+      chunk("2", "b.mjs", 1, 3, "const value = 5;"),                     // non-callable -> excluded
+      chunk("3", "c.mjs", 1, 3, "function usedViaMethod(){ return 2; }"),// referenced only via ambiguous
+    ]);
+    await store.upsertEdges([{ kind: "calls", conf: "ambiguous", from_path: "x.mjs", from_lines: "1",
+      from_symbol: "f", to_path: null, to_symbol: null, ref_name: "usedViaMethod", candidates: ["c.mjs"], content_hash: "h" }]);
+    const r = await orphansQuery(cfg);
+    const dead = r.likely_dead.map((d) => d.symbol);
+    assert.ok(dead.includes("deadFn"));            // genuinely uncalled function
+    assert.ok(!dead.includes("value"));            // non-callable excluded from the inventory
+    assert.ok(!dead.includes("usedViaMethod"));    // ambiguous inbound -> referenced, not dead
+  } finally { rmSync(cfg._root, { recursive: true, force: true }); }
+});
+
 import { graphForSearch, clearGraphCache } from "../src/graph-queries.mjs";
 
 test("graphForSearch builds {graph,degree}, caches, and clears", async () => {

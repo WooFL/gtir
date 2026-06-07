@@ -60,8 +60,8 @@ export async function runStatus({ repo } = {}) {
 export async function runImpact({ repo, symbol, path = null, downstream = false, depth, includeAmbiguous = false, limit } = {}) {
   return impactQuery(loadConfig(repo), { symbol, path, downstream, depth, includeAmbiguous, limit });
 }
-export async function runOrphans({ repo, includeAmbiguous = false } = {}) {
-  return orphansQuery(loadConfig(repo), { includeAmbiguous });
+export async function runOrphans({ repo } = {}) {
+  return orphansQuery(loadConfig(repo));
 }
 export async function runCycles({ repo, includeAmbiguous = false } = {}) {
   return cyclesQuery(loadConfig(repo), { includeAmbiguous });
@@ -499,7 +499,7 @@ async function main() {
         break;
       }
       case "orphans": {
-        const r = await runOrphans({ repo, includeAmbiguous: !!args.includeAmbiguous });
+        const r = await runOrphans({ repo });
         process.stdout.write(JSON.stringify(r, null, 2) + "\n");
         if (r.error) process.exitCode = 2;
         break;
