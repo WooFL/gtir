@@ -8,7 +8,8 @@ import { preflight } from "./doctor.mjs";
 import { parseLines } from "./eval.mjs";
 import { watchRepo } from "./watch.mjs";
 import { buildAdjacency, callersOf, calleesOf, neighborsOf } from "./edges.mjs";
-import { impactQuery, orphansQuery, cyclesQuery } from "./graph-queries.mjs";
+import { impactQuery, orphansQuery, cyclesQuery, graphForSearch } from "./graph-queries.mjs";
+import { contextFor } from "./graph-retrieval.mjs";
 
 export function sanitizeLabel(s) {
   return String(s).toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "index";
@@ -59,6 +60,8 @@ export function buildTools(indexes) {
           path_prefix: { type: "string", description: "restrict to paths under this prefix" },
           language: { type: "string", description: "restrict to a language (code indexes)" },
           compact: { type: "boolean", description: "omit the code snippet — return path/lines/score only (token-saving)" },
+          centrality: { type: "boolean", description: "gently re-rank by call-graph degree (important code floats up)" },
+          edges: { type: "boolean", description: "attach each hit's callers/callees (graph neighborhood)" },
         },
         required: ["query"],
       },
@@ -72,6 +75,7 @@ export function buildTools(indexes) {
           path: { type: "string", description: "file path, relative to the repo root" },
           lines: { type: "string", description: 'line range like "42-71" (or a single line); omit for the whole file' },
           context: { type: "integer", description: "extra lines before/after the range (0-50, default 3)" },
+          edges: { type: "boolean", description: "attach the span's callers/callees" },
         },
         required: ["path"],
       },
@@ -281,12 +285,12 @@ async function dispatchToolCall(params, ctx) {
         return { content: [{ type: "text", text: `unknown index: ${label}` }], isError: true };
       }
       if (verb === "search") {
-        let results = await searchFn(label, { query: args.query, k: args.k, pathPrefix: args.path_prefix, language: args.language });
+        let results = await searchFn(label, { query: args.query, k: args.k, pathPrefix: args.path_prefix, language: args.language, centrality: !!args.centrality, edges: !!args.edges });
         if (args.compact) results = stripSnippet(results);
         return reply(args.compact ? formatCompact(results) : formatHits(results), { results });
       }
       if (verb === "read") {
-        const out = await readFn(label, { path: args.path, lines: args.lines, context: args.context });
+        const out = await readFn(label, { path: args.path, lines: args.lines, context: args.context, edges: !!args.edges });
         return reply(formatRead(out), out);
       }
       if (verb === "outline") {
@@ -337,7 +341,9 @@ async function dispatchToolCall(params, ctx) {
 export function defaultSearchFn(indexes) {
   return async (label, args) => {
     const ix = indexes.find((i) => i.label === label);
-    return search(args.query, ix.cfg, { k: args.k, pathPrefix: args.pathPrefix, language: args.language });
+    const graphData = (args.centrality || args.edges) ? await graphForSearch(ix.cfg) : null;
+    return search(args.query, ix.cfg, { k: args.k, pathPrefix: args.pathPrefix, language: args.language,
+      centrality: !!args.centrality, edges: !!args.edges, graphData });
   };
 }
 
@@ -367,7 +373,7 @@ export function defaultStatusFn(indexes) {
 // Read a file span from disk (the index isn't needed — just the chunk's path + lines).
 // Guards against path traversal outside the index's repo root.
 export function defaultReadFn(indexes) {
-  return async (label, { path, lines = null, context = 3 }) => {
+  return async (label, { path, lines = null, context = 3, edges = false }) => {
     const ix = indexes.find((i) => i.label === label);
     if (!path) throw new Error("path is required");
     const abs = resolve(ix.repo, path);
@@ -378,7 +384,12 @@ export function defaultReadFn(indexes) {
     if (!Number.isFinite(e)) e = s;
     const ctxN = Math.max(0, Math.min(50, (context | 0) || 0));
     const start = Math.max(1, s - ctxN), end = Math.min(body.length, Math.max(s, e) + ctxN);
-    return { path, lines: `${start}-${end}`, language: ix.cfg?.language ?? null, text: body.slice(start - 1, end).join("\n") };
+    const out = { path, lines: `${start}-${end}`, language: ix.cfg?.language ?? null, text: body.slice(start - 1, end).join("\n") };
+    if (edges) {
+      const { graph } = await graphForSearch(ix.cfg);
+      return { ...out, ...contextFor(out.text, out.path, graph, { cap: ix.cfg.contextCap ?? 5 }) };
+    }
+    return out;
   };
 }
 
