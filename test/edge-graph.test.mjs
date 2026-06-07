@@ -40,3 +40,54 @@ test("buildGraph: external edges skipped; ambiguous skipped unless includeAmbigu
   assert.deepEqual([...g2.fwd.get("a.mjs#f")].sort(), ["b.mjs#parse", "c.mjs#parse"]);
   assert.ok(g2.edgeList.every((e) => e.conf === "ambiguous"));
 });
+
+import { impact } from "../src/edge-graph.mjs";
+
+// chain: a#f -> b#g -> c#h ; and d#x -> b#g (so b has two upstream paths)
+const chain = buildGraph([
+  E.call("a.mjs", "f", "b.mjs", "g"),
+  E.call("b.mjs", "g", "c.mjs", "h"),
+  E.call("d.mjs", "x", "b.mjs", "g"),
+]);
+
+test("impact upstream: transitive callers of c#h", () => {
+  const r = impact(chain, ["c.mjs#h"]);
+  const keys = r.nodes.map((n) => n.key).sort();
+  assert.deepEqual(keys, ["a.mjs#f", "b.mjs#g", "d.mjs#x"]);
+  assert.equal(r.nodes.find((n) => n.key === "b.mjs#g").depth, 1);
+  assert.equal(r.nodes.find((n) => n.key === "a.mjs#f").depth, 2);
+});
+
+test("impact downstream: what a#f calls", () => {
+  const r = impact(chain, ["a.mjs#f"], { direction: "downstream" });
+  assert.deepEqual(r.nodes.map((n) => n.key).sort(), ["b.mjs#g", "c.mjs#h"]);
+});
+
+test("impact depth caps hops", () => {
+  const r = impact(chain, ["c.mjs#h"], { depth: 1 });
+  assert.deepEqual(r.nodes.map((n) => n.key).sort(), ["b.mjs#g"]);
+});
+
+test("impact dedups diamonds and excludes the start node", () => {
+  const g = buildGraph([
+    E.call("top.mjs", "t", "l.mjs", "a"),
+    E.call("top.mjs", "t", "r.mjs", "b"),
+    E.call("l.mjs", "a", "btm.mjs", "z"),
+    E.call("r.mjs", "b", "btm.mjs", "z"),
+  ]);
+  const r = impact(g, ["btm.mjs#z"]);
+  assert.equal(r.nodes.filter((n) => n.key === "top.mjs#t").length, 1);
+  assert.ok(!r.nodes.some((n) => n.key === "btm.mjs#z"));
+});
+
+test("impact limit sets truncated", () => {
+  const r = impact(chain, ["c.mjs#h"], { limit: 1 });
+  assert.equal(r.truncated, true);
+  assert.equal(r.nodes.length, 1);
+});
+
+test("impact empty when start has no callers", () => {
+  const r = impact(chain, ["a.mjs#f"]);
+  assert.deepEqual(r.nodes, []);
+  assert.equal(r.truncated, false);
+});

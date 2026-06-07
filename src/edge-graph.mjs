@@ -57,3 +57,32 @@ export function buildGraph(edges, { includeAmbiguous = false } = {}) {
   }
   return { edgeList, fwd, rev, nodeMeta };
 }
+
+// Transitive reachability from startKeys. direction "upstream" walks rev (callers),
+// "downstream" walks fwd (callees). BFS records hop distance; dedup via visited; the start
+// nodes are excluded from output. Stops a branch at `depth` and overall at `limit` (truncated).
+export function impact(graph, startKeys, { direction = "upstream", depth = Infinity, limit = 500 } = {}) {
+  const adj = direction === "downstream" ? graph.fwd : graph.rev;
+  const visited = new Set(startKeys);
+  const out = [];
+  let frontier = [...startKeys];
+  let truncated = false;
+  for (let d = 1; frontier.length && d <= depth; d++) {
+    const next = [];
+    for (const k of frontier) {
+      for (const nb of (adj.get(k) || [])) {
+        if (visited.has(nb)) continue;
+        visited.add(nb);
+        const m = graph.nodeMeta.get(nb) || { path: nb, symbol: null };
+        out.push({ key: nb, path: m.path, symbol: m.symbol, depth: d });
+        next.push(nb);
+        if (out.length >= limit) { truncated = true; break; }
+      }
+      if (truncated) break;
+    }
+    if (truncated) break;
+    frontier = next;
+  }
+  out.sort((a, b) => a.depth - b.depth || a.path.localeCompare(b.path));
+  return { nodes: out, truncated };
+}
