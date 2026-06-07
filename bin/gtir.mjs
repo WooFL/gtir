@@ -18,6 +18,7 @@ import { runDemo, formatDemo } from "../src/demo.mjs";
 import { runDoctor, preflight } from "../src/doctor.mjs";
 import { fetchGrammars } from "../src/fetch-grammars.mjs";
 import { buildGraph, renderHtml } from "../src/graph.mjs";
+import { impactQuery, orphansQuery, cyclesQuery } from "../src/graph-queries.mjs";
 
 // --- programmatic entrypoints (used by tests and the dispatcher) ---
 
@@ -53,6 +54,16 @@ export async function runStatus({ repo } = {}) {
   const meta = await store.readMeta();
   const man = await store.loadManifest();
   return { repo: cfg.repo, indexDir: cfg.indexDir, files: Object.keys(man).length, ...meta };
+}
+
+export async function runImpact({ repo, symbol, path = null, downstream = false, depth, includeAmbiguous = false, limit } = {}) {
+  return impactQuery(loadConfig(repo), { symbol, path, downstream, depth, includeAmbiguous, limit });
+}
+export async function runOrphans({ repo, includeAmbiguous = false } = {}) {
+  return orphansQuery(loadConfig(repo), { includeAmbiguous });
+}
+export async function runCycles({ repo, includeAmbiguous = false } = {}) {
+  return cyclesQuery(loadConfig(repo), { includeAmbiguous });
 }
 
 export async function runSetup({ repo } = {}) {
@@ -134,6 +145,11 @@ function parseArgs(argv) {
     else if (a === "--max-nodes") { const v = Number(argv[++i]); if (Number.isFinite(v)) args.maxNodes = v; }
     else if (a === "--kind") args.kind = argv[++i].split(",").map((s) => s.trim()).filter(Boolean);
     else if (a === "--conf") args.conf = argv[++i].split(",").map((s) => s.trim()).filter(Boolean);
+    else if (a === "--downstream") args.downstream = true;
+    else if (a === "--include-ambiguous") args.includeAmbiguous = true;
+    else if (a === "--path") args.path = argv[++i];
+    else if (a === "--symbol") args.symbol = argv[++i];
+    else if (a === "--limit") { const v = Number(argv[++i]); if (Number.isFinite(v)) args.limit = v; }
     else args._.push(a);
   }
   return args;
@@ -469,6 +485,26 @@ async function main() {
         });
         process.stderr.write(`gtir: wrote ${r.out} (${r.nodes} nodes, ${r.edges} edges)\n`);
         if (r.truncated) process.stderr.write(`gtir: graph truncated by --max-nodes — dropped ${r.dropped} lowest-degree node(s); raise or drop --max-nodes, or narrow with --focus/--path-prefix\n`);
+        break;
+      }
+      case "impact": {
+        const symbol = args.symbol ?? (args._.length ? args._.join(" ") : null);
+        const r = await runImpact({ repo, symbol, path: args.path, downstream: !!args.downstream,
+          depth: args.depth, includeAmbiguous: !!args.includeAmbiguous, limit: args.limit });
+        process.stdout.write(JSON.stringify(r, null, 2) + "\n");
+        if (r.error || r.ambiguous) process.exitCode = 2;
+        break;
+      }
+      case "orphans": {
+        const r = await runOrphans({ repo, includeAmbiguous: !!args.includeAmbiguous });
+        process.stdout.write(JSON.stringify(r, null, 2) + "\n");
+        if (r.error) process.exitCode = 2;
+        break;
+      }
+      case "cycles": {
+        const r = await runCycles({ repo, includeAmbiguous: !!args.includeAmbiguous });
+        process.stdout.write(JSON.stringify(r, null, 2) + "\n");
+        if (r.error) process.exitCode = 2;
         break;
       }
       default:
