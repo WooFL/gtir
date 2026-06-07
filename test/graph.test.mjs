@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mapEdges, applyFilters, egoGraph, capByDegree, rollupToFiles, buildGraph, worstConf, renderHtml, withDegree, clusterOf } from "../src/graph.mjs";
+import { mapEdges, applyFilters, egoGraph, capByDegree, rollupToFiles, buildGraph, worstConf, renderHtml, withDegree, clusterOf, clusterIndex } from "../src/graph.mjs";
 
 // Edge factory matching the store.loadEdges() row shape.
 const E = (o = {}) => ({
@@ -170,7 +170,7 @@ test("buildGraph: focus prunes, rollup collapses, cap bounds", () => {
   assert.ok(rolled.nodes.every((n) => !n.id.includes("\x00")));
 });
 
-test("renderHtml: self-contained cosmos page — inlines cosmos, embeds data, no external refs", () => {
+test("renderHtml: self-contained cosmos-2.x page — inlines cosmos, embeds data+clusters, no external refs", () => {
   const g = buildGraph([E({ from_symbol: "verifyToken", from_path: "auth/jwt.ts", to_symbol: "signToken", to_path: "auth/jwt.ts", ref_name: "signToken" })]);
   const html = renderHtml({ nodes: g.nodes, edges: g.edges, meta: { truncated: false, dropped: 0 } }, "/* COSMOSSRC */ window.cosmos={Graph:function(){}};");
   assert.match(html, /<!doctype html>/i);
@@ -178,18 +178,15 @@ test("renderHtml: self-contained cosmos page — inlines cosmos, embeds data, no
   assert.ok(html.includes("/* COSMOSSRC */"));
   assert.ok(html.includes("window.cosmos"));
   assert.ok(html.includes("__GTIR_GRAPH__"));
-  assert.ok(html.includes('id="minDeg"'));
-  assert.ok(html.includes('id="space"'));     // spacing control
-  assert.ok(html.includes('id="lblcv"'));      // hub-label canvas overlay
-  assert.ok(html.includes('id="lblN"'));       // label-count control
-  assert.ok(html.includes('id="isles"'));      // cluster-islands toggle
-  assert.ok(html.includes('class="cf"'));
+  assert.ok(html.includes("disableSimulation"));      // deterministic placement
+  assert.ok(html.includes("setPointPositions"));
+  assert.ok(html.includes('id="minDeg"') && html.includes('id="lblN"') && html.includes('id="isles"') && html.includes('id="space"'));
   assert.ok(html.includes("verifyToken"));
   assert.ok(!html.includes("<script src"));
   assert.ok(!html.includes("//unpkg") && !html.includes("//cdn"));
 });
 
-test("renderHtml: external confidence checkbox is unchecked by default", () => {
+test("renderHtml: external confidence checkbox unchecked by default", () => {
   const g = buildGraph([E()]);
   const html = renderHtml({ nodes: g.nodes, edges: g.edges, meta: {} }, "x");
   assert.match(html, /value="resolved"[^>]*checked/);
@@ -202,12 +199,17 @@ test("renderHtml: shows truncation note when capped", () => {
   assert.ok(html.includes("dropped 12"));
 });
 
-test("renderHtml: tooltip/info escapes user data (esc helper present)", () => {
+test("renderHtml: embeds clusterIndex bookkeeping for the browser", () => {
+  const g = buildGraph([E({ from_symbol: "f", from_path: "packages/a/x.ts", to_symbol: "h", to_path: "packages/a/y.ts", ref_name: "h" })]);
+  const html = renderHtml({ nodes: g.nodes, edges: g.edges, meta: {} }, "x");
+  assert.ok(html.includes('"clusterOfNode"') && html.includes('"clusterXY"'));
+});
+
+test("renderHtml: escapes user data in the info panel (esc helper present)", () => {
   const g = buildGraph([E()]);
   const html = renderHtml({ nodes: g.nodes, edges: g.edges, meta: {} }, "x");
-  assert.ok(html.includes("&amp;") && html.includes("&lt;"));
+  assert.ok(html.includes("&amp;") && html.includes("&lt;") && html.includes("&#39;"));
   assert.ok(html.includes("esc(n.label)"));
-  assert.ok(html.includes("&#39;") && html.includes("&quot;"));   // esc covers quotes too
 });
 
 test("buildGraph: conf filter reaches the pipeline (whole-repo)", () => {
@@ -301,4 +303,31 @@ test("buildGraph: maxNodes defaults to uncapped (>400 nodes survive)", () => {
   assert.equal(g.nodes.length, 500);
   assert.equal(g.truncated, false);
   assert.equal(g.dropped, 0);
+});
+
+test("clusterIndex: orders clusters by node count desc, then name", () => {
+  const nodes = [
+    { id: "1", cluster: "b" }, { id: "2", cluster: "a" }, { id: "3", cluster: "a" }, { id: "4", cluster: "c" }, { id: "5", cluster: "a" },
+  ];
+  const ci = clusterIndex(nodes);
+  assert.deepEqual(ci.clusters, ["a", "b", "c"]);        // a=3, b=1, c=1 → a first, then b,c by name
+});
+
+test("clusterIndex: clusterOfNode is aligned to node order", () => {
+  const nodes = [{ id: "1", cluster: "a" }, { id: "2", cluster: "b" }, { id: "3", cluster: "a" }];
+  const ci = clusterIndex(nodes);
+  // a has 2, b has 1 → a=index0, b=index1
+  assert.deepEqual(ci.clusterOfNode, [0, 1, 0]);
+});
+
+test("clusterIndex: clusterXY is a grid filling spaceSize, deterministic", () => {
+  const nodes = [{ id: "1", cluster: "a" }, { id: "2", cluster: "b" }, { id: "3", cluster: "c" }, { id: "4", cluster: "d" }];
+  const ci = clusterIndex(nodes, 1000);
+  assert.equal(ci.cols, 2);                              // ceil(sqrt(4))
+  assert.equal(ci.cell, Math.floor(1000 / 3));           // spaceSize/(cols+1)
+  assert.equal(ci.clusterXY.length, 4);
+  // first cell center = (0.5*cell, 0.5*cell)
+  assert.deepEqual(ci.clusterXY[0], [0.5 * ci.cell, 0.5 * ci.cell]);
+  // running twice gives identical output (deterministic)
+  assert.deepEqual(clusterIndex(nodes, 1000), ci);
 });
