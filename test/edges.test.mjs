@@ -1,7 +1,57 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { getParser } from "../src/parser.mjs";
-import { extractCodeEdges, extractNotesEdges } from "../src/edges.mjs";
+import { extractCodeEdges, extractNotesEdges, resolveEdges } from "../src/edges.mjs";
+
+const symIndex = new Map([
+  ["verifyToken", [{ path: "src/auth/token.ts", line_start: 48, line_end: 79 }]],
+  ["log", [
+    { path: "src/a.ts", line_start: 1, line_end: 3 },
+    { path: "src/b.ts", line_start: 1, line_end: 3 },
+  ]],
+]);
+
+test("resolveEdges: unique call name resolves", () => {
+  const raw = [{ kind: "calls", refName: "verifyToken", fromPath: "src/x.ts", fromLine: 10 }];
+  const [e] = resolveEdges(raw, symIndex, new Map());
+  assert.equal(e.conf, "resolved");
+  assert.equal(e.to_path, "src/auth/token.ts");
+  assert.equal(e.from_path, "src/x.ts");
+  assert.equal(e.kind, "calls");
+});
+
+test("resolveEdges: import scoping disambiguates a duplicate name", () => {
+  const raw = [
+    { kind: "imports", source: "./b", names: new Set(["log"]), fromPath: "src/x.ts", fromLine: 1 },
+    { kind: "calls", refName: "log", fromPath: "src/x.ts", fromLine: 5 },
+  ];
+  const resolved = resolveEdges(raw, symIndex, new Map());
+  const call = resolved.find((e) => e.kind === "calls");
+  assert.equal(call.conf, "resolved");
+  assert.equal(call.to_path, "src/b.ts");
+});
+
+test("resolveEdges: duplicate name with no import is ambiguous", () => {
+  const raw = [{ kind: "calls", refName: "log", fromPath: "src/x.ts", fromLine: 5 }];
+  const [e] = resolveEdges(raw, symIndex, new Map());
+  assert.equal(e.conf, "ambiguous");
+  assert.deepEqual([...e.candidates].sort(), ["src/a.ts", "src/b.ts"]);
+});
+
+test("resolveEdges: unknown call name is external", () => {
+  const raw = [{ kind: "calls", refName: "lodashMap", fromPath: "src/x.ts", fromLine: 5 }];
+  const [e] = resolveEdges(raw, symIndex, new Map());
+  assert.equal(e.conf, "external");
+  assert.equal(e.to_path, null);
+});
+
+test("resolveEdges: note link resolves via noteIndex", () => {
+  const notes = new Map([["token auth", [{ path: "wiki/Token Auth.md" }]]]);
+  const raw = [{ kind: "links", target: "Token Auth", fromPath: "wiki/a.md", fromLine: 2 }];
+  const [e] = resolveEdges(raw, new Map(), notes);
+  assert.equal(e.conf, "resolved");
+  assert.equal(e.to_path, "wiki/Token Auth.md");
+});
 
 async function edgesFor(langId, src, path = "a.ts") {
   const parser = await getParser(langId);

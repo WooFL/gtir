@@ -1,3 +1,4 @@
+import { dirname, join, basename } from "node:path";
 import { edgeTypes } from "./languages.mjs";
 
 // Walk every named node depth-first, calling visit(node). Iterative (no recursion depth limit),
@@ -166,6 +167,68 @@ export function extractNotesEdges(relPath, text) {
     }
   }
   return edges;
+}
+
+// Resolve a relative import source (e.g. "./token") against the importing file's dir into a
+// repo-relative path stem (no extension). Returns null for bare/external sources ("lodash").
+function resolveSourceStem(fromPath, source) {
+  if (!source || !/^[./]/.test(source)) return null;
+  const joined = join(dirname(fromPath), source).replace(/\\/g, "/");
+  return joined.replace(/\.(m?[jt]sx?|py|rs|go|c|cc|cpp|h|hpp)$/i, "");
+}
+
+const noteKey = (s) => basename(String(s)).replace(/\.(md|mdx)$/i, "").toLowerCase();
+
+function row(kind, from, to, conf, candidates, contentHash) {
+  return {
+    kind, conf,
+    from_path: from.path, from_lines: from.lines ?? `${from.fromLine}`, from_symbol: from.symbol ?? null,
+    to_path: to?.path ?? null, to_lines: to ? `${to.line_start}-${to.line_end}` : null,
+    to_symbol: to?.symbol ?? null,
+    candidates: candidates ?? [],
+    content_hash: contentHash ?? null,
+  };
+}
+
+export function resolveEdges(rawEdges, symbolIndex, noteIndex, opts = {}) {
+  const contentHash = opts.contentHash ?? null;
+  // Per-file import map: imported name -> resolved source stem.
+  const importByName = new Map(); // fromPath -> Map(name -> stem)
+  for (const e of rawEdges) {
+    if (e.kind !== "imports") continue;
+    const stem = resolveSourceStem(e.fromPath, e.source);
+    if (!stem || !e.names) continue;
+    const m = importByName.get(e.fromPath) ?? new Map();
+    for (const n of e.names) m.set(n, stem);
+    importByName.set(e.fromPath, m);
+  }
+
+  const out = [];
+  for (const e of rawEdges) {
+    if (e.kind === "calls") {
+      const cands = symbolIndex.get(e.refName) ?? [];
+      const from = { path: e.fromPath, fromLine: e.fromLine, symbol: null };
+      if (cands.length === 0) { out.push(row("calls", from, null, "external", [], contentHash)); continue; }
+      const stem = importByName.get(e.fromPath)?.get(e.refName);
+      const scoped = stem ? cands.find((c) => c.path.replace(/\.(m?[jt]sx?|py|rs|go|c|cc|cpp|h|hpp)$/i, "") === stem) : null;
+      if (scoped) { out.push(row("calls", from, { ...scoped, symbol: e.refName }, "resolved", [], contentHash)); continue; }
+      if (cands.length === 1) { out.push(row("calls", from, { ...cands[0], symbol: e.refName }, "resolved", [], contentHash)); continue; }
+      out.push(row("calls", from, null, "ambiguous", cands.map((c) => c.path), contentHash));
+    } else if (e.kind === "imports") {
+      const stem = resolveSourceStem(e.fromPath, e.source);
+      const from = { path: e.fromPath, fromLine: e.fromLine };
+      const conf = stem ? "resolved" : "external";
+      out.push(row("imports", { ...from, symbol: e.source },
+        stem ? { path: stem, line_start: 0, line_end: 0, symbol: null } : null, conf, [], contentHash));
+    } else if (e.kind === "links" || e.kind === "embeds") {
+      const cands = noteIndex.get(noteKey(e.target)) ?? [];
+      const from = { path: e.fromPath, fromLine: e.fromLine, symbol: null };
+      if (cands.length === 0) { out.push(row(e.kind, from, null, "external", [], contentHash)); continue; }
+      if (cands.length === 1) { out.push(row(e.kind, from, { ...cands[0], line_start: 0, line_end: 0, symbol: e.target }, "resolved", [], contentHash)); continue; }
+      out.push(row(e.kind, from, null, "ambiguous", cands.map((c) => c.path), contentHash));
+    }
+  }
+  return out;
 }
 
 export function extractCodeEdges(tree, langId, relPath) {
