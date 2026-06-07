@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mapEdges, applyFilters } from "../src/graph.mjs";
+import { mapEdges, applyFilters, egoGraph } from "../src/graph.mjs";
 
 // Edge factory matching the store.loadEdges() row shape.
 const E = (o = {}) => ({
@@ -52,6 +52,36 @@ test("mapEdges: note edge makes [[note]] nodes", () => {
   const labels = nodes.map((n) => n.label).sort();
   assert.deepEqual(labels, ["[[a]]", "[[b]]"]);
   assert.equal(nodes[0].cls, "note");
+});
+
+// chain: f -> g -> h  (three code nodes, two edges)
+const CHAIN = mapEdges([
+  E({ from_symbol: "f", from_path: "a.ts", to_symbol: "g", to_path: "b.ts", ref_name: "g" }),
+  E({ from_symbol: "g", from_path: "b.ts", to_symbol: "h", to_path: "c.ts", ref_name: "h" }),
+]);
+
+test("egoGraph: depth 1 from f keeps f and g, drops h", () => {
+  const g = egoGraph(CHAIN, "f", 1);
+  const ids = g.nodes.map((n) => n.id).sort();
+  assert.deepEqual(ids, ["f\x00a.ts", "g\x00b.ts"].sort());
+  assert.equal(g.edges.length, 1);
+});
+
+test("egoGraph: depth 2 from f reaches h", () => {
+  const g = egoGraph(CHAIN, "f", 2);
+  assert.equal(g.nodes.length, 3);
+  assert.equal(g.edges.length, 2);
+});
+
+test("egoGraph: traversal is undirected (focus on h still finds f at depth 2)", () => {
+  const g = egoGraph(CHAIN, "h", 2);
+  assert.ok(g.nodes.some((n) => n.id === "f\x00a.ts"));
+});
+
+test("egoGraph: unknown focus yields an empty graph", () => {
+  const g = egoGraph(CHAIN, "nope", 2);
+  assert.equal(g.nodes.length, 0);
+  assert.equal(g.edges.length, 0);
 });
 
 test("applyFilters: narrows by kind, conf, pathPrefix", () => {

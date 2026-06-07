@@ -44,6 +44,40 @@ function toNode(e) {
   return { id: `amb:${name}`, label: name || "(ambiguous)", cls: "ambiguous", ref: null, candidates: e.candidates };
 }
 
+// The symbol a node represents, for --focus matching: the function/import/note/target name,
+// independent of the file it lives in.
+function symbolOf(node) {
+  const id = node.id;
+  if (id.includes("\x00")) return id.split("\x00")[0];
+  if (id.startsWith("ext:")) return id.slice(4);
+  if (id.startsWith("amb:")) return id.slice(4);
+  if (id.startsWith("note:")) return id.slice(5);
+  return base(id); // bare file node
+}
+
+// Induced subgraph within `depth` undirected hops of every node whose symbol equals `focus`.
+export function egoGraph({ nodes, edges }, focus, depth = 2) {
+  const roots = nodes.filter((n) => symbolOf(n) === focus).map((n) => n.id);
+  if (roots.length === 0) return { nodes: [], edges: [] };
+
+  const adj = new Map();
+  const link = (a, b) => { if (!adj.has(a)) adj.set(a, new Set()); adj.get(a).add(b); };
+  for (const e of edges) { link(e.source, e.target); link(e.target, e.source); }
+
+  const keep = new Set(roots);
+  let frontier = roots;
+  for (let d = 0; d < depth; d++) {
+    const next = [];
+    for (const id of frontier) for (const nb of adj.get(id) ?? []) if (!keep.has(nb)) { keep.add(nb); next.push(nb); }
+    frontier = next;
+    if (!frontier.length) break;
+  }
+  return {
+    nodes: nodes.filter((n) => keep.has(n.id)),
+    edges: edges.filter((e) => keep.has(e.source) && keep.has(e.target)),
+  };
+}
+
 // Keep only edges matching the kind / conf / pathPrefix filters (each optional).
 // Operates on RAW edge rows (pre-mapEdges) — mapEdges drops from_path, so always filter first.
 export function applyFilters(edges, { kind = null, conf = null, pathPrefix = null } = {}) {
