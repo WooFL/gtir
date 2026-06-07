@@ -38,6 +38,14 @@ function calleeOf(node) {
     || node.namedChild(0);
 }
 
+// A value member-call's callee is a member/attribute/field/selector expression (obj.method()).
+// Rust module paths (mod::func()) are `scoped_identifier` and are intentionally NOT matched —
+// they stay disambiguatable. Used to gate embedding-disambiguation away from method-name coincidences.
+const MEMBER_CALL = /^(member_expression|attribute|selector_expression|field_expression)$/;
+function isMemberCall(callee) {
+  return !!callee && MEMBER_CALL.test(callee.type);
+}
+
 // Strip surrounding quotes / angle brackets from an import source literal.
 function unquote(s) {
   return String(s).replace(/^["'<]/, "").replace(/["'>]$/, "");
@@ -207,7 +215,7 @@ function resolveSourceStem(fromPath, source) {
 
 const noteKey = (s) => basename(String(s)).replace(/\.(md|mdx)$/i, "").toLowerCase();
 
-function row(kind, from, to, conf, candidates, contentHash, refName, score = null) {
+function row(kind, from, to, conf, candidates, contentHash, refName, score = null, isMethod = false) {
   return {
     kind, conf,
     from_path: from.path, from_lines: from.lines ?? `${from.fromLine}`, from_symbol: from.symbol ?? null,
@@ -217,6 +225,7 @@ function row(kind, from, to, conf, candidates, contentHash, refName, score = nul
     candidates: candidates ?? [],
     content_hash: contentHash ?? null,
     score: score ?? null,
+    isMethod,
   };
 }
 
@@ -248,10 +257,10 @@ export function resolveEdges(rawEdges, symbolIndex, noteIndex, opts = {}) {
       if (cands.length === 1) {
         const only = cands[0];
         if (only.path === e.fromPath) { out.push(row("calls", from, { ...only, symbol: e.refName }, "resolved", [], contentHash, e.refName)); continue; }
-        out.push(row("calls", from, null, "ambiguous", [only.path], contentHash, e.refName));
+        out.push(row("calls", from, null, "ambiguous", [only.path], contentHash, e.refName, null, e.isMethod));
         continue;
       }
-      out.push(row("calls", from, null, "ambiguous", cands.map((c) => c.path), contentHash, e.refName));
+      out.push(row("calls", from, null, "ambiguous", cands.map((c) => c.path), contentHash, e.refName, null, e.isMethod));
     } else if (e.kind === "imports") {
       const stem = resolveSourceStem(e.fromPath, e.source);
       const from = { path: e.fromPath, fromLine: e.fromLine };
@@ -328,14 +337,15 @@ export function extractCodeEdges(tree, langId, relPath) {
   const seen = new Set();
   walk(tree.rootNode, (n) => {
     if (callSet.has(n.type)) {
-      const name = calleeName(calleeOf(n));
+      const callee = calleeOf(n);
+      const name = calleeName(callee);
       if (name) {
         const key = `c:${name}:${n.startIndex}`;
         if (!seen.has(key)) {
           seen.add(key);
           // Best-effort: null when at module top-level or grammar doesn't expose a name.
           const fromSymbol = declSet.size > 0 ? enclosingSymbol(n, declSet) : null;
-          edges.push({ kind: "calls", refName: name, fromPath: relPath, fromLine: n.startPosition.row + 1, fromSymbol });
+          edges.push({ kind: "calls", refName: name, fromPath: relPath, fromLine: n.startPosition.row + 1, fromSymbol, isMethod: isMemberCall(callee) });
         }
       }
     } else if (importSet.has(n.type)) {
