@@ -1,4 +1,5 @@
 // src/disambiguate.mjs — pure embedding-disambiguation of ambiguous call edges.
+import { stripExt } from "./edges.mjs";
 
 export function cosine(a, b) {
   if (!a || !b || a.length !== b.length) return 0;
@@ -26,15 +27,23 @@ const DENY_METHODS = new Set([
 // Promote ambiguous `calls` rows to conf:"inferred" when embedding similarity confidently picks one
 // candidate. Pure — returns a NEW array; non-calls / non-ambiguous rows pass through unchanged.
 // ctx: { symbolIndex: Map(name → [{path,line_start,line_end,embedding,content_hash}]),
-//        callSiteVec: Map(content_hash → embedding), threshold = 0.55, margin = 0.05 }
-export function disambiguateEdges(rows, { symbolIndex, callSiteVec, threshold = 0.55, margin = 0.05 } = {}) {
+//        callSiteVec: Map(content_hash → embedding),
+//        importMap: Map(from_path → Set(imported file stems)) — eligibility pre-filter (optional),
+//        threshold = 0.55, margin = 0.05 }
+export function disambiguateEdges(rows, { symbolIndex, callSiteVec, importMap, threshold = 0.55, margin = 0.05 } = {}) {
   return rows.map((r) => {
     if (r.kind !== "calls" || r.conf !== "ambiguous") return r;
     if (r.isMethod && DENY_METHODS.has(r.ref_name)) return r; // structural filter: leave ambiguous
     const callVec = callSiteVec?.get(r.content_hash);
     if (!callVec) return r;
+    // Import-reachability pre-filter: a candidate is eligible only if it is the same file as the call
+    // site, or the call-site file directly imports it. importMap absent → no filter (backward-compatible).
+    const imports = importMap?.get(r.from_path);
+    const eligible = importMap
+      ? (p) => p === r.from_path || (imports != null && imports.has(stripExt(p)))
+      : () => true;
     const defs = symbolIndex?.get(r.ref_name) || [];
-    const scored = (r.candidates || []).map((path) => {
+    const scored = (r.candidates || []).filter(eligible).map((path) => {
       let sim = -1, def = null;
       for (const d of defs) {
         if (d.path !== path || !d.embedding) continue;

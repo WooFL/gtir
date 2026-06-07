@@ -115,3 +115,35 @@ test("disambiguateEdges: a member-call to a DISTINCTIVE name still promotes", ()
   const [r] = disambiguateEdges([row], { symbolIndex: si, callSiteVec: csv });
   assert.equal(r.conf, "inferred");
 });
+
+test("disambiguateEdges: non-imported cross-file candidate is filtered (stays ambiguous)", () => {
+  // perfect-score candidate in g.mjs, but f.mjs does NOT import g.mjs -> ineligible -> not promoted.
+  const si = new Map([["fn", [{ path: "g.mjs", line_start: 1, line_end: 5, embedding: [1, 0, 0], content_hash: "h2" }]]]);
+  const csv = new Map([["hc", [1, 0, 0]]]);
+  const importMap = new Map([["f.mjs", new Set(["other"])]]); // f imports "other", not "g"
+  const row = { kind: "calls", conf: "ambiguous", from_path: "f.mjs", from_symbol: "x", to_path: null, to_symbol: null,
+    ref_name: "fn", candidates: ["g.mjs"], content_hash: "hc", isMethod: false };
+  const [r] = disambiguateEdges([row], { symbolIndex: si, callSiteVec: csv, importMap });
+  assert.equal(r.conf, "ambiguous");
+});
+
+test("disambiguateEdges: an imported cross-file candidate is eligible and promotes", () => {
+  const si = new Map([["fn", [{ path: "g.mjs", line_start: 1, line_end: 5, embedding: [1, 0, 0], content_hash: "h2" }]]]);
+  const csv = new Map([["hc", [1, 0, 0]]]);
+  const importMap = new Map([["f.mjs", new Set(["g"])]]); // f imports g (stem, no ext)
+  const row = { kind: "calls", conf: "ambiguous", from_path: "f.mjs", from_symbol: "x", to_path: null, to_symbol: null,
+    ref_name: "fn", candidates: ["g.mjs"], content_hash: "hc", isMethod: false };
+  const [r] = disambiguateEdges([row], { symbolIndex: si, callSiteVec: csv, importMap });
+  assert.equal(r.conf, "inferred");
+  assert.equal(r.to_path, "g.mjs");
+});
+
+test("disambiguateEdges: a same-file candidate is always eligible (no import needed)", () => {
+  const si = new Map([["fn", [{ path: "f.mjs", line_start: 1, line_end: 5, embedding: [1, 0, 0], content_hash: "h2" }]]]);
+  const csv = new Map([["hc", [1, 0, 0]]]);
+  const importMap = new Map(); // f imports nothing
+  const row = { kind: "calls", conf: "ambiguous", from_path: "f.mjs", from_symbol: "x", to_path: null, to_symbol: null,
+    ref_name: "fn", candidates: ["f.mjs"], content_hash: "hc", isMethod: false };
+  const [r] = disambiguateEdges([row], { symbolIndex: si, callSiteVec: csv, importMap });
+  assert.equal(r.conf, "inferred");
+});
