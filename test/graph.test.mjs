@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mapEdges, applyFilters, egoGraph, capByDegree } from "../src/graph.mjs";
+import { mapEdges, applyFilters, egoGraph, capByDegree, rollupToFiles, buildGraph, worstConf } from "../src/graph.mjs";
 
 // Edge factory matching the store.loadEdges() row shape.
 const E = (o = {}) => ({
@@ -108,6 +108,7 @@ test("capByDegree: drops lowest-degree nodes and reports truncation", () => {
   assert.ok(capped.nodes.length <= 4);
   assert.equal(capped.truncated, true);
   assert.equal(capped.dropped, g.nodes.length - capped.nodes.length);
+  assert.equal(capped.nodes.length, 4);
   // the hub (highest degree) survives
   assert.ok(capped.nodes.some((n) => n.id === "h\x00h.ts"));
 });
@@ -118,4 +119,53 @@ test("capByDegree: under the cap is a no-op", () => {
   assert.equal(capped.truncated, false);
   assert.equal(capped.dropped, 0);
   assert.equal(capped.nodes.length, 2);
+});
+
+test("rollupToFiles: collapses symbol nodes to files and merges parallel edges", () => {
+  const g = mapEdges([
+    E({ from_symbol: "f", from_path: "a.ts", to_symbol: "g", to_path: "b.ts", ref_name: "g" }),
+    E({ from_symbol: "h", from_path: "a.ts", to_symbol: "i", to_path: "b.ts", ref_name: "i" }),
+  ]);
+  const r = rollupToFiles(g);
+  assert.deepEqual(r.nodes.map((n) => n.id).sort(), ["a.ts", "b.ts"]);
+  assert.equal(r.edges.length, 1);
+  assert.equal(r.edges[0].count, 2);
+});
+
+test("rollupToFiles: two resolved edges merge into one resolved edge", () => {
+  const g = mapEdges([
+    E({ from_symbol: "f", from_path: "a.ts", to_symbol: "g", to_path: "b.ts", conf: "resolved", ref_name: "g" }),
+    E({ from_symbol: "h", from_path: "a.ts", to_symbol: "i", to_path: "b.ts", conf: "resolved", ref_name: "i" }),
+  ]);
+  const r = rollupToFiles(g);
+  assert.equal(r.edges.length, 1);
+  assert.equal(r.edges[0].conf, "resolved");
+});
+
+test("worstConf: ambiguous dominates external dominates resolved", () => {
+  assert.equal(worstConf("resolved", "ambiguous"), "ambiguous");
+  assert.equal(worstConf("external", "resolved"), "external");
+  assert.equal(worstConf("ambiguous", "external"), "ambiguous");
+});
+
+test("buildGraph: end-to-end resolved chain, no opts", () => {
+  const g = buildGraph([
+    E({ from_symbol: "f", from_path: "a.ts", to_symbol: "g", to_path: "b.ts", ref_name: "g" }),
+  ]);
+  assert.equal(g.nodes.length, 2);
+  assert.equal(g.edges.length, 1);
+  assert.equal(g.truncated, false);
+  assert.equal(g.dropped, 0);
+});
+
+test("buildGraph: focus prunes, rollup collapses, cap bounds", () => {
+  const rows = [
+    E({ from_symbol: "f", from_path: "a.ts", to_symbol: "g", to_path: "b.ts", ref_name: "g" }),
+    E({ from_symbol: "g", from_path: "b.ts", to_symbol: "h", to_path: "c.ts", ref_name: "h" }),
+    E({ from_symbol: "z", from_path: "z.ts", to_symbol: "y", to_path: "y.ts", ref_name: "y" }), // disjoint
+  ];
+  const focused = buildGraph(rows, { focus: "f", depth: 1 });
+  assert.ok(!focused.nodes.some((n) => n.id.includes("z.ts")));
+  const rolled = buildGraph(rows, { rollup: true });
+  assert.ok(rolled.nodes.every((n) => !n.id.includes("\x00")));
 });

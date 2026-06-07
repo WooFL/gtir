@@ -110,6 +110,59 @@ export function capByDegree({ nodes, edges }, maxNodes) {
   };
 }
 
+// Confidence severity for rollup merges: ambiguous (a wrong guess) is the audit target, so it
+// dominates; external (correctly outside the index) next; resolved is the baseline.
+const SEVERITY = { resolved: 0, external: 1, ambiguous: 2 };
+export function worstConf(a, b) { return SEVERITY[b] > SEVERITY[a] ? b : a; }
+
+// Re-key code symbol nodes to their file; synthetic ext:/amb: and note: nodes pass through.
+// Parallel edges merge by (source,target,kind), keeping the worst conf and summing a count
+// used downstream as stroke width.
+export function rollupToFiles({ nodes, edges }) {
+  const fileId = (n) => (n.cls === "code" && n.id.includes("\x00")) ? n.id.split("\x00")[1] : n.id;
+  const fileLabel = (n) => (n.cls === "code" && n.id.includes("\x00")) ? n.id.split("\x00")[1] : n.label;
+
+  const out = new Map();
+  for (const n of nodes) {
+    const id = fileId(n);
+    let cur = out.get(id);
+    if (!cur) { cur = { id, label: fileLabel(n), cls: n.cls, refs: [], candidates: [] }; out.set(id, cur); }
+    for (const r of n.refs) if (!cur.refs.some((x) => x.path === r.path && x.line === r.line)) cur.refs.push(r);
+    for (const c of n.candidates) if (!cur.candidates.includes(c)) cur.candidates.push(c);
+  }
+
+  const idOf = new Map(nodes.map((n) => [n.id, fileId(n)]));
+  const merged = new Map();
+  for (const e of edges) {
+    const s = idOf.get(e.source), t = idOf.get(e.target);
+    if (s === t) continue; // self-loop after collapse — drop
+    const key = `${s}\x00${t}\x00${e.kind}`;
+    const cur = merged.get(key);
+    if (cur) { cur.count += 1; cur.conf = worstConf(cur.conf, e.conf); }
+    else merged.set(key, { source: s, target: t, kind: e.kind, conf: e.conf, count: 1 });
+  }
+  return { nodes: [...out.values()], edges: [...merged.values()] };
+}
+
+// Compose the pipeline: filter → map → (focus | cap) → optional rollup.
+export function buildGraph(edges, opts = {}) {
+  const { focus = null, depth = 2, rollup = false, kind = null, conf = null, pathPrefix = null, maxNodes = 400 } = opts;
+  const rows = applyFilters(edges, { kind, conf, pathPrefix });
+  let g = mapEdges(rows);
+  let truncated = false, dropped = 0;
+
+  if (focus) {
+    g = egoGraph(g, focus, depth);
+  } else {
+    const capped = capByDegree(g, maxNodes);
+    g = { nodes: capped.nodes, edges: capped.edges };
+    truncated = capped.truncated; dropped = capped.dropped;
+  }
+
+  if (rollup) g = rollupToFiles(g);
+  return { nodes: g.nodes, edges: g.edges, truncated, dropped };
+}
+
 // Map raw edge rows → { nodes: [...], edges: [...] }. Nodes are de-duped by id; each
 // accumulates its source refs (for tooltips) and any candidate paths (ambiguous/external).
 export function mapEdges(rows) {
