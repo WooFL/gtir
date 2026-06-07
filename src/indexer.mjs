@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { extname } from "node:path";
+import { extname, join } from "node:path";
 import { walkRepo, statPaths } from "./walker.mjs";
 import { langFor } from "./languages.mjs";
 import { grammarMissing, OPTIONAL_GRAMMARS, getParser } from "./parser.mjs";
@@ -19,41 +19,61 @@ const REQUIRED_CHUNK_COLUMNS = ["id", "path", "language", "chunk_start", "chunk_
 // Build edges for the changed files and persist them. Re-reads + re-parses only the changed
 // files (cheap on a refresh). symbolIndex/noteIndex are built from the FULL current chunk set so
 // a call in a changed file can resolve to a definition in an unchanged file.
-async function indexEdges(cfg, store, toIndex, { rebuild }) {
+async function indexEdges(cfg, store, toIndex, { rebuild, deleted = [] }) {
   if (rebuild) await store.dropEdges();
-  if (!toIndex.length) return;
-
   const tbl = await store.chunksTable();
-  const symbolIndex = new Map();
-  const noteIndex = new Map();
-  const callSiteVec = new Map();
-  // chunkByPath: path → [{line_start, line_end, content_hash}] for mapping call-site lines → chunk hash.
-  const chunkByPath = new Map();
-  if (tbl) {
-    const rows = await tbl.query().select(["path", "line_start", "line_end", "text", "language", "embedding", "content_hash"]).toArray();
-    for (const r of rows) {
-      if (r.content_hash && r.embedding) callSiteVec.set(r.content_hash, Array.from(r.embedding));
-      if (r.content_hash) {
-        if (!chunkByPath.has(r.path)) chunkByPath.set(r.path, []);
-        chunkByPath.get(r.path).push({ line_start: Number(r.line_start), line_end: Number(r.line_end), content_hash: r.content_hash });
-      }
-      for (const name of declaredSymbols(r.text)) {
-        if (!symbolIndex.has(name)) symbolIndex.set(name, []);
-        symbolIndex.get(name).push({ path: r.path, line_start: Number(r.line_start), line_end: Number(r.line_end),
-          embedding: r.embedding ? Array.from(r.embedding) : null, content_hash: r.content_hash || null });
-      }
+  if (!tbl) return;
+
+  const changedSet = new Set(toIndex.map((f) => f.relPath));
+  const deletedSet = new Set(deleted);
+  const symbolIndex = new Map(), noteIndex = new Map(), callSiteVec = new Map(), chunkByPath = new Map();
+  // Symbols declared by the changed files (drives the "a new def appeared" caller re-resolution).
+  // Relies on buildIndex having already upsertRows'd the changed files BEFORE calling indexEdges —
+  // so the chunks table here reflects the new state. Keep that ordering.
+  const changedSymbols = new Set();
+  const rows = await tbl.query().select(["path", "line_start", "line_end", "text", "language", "embedding", "content_hash"]).toArray();
+  for (const r of rows) {
+    if (r.content_hash && r.embedding) callSiteVec.set(r.content_hash, Array.from(r.embedding));
+    if (r.content_hash) {
+      if (!chunkByPath.has(r.path)) chunkByPath.set(r.path, []);
+      chunkByPath.get(r.path).push({ line_start: Number(r.line_start), line_end: Number(r.line_end), content_hash: r.content_hash });
     }
-    for (const r of rows) {
-      if (r.language === "markdown") {
-        const key = r.path.replace(/\\/g, "/").split("/").pop().replace(/\.(md|mdx)$/i, "").toLowerCase();
-        if (!noteIndex.has(key)) noteIndex.set(key, []);
-        if (!noteIndex.get(key).some((c) => c.path === r.path)) noteIndex.get(key).push({ path: r.path });
-      }
+    for (const name of declaredSymbols(r.text)) {
+      if (!symbolIndex.has(name)) symbolIndex.set(name, []);
+      symbolIndex.get(name).push({ path: r.path, line_start: Number(r.line_start), line_end: Number(r.line_end),
+        embedding: r.embedding ? Array.from(r.embedding) : null, content_hash: r.content_hash || null });
+      if (changedSet.has(r.path)) changedSymbols.add(name);
+    }
+  }
+  for (const r of rows) {
+    if (r.language === "markdown") {
+      const key = r.path.replace(/\\/g, "/").split("/").pop().replace(/\.(md|mdx)$/i, "").toLowerCase();
+      if (!noteIndex.has(key)) noteIndex.set(key, []);
+      if (!noteIndex.get(key).some((c) => c.path === r.path)) noteIndex.get(key).push({ path: r.path });
     }
   }
 
+  // Re-extract set: changed files + unchanged callers whose call resolution could have changed.
+  const reExtract = new Set(changedSet);
+  if (!rebuild) {
+    const existing = await store.loadEdges();
+    for (const e of existing) {
+      if (e.kind !== "calls" || !e.from_path) continue;
+      if (changedSet.has(e.from_path) || deletedSet.has(e.from_path)) continue; // changed (in set) / deleted (evicted)
+      const targetChanged = e.to_path && (changedSet.has(e.to_path) || deletedSet.has(e.to_path));
+      const candChanged = (e.candidates || []).some((c) => changedSet.has(c) || deletedSet.has(c));
+      const nameNowDeclared = e.ref_name && changedSymbols.has(e.ref_name);
+      if (targetChanged || candChanged || nameNowDeclared) reExtract.add(e.from_path);
+    }
+  }
+  for (const d of deletedSet) reExtract.delete(d);
+  if (reExtract.size === 0 && deletedSet.size === 0) return;
+
+  const byRel = new Map(toIndex.map((f) => [f.relPath, f]));
+  const targets = [...reExtract].map((rel) => byRel.get(rel) ?? { relPath: rel, absPath: join(cfg.repo, rel) });
+
   let all = [];
-  for (const f of toIndex) {
+  for (const f of targets) {
     let text;
     try { text = readFileSync(f.absPath, "utf8"); } catch { continue; }
     const ext = extname(f.absPath);
@@ -70,8 +90,6 @@ async function indexEdges(cfg, store, toIndex, { rebuild }) {
     }
     if (raw.length) all.push(...resolveEdges(raw, symbolIndex, noteIndex));
   }
-  // Annotate ambiguous call edges with the content_hash of the chunk containing the call site,
-  // so disambiguateEdges can look up the call-site embedding via callSiteVec.
   if (chunkByPath.size) {
     all = all.map((e) => {
       if (e.kind !== "calls" || e.conf !== "ambiguous" || e.content_hash) return e;
@@ -83,19 +101,18 @@ async function indexEdges(cfg, store, toIndex, { rebuild }) {
     });
   }
   if (cfg.disambiguate !== false && all.length) {
-    const importMap = new Map(); // from_path → Set(imported file stems) — for the import-reachability prior
+    const importMap = new Map();
     for (const e of all) {
       if (e.kind === "imports" && e.to_path) {
         let s = importMap.get(e.from_path);
         if (!s) { s = new Set(); importMap.set(e.from_path, s); }
-        s.add(e.to_path); // to_path is already a stem (resolveEdges strips the extension)
+        s.add(e.to_path);
       }
     }
     all = disambiguateEdges(all, { symbolIndex, callSiteVec, importMap,
       threshold: cfg.disambigThreshold, margin: cfg.disambigMargin });
   }
-  const changed = [...new Set(toIndex.map((f) => f.relPath))];
-  await store.evictEdgePaths(changed);
+  await store.evictEdgePaths([...reExtract, ...deletedSet]);
   if (all.length) await store.upsertEdges(all);
 }
 
@@ -159,8 +176,9 @@ export async function buildIndex(cfg, { rebuild = false, paths = null } = {}) {
   // Evict deletions. Full walk: any manifest path no longer on disk. Targeted: only the batch's
   // vanished paths (the watcher reports unlinks; the startup full walk is the backstop for the rest).
   let evicted = 0;
+  let stale = [];
   if (!rebuild) {
-    const stale = targeted
+    stale = targeted
       ? scan.missing.filter((p) => manifest[p] !== undefined)
       : Object.keys(manifest).filter((p) => !live.has(p));
     if (stale.length) { await store.evictPaths(stale); evicted = stale.length; }
@@ -176,9 +194,12 @@ export async function buildIndex(cfg, { rebuild = false, paths = null } = {}) {
   }
 
   if (allChunks.length === 0) {
-    // Nothing to (re)embed. Do NOT clobber existing meta — a no-op refresh after
-    // a git commit is common and must preserve the dim recorded by the last real
-    // build. Report the existing dim if the index already exists.
+    // Nothing to (re)embed, but deletions still require edge re-resolution of the callers that
+    // referenced the deleted files (else they keep stale resolved/inferred edges). Preserve meta.
+    if (!rebuild && stale.length) {
+      try { await indexEdges(cfg, store, [], { rebuild: false, deleted: stale }); }
+      catch (e) { warnings.push(`edge index skipped: ${e.message}`); }
+    }
     const meta = await store.readMeta();
     return { scanned: files.length, skipped, evicted, chunks: 0, dim: Number(meta.dim) || 0, reused: 0, embedded: 0, warnings };
   }
@@ -229,7 +250,7 @@ export async function buildIndex(cfg, { rebuild = false, paths = null } = {}) {
   await store.upsertRows(rows);
   await store.writeMeta({ model: cfg.model, dim, version: cfg.version });
 
-  try { await indexEdges(cfg, store, toIndex, { rebuild }); }
+  try { await indexEdges(cfg, store, toIndex, { rebuild, deleted: rebuild ? [] : stale }); }
   catch (e) { warnings.push(`edge index skipped: ${e.message}`); }
 
   return { scanned: files.length, skipped, evicted, chunks: rows.length, dim, reused, embedded, warnings };
