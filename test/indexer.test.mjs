@@ -225,3 +225,33 @@ test("empty paths falls back to a full walk (the watcher startup catch-up)", asy
   assert.ok(r.chunks > 0);
   assert.ok((await (await openStore(cfg)).chunksByPath("a.ts")).some((x) => /trimEnd/.test(x.text)), "full walk picked up the change");
 });
+
+test("buildIndex populates the edges table for code", async () => {
+  // Functions must be long enough to clear the minimum chunk size threshold (~100 chars body).
+  const tokenSrc = [
+    "export function verifyToken(x) {",
+    "  // Verify the supplied token value and delegate to the internal decode helper below.",
+    "  return decode(x);",
+    "}",
+    "function decode(x) {",
+    "  // Internal decode: strips the outer wrapper and returns the raw payload value here.",
+    "  return x;",
+    "}",
+  ].join("\n") + "\n";
+  const mwSrc = [
+    'import { verifyToken } from "./token";',
+    "export function mw(r) {",
+    "  // Middleware: authenticate each incoming request by delegating to verifyToken below.",
+    "  return verifyToken(r);",
+    "}",
+  ].join("\n") + "\n";
+  const repo = repoWith({ "token.ts": tokenSrc, "mw.ts": mwSrc });
+  const cfg = { ...loadConfig(repo), embedImpl: fakeEmbed };
+  await buildIndex(cfg, { rebuild: true });
+  const store = await openStore(cfg);
+  const edges = await store.loadEdges();
+  const call = edges.find((e) => e.kind === "calls" && e.to_symbol === "verifyToken");
+  assert.ok(call, "expected a resolved call edge to verifyToken");
+  assert.equal(call.from_path, "mw.ts");
+  assert.equal(call.conf, "resolved");
+});

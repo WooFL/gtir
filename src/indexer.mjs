@@ -2,16 +2,68 @@ import { readFileSync } from "node:fs";
 import { extname } from "node:path";
 import { walkRepo, statPaths } from "./walker.mjs";
 import { langFor } from "./languages.mjs";
-import { grammarMissing, OPTIONAL_GRAMMARS } from "./parser.mjs";
+import { grammarMissing, OPTIONAL_GRAMMARS, getParser } from "./parser.mjs";
 import { chunkFile, stableId } from "./chunker.mjs";
 import { contextualizeChunk } from "./contextualize.mjs";
 import { embedTexts, contentHash } from "./embed.mjs";
 import { openStore } from "./store.mjs";
+import { extractCodeEdges, extractNotesEdges, resolveEdges } from "./edges.mjs";
+import { declaredSymbols } from "./symbols.mjs";
 
 // Columns the current row shape ALWAYS writes. content_hash is deliberately excluded — it's
 // optional: a pre-cache table runs in legacy (no-reuse) mode rather than being force-rebuilt.
 const REQUIRED_CHUNK_COLUMNS = ["id", "path", "language", "chunk_start", "chunk_end",
   "line_start", "line_end", "text", "fts_text", "mtime_ms", "embedding"];
+
+// Build edges for the changed files and persist them. Re-reads + re-parses only the changed
+// files (cheap on a refresh). symbolIndex/noteIndex are built from the FULL current chunk set so
+// a call in a changed file can resolve to a definition in an unchanged file.
+async function indexEdges(cfg, store, toIndex, { rebuild }) {
+  if (rebuild) await store.dropEdges();
+  if (!toIndex.length) return;
+
+  const tbl = await store.chunksTable();
+  const symbolIndex = new Map();
+  const noteIndex = new Map();
+  if (tbl) {
+    const rows = await tbl.query().select(["path", "line_start", "line_end", "text", "language"]).toArray();
+    for (const r of rows) {
+      for (const name of declaredSymbols(r.text)) {
+        if (!symbolIndex.has(name)) symbolIndex.set(name, []);
+        symbolIndex.get(name).push({ path: r.path, line_start: Number(r.line_start), line_end: Number(r.line_end) });
+      }
+    }
+    for (const r of rows) {
+      if (r.language === "markdown") {
+        const key = r.path.replace(/\\/g, "/").split("/").pop().replace(/\.(md|mdx)$/i, "").toLowerCase();
+        if (!noteIndex.has(key)) noteIndex.set(key, []);
+        if (!noteIndex.get(key).some((c) => c.path === r.path)) noteIndex.get(key).push({ path: r.path });
+      }
+    }
+  }
+
+  const all = [];
+  for (const f of toIndex) {
+    let text;
+    try { text = readFileSync(f.absPath, "utf8"); } catch { continue; }
+    const ext = extname(f.absPath);
+    const langId = langFor(ext);
+    let raw = [];
+    if (langId === "markdown") {
+      raw = extractNotesEdges(f.relPath, text);
+    } else if (langId) {
+      const parser = await getParser(langId).catch(() => null);
+      if (parser) {
+        let tree; try { tree = parser.parse(text); } catch { tree = null; }
+        if (tree) raw = extractCodeEdges(tree, langId, f.relPath);
+      }
+    }
+    if (raw.length) all.push(...resolveEdges(raw, symbolIndex, noteIndex));
+  }
+  const changed = [...new Set(toIndex.map((f) => f.relPath))];
+  await store.evictEdgePaths(changed);
+  if (all.length) await store.upsertEdges(all);
+}
 
 export async function buildIndex(cfg, { rebuild = false, paths = null } = {}) {
   const store = await openStore(cfg);
@@ -138,6 +190,9 @@ export async function buildIndex(cfg, { rebuild = false, paths = null } = {}) {
   }));
   await store.upsertRows(rows);
   await store.writeMeta({ model: cfg.model, dim, version: cfg.version });
+
+  try { await indexEdges(cfg, store, toIndex, { rebuild }); }
+  catch (e) { warnings.push(`edge index skipped: ${e.message}`); }
 
   return { scanned: files.length, skipped, evicted, chunks: rows.length, dim, reused, embedded, warnings };
 }
