@@ -1,6 +1,6 @@
 // src/graph-queries.mjs
 import { basename } from "node:path";
-import { declaredSymbols } from "./symbols.mjs";
+import { declaredSymbols, declaredCallables } from "./symbols.mjs";
 import { openStore } from "./store.mjs";
 import { isNotesMode } from "./search.mjs";
 import { buildGraph, impact, cycles, orphans, nodeKey, degreeMap } from "./edge-graph.mjs";
@@ -15,16 +15,17 @@ function indexByName(flat) {
 
 // Full defined-symbol inventory, rebuilt at query time from chunk text (the same declaredSymbols
 // heuristic the indexer uses). Returns { flat, byName }. Notes mode: one entry per note file.
-export async function buildSymbolInventory(store, mode) {
+export async function buildSymbolInventory(store, mode, { callables = false } = {}) {
   const rows = await store.allChunkRows(["path", "line_start", "line_end", "text"]);
   const flat = [];
   if (mode === "notes") {
     const seen = new Set();
     for (const r of rows) { if (seen.has(r.path)) continue; seen.add(r.path); flat.push({ name: noteName(r.path), path: r.path }); }
   } else {
+    const declared = callables ? declaredCallables : declaredSymbols;
     const seen = new Set();
     for (const r of rows) {
-      for (const name of declaredSymbols(r.text)) {
+      for (const name of declared(r.text)) {
         const k = `${r.path}#${name}`;
         if (seen.has(k)) continue; seen.add(k);
         flat.push({ name, path: r.path, line_start: Number(r.line_start), line_end: Number(r.line_end), text: r.text });
@@ -69,13 +70,13 @@ export async function impactQuery(cfg, { symbol, path = null, downstream = false
 }
 
 // Likely-dead symbols (no inbound edges), entrypoints filtered out heuristically.
-export async function orphansQuery(cfg, { includeAmbiguous = false } = {}) {
+export async function orphansQuery(cfg) {
   const store = await openStore(cfg);
   const mode = isNotesMode(cfg) ? "notes" : "code";
-  const { graph, hasEdges } = await loadGraph(store, includeAmbiguous);
+  const { graph, hasEdges } = await loadGraph(store, true); // count ambiguous inbound as referenced
   if (!hasEdges) return { error: "no edge index — run: gtir index" };
-  const inv = await buildSymbolInventory(store, mode);
-  const r = orphans(inv.flat, graph, { includeAmbiguous });
+  const inv = await buildSymbolInventory(store, mode, { callables: true });
+  const r = orphans(inv.flat, graph, {});
   return { ...r, counts: { likely_dead: r.likely_dead.length, possible_entrypoint: r.possible_entrypoint.length } };
 }
 
