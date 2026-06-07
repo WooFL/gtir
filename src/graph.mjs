@@ -249,8 +249,9 @@ export function renderHtml({ nodes, edges, meta = {} }, cosmosSource) {
   #legend{margin-top:8px;max-height:30vh;overflow:auto}
   #legend .lg{cursor:pointer;line-height:1.6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   #counts{margin-top:8px;color:#8b949e}
-  #info{position:fixed;bottom:8px;left:8px;z-index:10;background:#161b22e6;border:1px solid #30363d;border-radius:6px;padding:8px 10px;max-width:340px;display:none}
+  #info{position:fixed;bottom:8px;right:8px;z-index:10;background:#161b22e6;border:1px solid #30363d;border-radius:6px;padding:8px 10px;max-width:340px;max-height:60vh;overflow:auto;display:none}
   #msg{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:20;color:#f85149;font-size:16px}
+  #tip{position:fixed;z-index:15;pointer-events:none;background:#161b22;border:1px solid #30363d;border-radius:4px;padding:3px 7px;font-size:11px;display:none;white-space:nowrap}
   button{background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:3px 8px;cursor:pointer}
 </style></head>
 <body>
@@ -279,6 +280,7 @@ export function renderHtml({ nodes, edges, meta = {} }, cosmosSource) {
   <div id="counts">${trunc}</div>
 </div>
 <div id="info"></div>
+<div id="tip"></div>
 <script>/* cosmos (vendored) */
 ${cosmosSafe}
 </script>
@@ -306,8 +308,10 @@ function sizeLabelCanvas() { const dpr = window.devicePixelRatio || 1; lcv.width
 sizeLabelCanvas(); addEventListener("resize", sizeLabelCanvas);
 
 function showInfo(n) {
-  const refs = (n.refs || []).map(r => esc(r.path) + ":" + r.line).join("<br>");
-  const cand = (n.candidates || []).length ? "<br><i>candidates:</i><br>" + n.candidates.map(esc).join("<br>") : "";
+  const all = n.refs || [], shown = all.slice(0, 8);
+  let refs = shown.map(r => esc(r.path) + ":" + r.line).join("<br>");
+  if (all.length > shown.length) refs += "<br><span style='color:#8b949e'>…" + (all.length - shown.length) + " more</span>";
+  const cand = (n.candidates || []).length ? "<br><i>candidates:</i><br>" + n.candidates.slice(0, 8).map(esc).join("<br>") : "";
   $("info").innerHTML = "<b>" + esc(n.label) + "</b><br><span style='color:#8b949e'>" + esc(n.cluster) + " · deg " + (n.degree || 0) + "</span><br>" + refs + cand;
   $("info").style.display = "block";
 }
@@ -323,10 +327,19 @@ try {
     backgroundColor: "#0d1117",
     disableSimulation: true,        // deterministic placement — we position every point ourselves
     scalePointsOnZoom: true,
+    renderHoveredPointRing: true,
+    hoveredPointRingColor: "#e6edf3",
+    hoveredPointCursor: "pointer",
     onClick: (index) => {
       if (index != null) { graph.selectPointByIndex(index, true); const n = NODES[curVisIdx[index]]; if (n) showInfo(n); }
       else { graph.unselectPoints(); hideInfo(); }
     },
+    onPointMouseOver: (index, pos, event) => {
+      const n = NODES[curVisIdx[index]]; if (!n) return;
+      const t = $("tip"); t.textContent = shortName(n); t.style.display = "block";
+      if (event && event.clientX != null) { t.style.left = (event.clientX + 12) + "px"; t.style.top = (event.clientY + 12) + "px"; }
+    },
+    onPointMouseOut: () => { $("tip").style.display = "none"; },
   });
   window.gtirGraph = graph;   // expose for power users / debugging
 } catch (err) {
@@ -404,16 +417,19 @@ function draw() {
   if (!graph) return;
   frame++;
   if (showIslands) {
-    lctx.textAlign = "center"; lctx.textBaseline = "middle"; lctx.font = "11px system-ui,sans-serif";
+    lctx.textAlign = "center"; lctx.textBaseline = "bottom"; lctx.font = "600 12px system-ui,sans-serif";
     islandR.forEach((r, cc) => {
       const c = clusterXY[cc];
       const a = graph.spaceToScreenPosition([c[0], c[1]]);
       const b = graph.spaceToScreenPosition([c[0] + r, c[1]]);
       const sr = Math.hypot(b[0] - a[0], b[1] - a[1]);
       lctx.fillStyle = hexA(clusterHex[cc], 0.10); lctx.beginPath(); lctx.arc(a[0], a[1], sr, 0, 6.2832); lctx.fill();
-      lctx.fillStyle = "rgba(230,237,243,0.25)"; lctx.fillText(clusters[cc], a[0], a[1]);
+      // name on top of the circle
+      const ty = a[1] - sr - 4;
+      lctx.lineWidth = 3; lctx.strokeStyle = "rgba(0,0,0,0.8)"; lctx.strokeText(clusters[cc], a[0], ty);
+      lctx.fillStyle = hexA(clusterHex[cc], 0.95); lctx.fillText(clusters[cc], a[0], ty);
     });
-    lctx.textAlign = "left";
+    lctx.textAlign = "left"; lctx.textBaseline = "middle";
   }
   if (labelMap.size) {
     const lp = graph.getTrackedPointPositionsMap();
