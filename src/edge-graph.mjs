@@ -134,6 +134,54 @@ function shortestCycleThrough(start, comp, adj) {
   return path.concat(start);   // start ... closing start
 }
 
+function escapeRe(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+
+const TEST_PATH = /(^|[/\\])(tests?|__tests__|__mocks__|specs?|e2e)[/\\]/i;
+const TEST_FILE = /(^|[/\\._-])(test|spec)\.[a-z0-9]+$/i;
+const PYTEST = /(^|[/\\])test_[^/\\]*\.py$/i;
+const ENTRY_FILE = /(^|[/\\])(bin[/\\]|main\.|index\.|cli\.|readme\.|home\.)/i;
+const ENTRY_NAME = /^(main|default|handler|setup|run|init)$/;
+const HANDLER = /^(on|handle)[A-Z]/;
+
+// Heuristic: is `name` defined in `path` (with chunk `text`) a likely entrypoint rather than dead code?
+// Returns { entrypoint, reason }.
+export function classifyEntrypoint(name, path, text) {
+  const p = String(path || ""), t = String(text || ""), n = String(name || "");
+  if (TEST_PATH.test(p) || TEST_FILE.test(p) || PYTEST.test(p)) return { entrypoint: true, reason: "test path" };
+  if (ENTRY_FILE.test(p)) return { entrypoint: true, reason: "entry file" };
+  if (ENTRY_NAME.test(n) || HANDLER.test(n)) return { entrypoint: true, reason: "entry/handler name" };
+  if (n) {
+    const exp = new RegExp(
+      `\\bexport\\b[^\\n]*\\b${escapeRe(n)}\\b` +
+      `|\\bmodule\\.exports\\b|\\bexport\\s+default\\b|\\b__all__\\b` +
+      `|\\bpub\\s+(?:fn|struct|enum|trait|mod|const)\\b[^\\n]*\\b${escapeRe(n)}\\b`);
+    if (exp.test(t)) return { entrypoint: true, reason: "exported" };
+  }
+  if (/\.go$/i.test(p) && /^[A-Z]/.test(n)) return { entrypoint: true, reason: "go exported" };
+  return { entrypoint: false, reason: null };
+}
+
+// Dead-code analysis. `inventory` is the full defined-symbol list (code: {name,path,line_start,line_end,text};
+// notes: {name,path}). A symbol is an orphan candidate when its inbound (graph.rev) set is empty.
+// includeAmbiguous is already reflected in graph.rev when the graph was built with that flag.
+export function orphans(inventory, graph, { includeAmbiguous = false } = {}) {
+  void includeAmbiguous;
+  const likely_dead = [], possible_entrypoint = [];
+  for (const def of inventory) {
+    const key = nodeKey(def.path, def.name || null);
+    const inbound = graph.rev.get(key);
+    if (inbound && inbound.size > 0) continue;
+    const lines = def.line_start != null ? `${def.line_start}-${def.line_end}` : undefined;
+    const base = { path: def.path, symbol: def.name, ...(lines ? { lines } : {}) };
+    const cls = classifyEntrypoint(def.name, def.path, def.text);
+    if (cls.entrypoint) possible_entrypoint.push({ ...base, reason: cls.reason });
+    else likely_dead.push(base);
+  }
+  likely_dead.sort((a, b) => a.path.localeCompare(b.path) || (a.lines || "").localeCompare(b.lines || ""));
+  possible_entrypoint.sort((a, b) => a.path.localeCompare(b.path) || (a.lines || "").localeCompare(b.lines || ""));
+  return { likely_dead, possible_entrypoint };
+}
+
 // Circular dependencies, split by edge class. SCCs of size>1 are cycles; size-1 SCCs with a
 // self-edge are counted as excluded self-recursion (intended, not a smell).
 export function cycles(graph) {

@@ -136,3 +136,41 @@ test("cycles: import cycles separate from call cycles", () => {
   assert.equal(r.import_cycles.length, 1);
   assert.deepEqual(r.call_cycles, []);
 });
+
+import { classifyEntrypoint, orphans } from "../src/edge-graph.mjs";
+
+test("classifyEntrypoint: plain symbol is not an entrypoint", () => {
+  assert.equal(classifyEntrypoint("helper", "src/util.mjs", "function helper() {}").entrypoint, false);
+});
+
+test("classifyEntrypoint: export marker, bin/ path, test path, main name, go-cap", () => {
+  assert.equal(classifyEntrypoint("foo", "src/a.mjs", "export function foo() {}").entrypoint, true);
+  assert.equal(classifyEntrypoint("main", "bin/cli.mjs", "function main() {}").entrypoint, true);
+  assert.equal(classifyEntrypoint("h", "test/a.test.mjs", "function h(){}").entrypoint, true);
+  assert.equal(classifyEntrypoint("run", "src/a.mjs", "function run(){}").entrypoint, true);
+  assert.equal(classifyEntrypoint("Handler", "pkg/srv.go", "func Handler(){}").entrypoint, true);
+});
+
+test("orphans: unreferenced plain symbol is likely_dead; exported is entrypoint", () => {
+  // edges: live#a -> live#b (b is referenced). dead is defined but never a target.
+  const g = buildGraph([{ kind: "calls", conf: "resolved", from_path: "live.mjs", from_symbol: "a", to_path: "live.mjs", to_symbol: "b", candidates: [] }]);
+  const inv = [
+    { name: "a", path: "live.mjs", line_start: 1, line_end: 3, text: "function a(){ b(); }" },
+    { name: "b", path: "live.mjs", line_start: 5, line_end: 7, text: "function b(){}" },
+    { name: "dead", path: "util.mjs", line_start: 1, line_end: 2, text: "function dead(){}" },
+    { name: "api", path: "util.mjs", line_start: 4, line_end: 6, text: "export function api(){}" },
+  ];
+  const r = orphans(inv, g);
+  // b is referenced -> neither list. a and dead have no inbound. a is plain -> dead; dead plain -> dead; api exported -> entrypoint.
+  assert.deepEqual(r.likely_dead.map((d) => d.symbol).sort(), ["a", "dead"]);
+  assert.deepEqual(r.possible_entrypoint.map((d) => d.symbol), ["api"]);
+  assert.equal(r.likely_dead.find((d) => d.symbol === "dead").lines, "1-2");
+});
+
+test("orphans: includeAmbiguous suppresses flag when ambiguous inbound exists", () => {
+  const g = buildGraph([
+    { kind: "calls", conf: "ambiguous", from_path: "x.mjs", from_symbol: "c", to_path: null, to_symbol: null, ref_name: "maybe", candidates: ["util.mjs"] },
+  ], { includeAmbiguous: true });
+  const inv = [{ name: "maybe", path: "util.mjs", line_start: 1, line_end: 2, text: "function maybe(){}" }];
+  assert.deepEqual(orphans(inv, g, { includeAmbiguous: true }).likely_dead, []);
+});
