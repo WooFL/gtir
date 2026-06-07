@@ -66,7 +66,9 @@ test("edge ref_name round-trips through the store", async () => {
   } finally { rmSync(cfg._root, { recursive: true, force: true }); }
 });
 
-test("edge with missing ref_name loads as null (stale-index degrade)", async () => {
+test("edge upserted without ref_name coerces undefined -> '' -> null", async () => {
+  // Not a real schema-less old table — this exercises the toEdgeRow("") + fromEdgeRow(null) coercion
+  // that makes a missing ref_name degrade cleanly. A genuinely old table is handled by `gtir index --rebuild`.
   const cfg = tmpCfg();
   try {
     const store = await openStore(cfg);

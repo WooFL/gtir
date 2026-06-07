@@ -192,3 +192,29 @@ test("renderHtml: tooltip escapes user data (esc helper present)", () => {
   assert.ok(html.includes("&amp;") && html.includes("&lt;"));   // esc map literal embedded
   assert.ok(html.includes("esc(d.label)"));                      // label is escaped at render time
 });
+
+test("buildGraph: conf filter reaches the pipeline (whole-repo)", () => {
+  const rows = [
+    E({ from_symbol: "f", from_path: "a.ts", to_symbol: "g", to_path: "b.ts", conf: "resolved", ref_name: "g" }),
+    E({ from_symbol: "h", from_path: "a.ts", conf: "external", to_path: null, to_symbol: null, ref_name: "Error" }),
+  ];
+  const g = buildGraph(rows, { conf: ["external"] });
+  // only the external edge survives the filter
+  assert.equal(g.edges.length, 1);
+  assert.equal(g.edges[0].conf, "external");
+  assert.ok(g.nodes.some((n) => n.id === "ext:Error"));
+  assert.ok(!g.nodes.some((n) => n.id === "g\x00b.ts"));
+});
+
+test("buildGraph: focus + rollup compose (file nodes within the ego-graph)", () => {
+  const rows = [
+    E({ from_symbol: "f", from_path: "a.ts", to_symbol: "g", to_path: "b.ts", ref_name: "g" }),
+    E({ from_symbol: "g", from_path: "b.ts", to_symbol: "h", to_path: "c.ts", ref_name: "h" }),
+    E({ from_symbol: "z", from_path: "z.ts", to_symbol: "y", to_path: "y.ts", ref_name: "y" }), // disjoint
+  ];
+  const g = buildGraph(rows, { focus: "f", depth: 2, rollup: true });
+  // disjoint z/y excluded by focus; remaining symbol nodes collapsed to files
+  assert.ok(g.nodes.every((n) => !n.id.includes("\x00")));
+  assert.ok(g.nodes.some((n) => n.id === "a.ts"));
+  assert.ok(!g.nodes.some((n) => n.id === "z.ts" || n.id === "y.ts"));
+});

@@ -35,7 +35,8 @@
     "bin/",
     "src/",
     "grammars/",
-    "eval/"
+    "eval/",
+    "vendor/"
   ],
   "scripts": {
     "test": "node --test test/*.test.mjs",
