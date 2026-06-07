@@ -73,7 +73,10 @@ export async function runGraph({ repo, out = "gtir-graph.html", focus = null, de
   const d3Path = fileURLToPath(new URL("../vendor/d3.v7.min.js", import.meta.url));
   let d3Source;
   try { d3Source = readFileSync(d3Path, "utf8"); }
-  catch { throw new Error(`missing vendored d3 at ${d3Path} — reinstall gtir`); }
+  catch (e) {
+    if (e.code === "ENOENT") throw new Error(`missing vendored d3 at ${d3Path} — reinstall gtir`);
+    throw new Error(`cannot read vendored d3 at ${d3Path}: ${e.message}`);
+  }
 
   const html = renderHtml({ nodes: graph.nodes, edges: graph.edges, meta: { truncated: graph.truncated, dropped: graph.dropped } }, d3Source);
   writeFileSync(out, html);

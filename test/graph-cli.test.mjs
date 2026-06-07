@@ -13,29 +13,38 @@ const ROWS = [
 
 test("runGraph: writes a self-contained HTML file and returns counts", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "gtir-graph-"));
-  const out = path.join(dir, "g.html");
-  const r = await runGraph({ repo: dir, out, edgesImpl: async () => ROWS });
-  assert.equal(r.out, out);
-  assert.equal(r.nodes, 2);
-  assert.equal(r.edges, 1);
-  const html = readFileSync(out, "utf8");
-  assert.ok(html.includes("__GTIR_GRAPH__"));
-  assert.ok(!html.includes("<script src"));
-  rmSync(dir, { recursive: true, force: true });
+  try {
+    const out = path.join(dir, "g.html");
+    const r = await runGraph({ repo: dir, out, edgesImpl: async () => ROWS });
+    assert.equal(r.out, out);
+    assert.equal(r.nodes, 2);
+    assert.equal(r.edges, 1);
+    const html = readFileSync(out, "utf8");
+    assert.ok(html.includes("__GTIR_GRAPH__"));
+    assert.ok(!html.includes("<script src"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("runGraph: no edges throws a friendly error", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "gtir-graph-"));
-  await assert.rejects(
-    () => runGraph({ repo: dir, out: path.join(dir, "g.html"), edgesImpl: async () => [] }),
-    /no edge index/);
-  rmSync(dir, { recursive: true, force: true });
+  try {
+    await assert.rejects(
+      () => runGraph({ repo: dir, out: path.join(dir, "g.html"), edgesImpl: async () => [] }),
+      /no edge index/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("runGraph: focus with no match throws", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "gtir-graph-"));
-  await assert.rejects(
-    () => runGraph({ repo: dir, out: path.join(dir, "g.html"), focus: "nope", edgesImpl: async () => ROWS }),
-    /no symbol matching/);
-  rmSync(dir, { recursive: true, force: true });
+  try {
+    await assert.rejects(
+      () => runGraph({ repo: dir, out: path.join(dir, "g.html"), focus: "nope", edgesImpl: async () => ROWS }),
+      /no symbol matching/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
