@@ -216,7 +216,6 @@ export function buildGraph(edges, opts = {}) {
 }
 
 const CONF_COLOR = { resolved: "#3fb950", ambiguous: "#d29922", external: "#8b949e" };
-// Categorical palette for directory clusters (no d3 — fixed hex set; wraps past 20 clusters).
 const PALETTE = [
   "#58a6ff", "#bc8cff", "#3fb950", "#e3b341", "#f85149", "#39c5cf", "#db61a2", "#a371f7",
   "#7ee787", "#ff7b72", "#79c0ff", "#ffa657", "#d2a8ff", "#56d364", "#f0883e", "#1f6feb",
@@ -229,7 +228,8 @@ function safeJson(obj) {
 }
 
 export function renderHtml({ nodes, edges, meta = {} }, cosmosSource) {
-  const data = safeJson({ nodes, edges, meta });
+  const ci = clusterIndex(nodes);
+  const data = safeJson({ nodes, edges, meta, ci });
   const conf = safeJson(CONF_COLOR);
   const pal = safeJson(PALETTE);
   const cosmosSafe = String(cosmosSource).replace(/<\/script>/gi, "<\\/script>");
@@ -239,6 +239,7 @@ export function renderHtml({ nodes, edges, meta = {} }, cosmosSource) {
 <style>
   html,body{margin:0;height:100%;overflow:hidden;background:#0d1117;color:#c9d1d9;font:12px system-ui,sans-serif}
   #cv{position:fixed;inset:0;width:100vw;height:100vh}
+  #lblcv{position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:5}
   #panel{position:fixed;top:8px;left:8px;z-index:10;background:#161b22e6;border:1px solid #30363d;border-radius:6px;padding:10px 12px;max-width:240px;max-height:94vh;overflow:auto}
   #panel h1{font-size:13px;margin:0 0 8px}
   #panel label{display:block;margin:2px 0}
@@ -250,7 +251,6 @@ export function renderHtml({ nodes, edges, meta = {} }, cosmosSource) {
   #counts{margin-top:8px;color:#8b949e}
   #info{position:fixed;bottom:8px;left:8px;z-index:10;background:#161b22e6;border:1px solid #30363d;border-radius:6px;padding:8px 10px;max-width:340px;display:none}
   #msg{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:20;color:#f85149;font-size:16px}
-  #lblcv{position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:5}
   button{background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:3px 8px;cursor:pointer}
 </style></head>
 <body>
@@ -285,26 +285,25 @@ ${cosmosSafe}
 <script>
 window.__GTIR_GRAPH__ = ${data};
 const CONF = ${conf}, PAL = ${pal};
-const { nodes: ALLN, edges: ALLE, meta } = window.__GTIR_GRAPH__;
+const { nodes: NODES, edges: EDGES, meta, ci } = window.__GTIR_GRAPH__;
+const { clusters, clusterOfNode, clusterXY, cell } = ci;
 const esc = s => String(s).replace(/[&<>'"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[c]));
 const $ = id => document.getElementById(id);
+const hexRGB = h => { const n = parseInt(h.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
+const hexA = (h, a) => { const c = hexRGB(h); return "rgba(" + c[0] + "," + c[1] + "," + c[2] + "," + a + ")"; };
+const shortName = n => (n.label.includes(" · ") ? n.label.split(" · ")[0] : (n.label.split(/[\\/]/).pop() || n.label));
 
-const clusters = [...new Set(ALLN.map(n => n.cluster))];
-const clusterColor = new Map(clusters.map((c, i) =>
-  [c, c === "external" ? CONF.external : c === "ambiguous" ? CONF.ambiguous : PAL[i % PAL.length]]));
-// Size ∝ sqrt(degree) but capped so a few mega-hubs don't swallow the canvas.
-ALLN.forEach(n => { n.color = clusterColor.get(n.cluster); n.size = 3 + Math.min(12, Math.sqrt(n.degree || 0)); });
-ALLE.forEach(e => { e.color = CONF[e.conf] || "#666"; e.width = Math.min(4, e.count || 1); });
+const clusterHex = clusters.map((c, i) => c === "external" ? CONF.external : c === "ambiguous" ? CONF.ambiguous : PAL[i % PAL.length]);
+const clusterRGB = clusterHex.map(hexRGB);
+const confRGB = { resolved: hexRGB(CONF.resolved), ambiguous: hexRGB(CONF.ambiguous), external: hexRGB(CONF.external) };
+const clusterPosFlat = []; clusterXY.forEach(p => { clusterPosFlat.push(p[0], p[1]); });
 
-// Seed each node in its cluster's grid cell, sized to fill the layout space. With near-zero link
-// spring (below), the GPU force preserves this grid — clusters stay as separated territories
-// instead of collapsing into one ball.
-const SPACE = 16384;
-const cols = Math.max(1, Math.ceil(Math.sqrt(clusters.length)));
-const CELL = Math.floor(SPACE / (cols + 1));
-const cIdx = new Map(clusters.map((c, i) => [c, i]));
-const jit = () => Math.random() * CELL * 0.5 - CELL * 0.25;
-ALLN.forEach(n => { const i = cIdx.get(n.cluster); n.x = ((i % cols) + 0.5) * CELL + jit(); n.y = (Math.floor(i / cols) + 0.5) * CELL + jit(); });
+const idToIdx = new Map(NODES.map((n, i) => [n.id, i]));
+NODES.forEach(n => { n._size = 3 + Math.min(12, Math.sqrt(n.degree || 0)); });
+
+const lcv = $("lblcv"), lctx = lcv.getContext("2d");
+function sizeLabelCanvas() { const dpr = window.devicePixelRatio || 1; lcv.width = innerWidth * dpr; lcv.height = innerHeight * dpr; lctx.setTransform(dpr, 0, 0, dpr, 0, 0); }
+sizeLabelCanvas(); addEventListener("resize", sizeLabelCanvas);
 
 function showInfo(n) {
   const refs = (n.refs || []).map(r => esc(r.path) + ":" + r.line).join("<br>");
@@ -314,163 +313,163 @@ function showInfo(n) {
 }
 function hideInfo() { $("info").style.display = "none"; }
 
-// Layout forces. With tens of thousands of edges, link springs pull everything into a ball — so:
-// big space, strong repulsion, long+soft links, low gravity. The spacing slider scales
-// linkDistance + repulsion together at runtime via setConfig.
-// Cluster-preserving forces: near-zero link spring (links stop dragging packages into one ball),
-// strong repulsion (spreads within a cluster + pushes clusters apart), low gravity, low decay so
-// it cools to rest near the seeded grid. The spacing slider scales repulsion + linkDistance live.
-const SIM = { gravity: 0.02, repulsion: 1.6, repulsionTheta: 1.2, linkSpring: 0.05, linkDistance: 30, friction: 0.9, decay: 2500 };
-
-const shortName = n => (n.label.includes(" · ") ? n.label.split(" · ")[0] : (n.label.split(/[\\/]/).pop() || n.label));
-const hexA = (h, a) => { const n = parseInt(h.slice(1), 16); return "rgba(" + ((n >> 16) & 255) + "," + ((n >> 8) & 255) + "," + (n & 255) + "," + a + ")"; };
-
-// Hub labels (top-N by degree) — adjustable count. cosmos renders GPU points (no native text),
-// so labels + cluster "islands" are drawn on a 2D canvas LAYER over the graph, redrawn every frame
-// from live node positions so they stay frame-locked (no DOM drift) and read as one scene.
-let LABELN = [], labelText = new Map();
-function rebuildLabels(count) {
-  LABELN = [...ALLN].sort((a, b) => (b.degree || 0) - (a.degree || 0)).slice(0, count);
-  labelText = new Map(LABELN.map(n => [n.id, shortName(n)]));
-  if (graph) graph.trackNodePositionsByIds(LABELN.map(n => n.id));
-}
-let showIslands = true;
-const lcv = $("lblcv"), lctx = lcv.getContext("2d");
-function sizeLabelCanvas() {
-  const dpr = window.devicePixelRatio || 1;
-  lcv.width = window.innerWidth * dpr; lcv.height = window.innerHeight * dpr;
-  lctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-}
-sizeLabelCanvas();
-window.addEventListener("resize", sizeLabelCanvas);
-
-// Island geometry (per-cluster centroid + radius in graph space) is recomputed every ~12 frames
-// from all visible node positions; each frame we just convert the ≤N centroids to screen + draw.
-let islandGeo = [], frame = 0;
-function computeIslands(pos) {
-  const buck = new Map();   // cluster -> { x,y sums, n, xs[], ys[] } in space coords (visible nodes only)
-  ALLN.forEach(n => {
-    const p = pos.get(n.id); if (!p) return;
-    let a = buck.get(n.cluster);
-    if (!a) { a = { x: 0, y: 0, n: 0, xs: [], ys: [] }; buck.set(n.cluster, a); }
-    a.x += p[0]; a.y += p[1]; a.n++; a.xs.push(p[0]); a.ys.push(p[1]);
-  });
-  islandGeo = [];
-  buck.forEach((a, name) => {
-    if (a.n < 3) return;                                  // skip noise clusters
-    const cx = a.x / a.n, cy = a.y / a.n;
-    const ds = [];
-    for (let i = 0; i < a.n; i++) { const dx = a.xs[i] - cx, dy = a.ys[i] - cy; ds.push(Math.sqrt(dx * dx + dy * dy)); }
-    ds.sort((u, v) => u - v);
-    const r = ds[Math.floor(a.n * 0.7)] * 1.25 + 10;      // robust radius (70th pct) — not the max outlier
-    islandGeo.push({ cx, cy, r, name, color: clusterColor.get(name) || "#888" });
-  });
-}
-function draw() {
-  lctx.clearRect(0, 0, lcv.width, lcv.height);
-  if (!graph) return;
-  frame++;
-  if (showIslands) {
-    if (frame % 12 === 1) computeIslands(graph.getNodePositionsMap());
-    lctx.textAlign = "center"; lctx.textBaseline = "middle"; lctx.font = "11px system-ui,sans-serif";
-    for (const g of islandGeo) {
-      // Derive the screen radius from two POSITION conversions (center, center+r) so it scales
-      // exactly like the nodes at any zoom — spaceToScreenRadius drifts from spaceToScreenPosition.
-      const [sx, sy] = graph.spaceToScreenPosition([g.cx, g.cy]);
-      const [ex, ey] = graph.spaceToScreenPosition([g.cx + g.r, g.cy]);
-      const sr = Math.hypot(ex - sx, ey - sy);
-      lctx.fillStyle = hexA(g.color, 0.10); lctx.beginPath(); lctx.arc(sx, sy, sr, 0, 6.2832); lctx.fill();
-      lctx.fillStyle = "rgba(230,237,243,0.22)"; lctx.fillText(g.name, sx, sy);
-    }
-    lctx.textAlign = "left";
-  }
-  if (labelText.size) {
-    const lp = graph.getTrackedNodePositionsMap();
-    lctx.font = "10px system-ui,sans-serif"; lctx.textBaseline = "middle";
-    lctx.lineWidth = 3; lctx.strokeStyle = "rgba(0,0,0,0.85)"; lctx.fillStyle = "#e6edf3";
-    labelText.forEach((txt, id) => {
-      const p = lp.get(id); if (!p) return;
-      const [sx, sy] = graph.spaceToScreenPosition(p);
-      lctx.strokeText(txt, sx + 7, sy); lctx.fillText(txt, sx + 7, sy);
-    });
-  }
-}
-
 let graph = null, paused = false;
+let curVisIdx = [], curLocal = new Int32Array(NODES.length).fill(-1);
+let labelMap = new Map(), showIslands = true, islandR = new Map(), frame = 0;
+
 try {
   graph = new window.cosmos.Graph($("cv"), {
-    spaceSize: SPACE,
+    spaceSize: 16384,
     backgroundColor: "#0d1117",
-    nodeColor: n => n.color,
-    nodeSize: n => n.size,
-    renderLinks: true,
-    linkColor: l => l.color,
-    linkWidth: l => l.width,
+    simulationGravity: 0.1,
+    simulationRepulsion: 1.0,
+    simulationRepulsionTheta: 1.15,
+    simulationCluster: 0.5,
+    simulationLinkSpring: 0.1,
+    simulationLinkDistance: 20,
+    simulationFriction: 0.9,
+    simulationDecay: 3000,
     scaleNodesOnZoom: true,
-    fitViewOnInit: true,
-    simulation: SIM,
-    events: {
-      onClick: (n) => { if (n) { graph.selectNodeById(n.id, true); showInfo(n); } else { graph.unselectNodes(); hideInfo(); } },
-      onNodeMouseOver: (n) => { if (n) showInfo(n); },
+    onClick: (index) => {
+      if (index != null) { graph.selectPointByIndex(index, true); const n = NODES[curVisIdx[index]]; if (n) showInfo(n); }
+      else { graph.unselectPoints(); hideInfo(); }
     },
   });
 } catch (err) {
   $("msg").style.display = "flex";
   $("msg").textContent = "WebGL is required to view this graph.";
 }
-// Redraw islands + labels every frame so they track nodes during sim, drag, and inertial pan/zoom.
-(function loop() { draw(); requestAnimationFrame(loop); })();
+
+function rebuildLabelMap(count) {
+  labelMap = new Map();
+  const order = [...curVisIdx].sort((a, b) => (NODES[b].degree || 0) - (NODES[a].degree || 0)).slice(0, count);
+  for (const gi of order) { const li = curLocal[gi]; if (li >= 0) labelMap.set(li, shortName(NODES[gi])); }
+  if (graph) graph.trackPointPositionsByIndices([...labelMap.keys()]);
+}
 
 function recompute() {
   const minDeg = +$("minDeg").value;
   const kinds = new Set([...document.querySelectorAll(".k:checked")].map(x => x.value));
   const confs = new Set([...document.querySelectorAll(".cf:checked")].map(x => x.value));
-  const passN = ALLN.filter(n => (n.degree || 0) >= minDeg);
-  const idset = new Set(passN.map(n => n.id));
-  const vE = ALLE.filter(e => kinds.has(e.kind) && confs.has(e.conf) && idset.has(e.source) && idset.has(e.target));
-  const used = new Set(); vE.forEach(e => { used.add(e.source); used.add(e.target); });
-  const vN = passN.filter(n => used.has(n.id));
-  if (graph) {
-    graph.setData(vN, vE); graph.start(0.3);
-    graph.trackNodePositionsByIds(LABELN.map(n => n.id));   // re-track hubs against the new data
+  const pass = new Uint8Array(NODES.length);
+  for (let i = 0; i < NODES.length; i++) pass[i] = (NODES[i].degree || 0) >= minDeg ? 1 : 0;
+  const vE = [];
+  for (const e of EDGES) {
+    if (!kinds.has(e.kind) || !confs.has(e.conf)) continue;
+    const s = idToIdx.get(e.source), t = idToIdx.get(e.target);
+    if (s == null || t == null || !pass[s] || !pass[t]) continue;
+    vE.push([s, t, e]);
   }
-  $("counts").textContent = vN.length + " nodes · " + vE.length + " edges" + (meta && meta.truncated ? " · dropped " + meta.dropped : "");
+  const used = new Uint8Array(NODES.length); for (const x of vE) { used[x[0]] = 1; used[x[1]] = 1; }
+  const local = new Int32Array(NODES.length).fill(-1); const visIdx = [];
+  for (let i = 0; i < NODES.length; i++) if (used[i]) { local[i] = visIdx.length; visIdx.push(i); }
+  const N = visIdx.length, L = vE.length;
+  const pos = new Float32Array(N * 2), col = new Float32Array(N * 4), siz = new Float32Array(N), clu = new Array(N);
+  for (let k = 0; k < N; k++) {
+    const i = visIdx[k], cc = clusterOfNode[i], xy = clusterXY[cc], rgb = clusterRGB[cc];
+    pos[k * 2] = xy[0] + (Math.random() * cell * 0.5 - cell * 0.25);
+    pos[k * 2 + 1] = xy[1] + (Math.random() * cell * 0.5 - cell * 0.25);
+    col[k * 4] = rgb[0]; col[k * 4 + 1] = rgb[1]; col[k * 4 + 2] = rgb[2]; col[k * 4 + 3] = 1;
+    siz[k] = NODES[i]._size; clu[k] = cc;
+  }
+  const lnk = new Float32Array(L * 2), lcol = new Float32Array(L * 4), lwid = new Float32Array(L);
+  for (let k = 0; k < L; k++) {
+    const s = vE[k][0], t = vE[k][1], e = vE[k][2], rgb = confRGB[e.conf] || [120, 120, 120];
+    const intra = clusterOfNode[s] === clusterOfNode[t];
+    lnk[k * 2] = local[s]; lnk[k * 2 + 1] = local[t];
+    lcol[k * 4] = rgb[0]; lcol[k * 4 + 1] = rgb[1]; lcol[k * 4 + 2] = rgb[2]; lcol[k * 4 + 3] = intra ? 0.7 : 0.12;
+    lwid[k] = intra ? Math.min(4, e.count || 1) : 0.5;
+  }
+  if (graph) {
+    graph.setPointPositions(pos); graph.setPointColors(col); graph.setPointSizes(siz);
+    graph.setPointClusters(clu); graph.setClusterPositions(clusterPosFlat);
+    graph.setLinks(lnk); graph.setLinkColors(lcol); graph.setLinkWidths(lwid);
+    graph.render(0.9);
+  }
+  curVisIdx = visIdx; curLocal = local;
+  rebuildLabelMap(+$("lblN").value);
+  $("counts").textContent = N + " nodes · " + L + " edges" + (meta && meta.truncated ? " · dropped " + meta.dropped : "");
 }
 
-const ccount = {}; ALLN.forEach(n => { ccount[n.cluster] = (ccount[n.cluster] || 0) + 1; });
+function computeIslandRadii() {
+  if (!graph) return;
+  const pp = graph.getPointPositions();
+  const byC = new Map();
+  for (let li = 0; li < curVisIdx.length; li++) {
+    const cc = clusterOfNode[curVisIdx[li]];
+    let a = byC.get(cc); if (!a) { a = []; byC.set(cc, a); }
+    a.push(pp[li * 2], pp[li * 2 + 1]);
+  }
+  islandR = new Map();
+  byC.forEach((xy, cc) => {
+    const n = xy.length / 2; if (n < 3) return;
+    const c = clusterXY[cc]; const ds = [];
+    for (let i = 0; i < xy.length; i += 2) { const dx = xy[i] - c[0], dy = xy[i + 1] - c[1]; ds.push(Math.sqrt(dx * dx + dy * dy)); }
+    ds.sort((u, v) => u - v);
+    islandR.set(cc, Math.max(ds[Math.floor(n * 0.7)] * 1.2 + 10, cell * 0.12));
+  });
+}
+
+function draw() {
+  lctx.clearRect(0, 0, lcv.width, lcv.height);
+  if (!graph) return;
+  frame++;
+  if (showIslands) {
+    if (frame % 12 === 1) computeIslandRadii();
+    lctx.textAlign = "center"; lctx.textBaseline = "middle"; lctx.font = "11px system-ui,sans-serif";
+    islandR.forEach((r, cc) => {
+      const c = clusterXY[cc];
+      const a = graph.spaceToScreenPosition([c[0], c[1]]);
+      const b = graph.spaceToScreenPosition([c[0] + r, c[1]]);
+      const sr = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      lctx.fillStyle = hexA(clusterHex[cc], 0.10); lctx.beginPath(); lctx.arc(a[0], a[1], sr, 0, 6.2832); lctx.fill();
+      lctx.fillStyle = "rgba(230,237,243,0.25)"; lctx.fillText(clusters[cc], a[0], a[1]);
+    });
+    lctx.textAlign = "left";
+  }
+  if (labelMap.size) {
+    const lp = graph.getTrackedPointPositionsMap();
+    lctx.font = "10px system-ui,sans-serif"; lctx.textBaseline = "middle";
+    lctx.lineWidth = 3; lctx.strokeStyle = "rgba(0,0,0,0.85)"; lctx.fillStyle = "#e6edf3";
+    labelMap.forEach((txt, li) => {
+      const p = lp.get(li); if (!p) return;
+      const s = graph.spaceToScreenPosition(p);
+      lctx.strokeText(txt, s[0] + 7, s[1]); lctx.fillText(txt, s[0] + 7, s[1]);
+    });
+  }
+}
+(function loop() { draw(); requestAnimationFrame(loop); })();
+
+const ccount = {}; NODES.forEach(n => { ccount[n.cluster] = (ccount[n.cluster] || 0) + 1; });
 const topC = Object.entries(ccount).sort((a, b) => b[1] - a[1]).slice(0, 16);
-$("legend").innerHTML = topC.map(([c]) => "<div class='lg' data-c='" + esc(c) + "'><span class='sw' style='background:" + clusterColor.get(c) + "'></span>" + esc(c) + "</div>").join("");
+$("legend").innerHTML = topC.map(([c]) => "<div class='lg' data-c='" + esc(c) + "'><span class='sw' style='background:" + clusterHex[clusters.indexOf(c)] + "'></span>" + esc(c) + "</div>").join("");
 $("legend").querySelectorAll(".lg").forEach(el => el.addEventListener("click", () => {
-  const c = el.getAttribute("data-c");
-  const ids = ALLN.filter(n => n.cluster === c).map(n => n.id);
-  if (graph && ids.length) { graph.selectNodesByIds(ids); graph.fitViewByNodeIds(ids); }
+  const c = el.getAttribute("data-c"); const idxs = [];
+  for (let li = 0; li < curVisIdx.length; li++) if (NODES[curVisIdx[li]].cluster === c) idxs.push(li);
+  if (graph && idxs.length) graph.selectPointsByIndices(idxs);
 }));
 
-$("minDeg").max = String(Math.max(1, ...ALLN.map(n => n.degree || 0)));
+$("minDeg").max = String(Math.max(1, ...NODES.map(n => n.degree || 0)));
 $("minDeg").addEventListener("input", () => { $("minDegV").textContent = $("minDeg").value; recompute(); });
-$("space").addEventListener("input", () => {
-  const d = +$("space").value;
-  $("spaceV").textContent = d;
-  SIM.linkDistance = d; SIM.repulsion = Math.max(1.5, d / 10);
-  if (graph) { graph.setConfig({ simulation: SIM }); graph.start(0.5); }
-});
-$("lblN").addEventListener("input", () => { $("lblNV").textContent = $("lblN").value; rebuildLabels(+$("lblN").value); });
+$("lblN").addEventListener("input", () => { $("lblNV").textContent = $("lblN").value; rebuildLabelMap(+$("lblN").value); });
 $("isles").addEventListener("change", () => { showIslands = $("isles").checked; });
+$("space").addEventListener("input", () => {
+  const d = +$("space").value; $("spaceV").textContent = d;
+  if (graph) { graph.setConfig({ simulationRepulsion: Math.max(0.5, d / 30), simulationCluster: Math.min(1, d / 40) }); graph.start(0.5); }
+});
 document.querySelectorAll(".k,.cf").forEach(el => el.addEventListener("change", recompute));
 $("search").addEventListener("input", () => {
   const q = $("search").value.toLowerCase();
-  if (!q) { if (graph) graph.unselectNodes(); hideInfo(); return; }
-  const hit = ALLN.find(n => n.label.toLowerCase().includes(q));
-  if (hit && graph) { graph.selectNodeById(hit.id, true); graph.fitViewByNodeIds([hit.id]); showInfo(hit); }
+  if (!q) { if (graph) graph.unselectPoints(); hideInfo(); return; }
+  const gi = NODES.findIndex(n => n.label.toLowerCase().includes(q));
+  if (gi >= 0) { const li = curLocal[gi]; if (li >= 0 && graph) { graph.selectPointByIndex(li, true); graph.zoomToPointByIndex(li); showInfo(NODES[gi]); } }
 });
 $("pause").addEventListener("click", () => {
-  if (!graph) return;
-  paused = !paused;
+  if (!graph) return; paused = !paused;
   if (paused) { graph.pause(); $("pause").textContent = "▶ resume"; } else { graph.restart(); $("pause").textContent = "⏸ pause"; }
 });
 
-rebuildLabels(30);
-if (graph) recompute();
+if (graph) { recompute(); setTimeout(() => graph.fitView(500), 200); }
 </script>
 </body></html>`;
 }

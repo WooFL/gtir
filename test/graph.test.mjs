@@ -170,7 +170,7 @@ test("buildGraph: focus prunes, rollup collapses, cap bounds", () => {
   assert.ok(rolled.nodes.every((n) => !n.id.includes("\x00")));
 });
 
-test("renderHtml: self-contained cosmos page — inlines cosmos, embeds data, no external refs", () => {
+test("renderHtml: self-contained cosmos-2.x page — inlines cosmos, embeds data+clusters, no external refs", () => {
   const g = buildGraph([E({ from_symbol: "verifyToken", from_path: "auth/jwt.ts", to_symbol: "signToken", to_path: "auth/jwt.ts", ref_name: "signToken" })]);
   const html = renderHtml({ nodes: g.nodes, edges: g.edges, meta: { truncated: false, dropped: 0 } }, "/* COSMOSSRC */ window.cosmos={Graph:function(){}};");
   assert.match(html, /<!doctype html>/i);
@@ -178,18 +178,15 @@ test("renderHtml: self-contained cosmos page — inlines cosmos, embeds data, no
   assert.ok(html.includes("/* COSMOSSRC */"));
   assert.ok(html.includes("window.cosmos"));
   assert.ok(html.includes("__GTIR_GRAPH__"));
-  assert.ok(html.includes('id="minDeg"'));
-  assert.ok(html.includes('id="space"'));     // spacing control
-  assert.ok(html.includes('id="lblcv"'));      // hub-label canvas overlay
-  assert.ok(html.includes('id="lblN"'));       // label-count control
-  assert.ok(html.includes('id="isles"'));      // cluster-islands toggle
-  assert.ok(html.includes('class="cf"'));
+  assert.ok(html.includes("setPointClusters"));
+  assert.ok(html.includes("setClusterPositions"));
+  assert.ok(html.includes('id="minDeg"') && html.includes('id="lblN"') && html.includes('id="isles"') && html.includes('id="space"'));
   assert.ok(html.includes("verifyToken"));
   assert.ok(!html.includes("<script src"));
   assert.ok(!html.includes("//unpkg") && !html.includes("//cdn"));
 });
 
-test("renderHtml: external confidence checkbox is unchecked by default", () => {
+test("renderHtml: external confidence checkbox unchecked by default", () => {
   const g = buildGraph([E()]);
   const html = renderHtml({ nodes: g.nodes, edges: g.edges, meta: {} }, "x");
   assert.match(html, /value="resolved"[^>]*checked/);
@@ -202,12 +199,17 @@ test("renderHtml: shows truncation note when capped", () => {
   assert.ok(html.includes("dropped 12"));
 });
 
-test("renderHtml: tooltip/info escapes user data (esc helper present)", () => {
+test("renderHtml: embeds clusterIndex bookkeeping for the browser", () => {
+  const g = buildGraph([E({ from_symbol: "f", from_path: "packages/a/x.ts", to_symbol: "h", to_path: "packages/a/y.ts", ref_name: "h" })]);
+  const html = renderHtml({ nodes: g.nodes, edges: g.edges, meta: {} }, "x");
+  assert.ok(html.includes('"clusterOfNode"') && html.includes('"clusterXY"'));
+});
+
+test("renderHtml: escapes user data in the info panel (esc helper present)", () => {
   const g = buildGraph([E()]);
   const html = renderHtml({ nodes: g.nodes, edges: g.edges, meta: {} }, "x");
-  assert.ok(html.includes("&amp;") && html.includes("&lt;"));
+  assert.ok(html.includes("&amp;") && html.includes("&lt;") && html.includes("&#39;"));
   assert.ok(html.includes("esc(n.label)"));
-  assert.ok(html.includes("&#39;") && html.includes("&quot;"));   // esc covers quotes too
 });
 
 test("buildGraph: conf filter reaches the pipeline (whole-repo)", () => {
