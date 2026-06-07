@@ -27,7 +27,9 @@ const DENY_METHODS = new Set([
 // Promote ambiguous `calls` rows to conf:"inferred" when embedding similarity confidently picks one
 // candidate. Pure — returns a NEW array; non-calls / non-ambiguous rows pass through unchanged.
 // ctx: { symbolIndex: Map(name → [{path,line_start,line_end,embedding,content_hash}]),
-//        callSiteVec: Map(content_hash → embedding), threshold = 0.55, margin = 0.05 }
+//        callSiteVec: Map(content_hash → embedding),
+//        importMap: Map(from_path → Set(imported file stems)) — eligibility pre-filter (optional),
+//        threshold = 0.55, margin = 0.05 }
 export function disambiguateEdges(rows, { symbolIndex, callSiteVec, importMap, threshold = 0.55, margin = 0.05 } = {}) {
   return rows.map((r) => {
     if (r.kind !== "calls" || r.conf !== "ambiguous") return r;
