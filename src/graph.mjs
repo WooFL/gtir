@@ -163,6 +163,119 @@ export function buildGraph(edges, opts = {}) {
   return { nodes: g.nodes, edges: g.edges, truncated, dropped };
 }
 
+const CONF_COLOR = { resolved: "#3fb950", ambiguous: "#d29922", external: "#8b949e" };
+const CLS_COLOR = { code: "#58a6ff", note: "#bc8cff", external: "#8b949e", ambiguous: "#d29922" };
+
+// JSON for embedding in a <script> — escape `<` so a "</script>" inside any string can't close the tag.
+function safeJson(obj) {
+  return JSON.stringify(obj).replace(/</g, "\\u003c");
+}
+
+export function renderHtml({ nodes, edges, meta = {} }, d3Source) {
+  const data = safeJson({ nodes, edges });
+  const colors = safeJson({ conf: CONF_COLOR, cls: CLS_COLOR });
+  const trunc = meta.truncated ? `truncated: dropped ${meta.dropped}` : "";
+  return `<!doctype html>
+<html><head><meta charset="utf-8"><title>gtir graph</title>
+<style>
+  html,body{margin:0;height:100%;background:#0d1117;color:#c9d1d9;font:13px system-ui,sans-serif}
+  #chrome{position:fixed;top:8px;left:8px;z-index:10;background:#161b22cc;border:1px solid #30363d;border-radius:6px;padding:8px 10px;max-width:240px}
+  #chrome h1{font-size:13px;margin:0 0 6px}
+  #search{width:100%;box-sizing:border-box;background:#0d1117;border:1px solid #30363d;color:#c9d1d9;border-radius:4px;padding:4px}
+  .legend{margin-top:8px;line-height:1.6}
+  .sw{display:inline-block;width:22px;height:0;border-top-width:3px;border-top-style:solid;vertical-align:middle;margin-right:6px}
+  .dot{display:inline-block;width:10px;height:10px;border-radius:50%;vertical-align:middle;margin-right:6px}
+  #trunc{color:#d29922;margin-top:6px}
+  #tip{position:fixed;z-index:20;pointer-events:none;background:#161b22;border:1px solid #30363d;border-radius:4px;padding:6px 8px;display:none;max-width:340px}
+  svg{width:100vw;height:100vh;display:block}
+  text{fill:#8b949e;font-size:10px;pointer-events:none}
+  .node circle{cursor:pointer}
+  .dim{opacity:0.12}
+</style></head>
+<body>
+<div id="chrome">
+  <h1>gtir graph</h1>
+  <input id="search" placeholder="find node…" autocomplete="off">
+  <div class="legend">
+    <div><span class="sw" style="border-top-color:${CONF_COLOR.resolved}"></span>resolved</div>
+    <div><span class="sw" style="border-top-color:${CONF_COLOR.ambiguous}"></span>ambiguous</div>
+    <div><span class="sw" style="border-top-color:${CONF_COLOR.external}"></span>external</div>
+    <div style="margin-top:4px"><span class="sw" style="border-top-color:#8b949e"></span>calls — / imports ┄ / links ··</div>
+    <div style="margin-top:4px"><span class="dot" style="background:${CLS_COLOR.code}"></span>code <span class="dot" style="background:${CLS_COLOR.note};margin-left:8px"></span>note</div>
+  </div>
+  <div id="trunc">${trunc}</div>
+</div>
+<div id="tip"></div>
+<svg></svg>
+<script>${d3Source}</script>
+<script>
+window.__GTIR_GRAPH__ = ${data};
+const COLORS = ${colors};
+const { nodes, edges } = window.__GTIR_GRAPH__;
+const links = edges.map(e => ({ ...e }));
+const dash = k => k === "imports" ? "6,4" : (k === "links" || k === "embeds") ? "1,4" : null;
+
+const svg = d3.select("svg");
+const g = svg.append("g");
+svg.call(d3.zoom().scaleExtent([0.1, 4]).on("zoom", ev => g.attr("transform", ev.transform)));
+
+const link = g.append("g").attr("stroke-opacity", 0.7).selectAll("line").data(links).join("line")
+  .attr("stroke", d => COLORS.conf[d.conf]).attr("stroke-width", d => Math.min(6, (d.count || 1)))
+  .attr("stroke-dasharray", d => dash(d.kind));
+
+const node = g.append("g").attr("class", "node").selectAll("g").data(nodes).join("g");
+node.append("circle").attr("r", 6).attr("fill", d => COLORS.cls[d.cls])
+  .attr("stroke", "#0d1117").attr("stroke-width", 1.5);
+node.append("text").attr("x", 9).attr("y", 3).text(d => d.label);
+
+const sim = d3.forceSimulation(nodes)
+  .force("link", d3.forceLink(links).id(d => d.id).distance(70))
+  .force("charge", d3.forceManyBody().strength(-180))
+  .force("center", d3.forceCenter(window.innerWidth / 2, window.innerHeight / 2))
+  .on("tick", () => {
+    link.attr("x1", d => d.source.x).attr("y1", d => d.source.y).attr("x2", d => d.target.x).attr("y2", d => d.target.y);
+    node.attr("transform", d => \`translate(\${d.x},\${d.y})\`);
+  });
+
+node.call(d3.drag()
+  .on("start", (ev, d) => { if (!ev.active) sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+  .on("drag", (ev, d) => { d.fx = ev.x; d.fy = ev.y; })
+  .on("end", (ev, d) => { if (!ev.active) sim.alphaTarget(0); }));
+
+const tip = document.getElementById("tip");
+function show(html, ev) { tip.innerHTML = html; tip.style.display = "block"; tip.style.left = (ev.clientX + 12) + "px"; tip.style.top = (ev.clientY + 12) + "px"; }
+function hide() { tip.style.display = "none"; }
+node.on("mousemove", (ev, d) => {
+  const refs = (d.refs || []).map(r => \`\${r.path}:\${r.line}\`).join("<br>");
+  const cand = (d.candidates || []).length ? "<br><i>candidates:</i><br>" + d.candidates.join("<br>") : "";
+  show(\`<b>\${d.label}</b><br><span style="color:#8b949e">\${d.cls}</span><br>\${refs}\${cand}\`, ev);
+}).on("mouseleave", hide);
+link.on("mousemove", (ev, d) => show(\`\${d.kind} · <span style="color:\${COLORS.conf[d.conf]}">\${d.conf}</span>\`, ev)).on("mouseleave", hide);
+
+const nb = new Map(nodes.map(n => [n.id, new Set([n.id])]));
+edges.forEach(e => { nb.get(e.source).add(e.target); nb.get(e.target).add(e.source); });
+let active = null;
+node.on("click", (ev, d) => {
+  ev.stopPropagation();
+  active = active === d.id ? null : d.id;
+  const keep = active ? nb.get(active) : null;
+  node.classed("dim", n => keep && !keep.has(n.id));
+  link.classed("dim", l => keep && !(keep.has(l.source.id) && keep.has(l.target.id)));
+});
+svg.on("click", () => { active = null; node.classed("dim", false); link.classed("dim", false); });
+
+document.getElementById("search").addEventListener("input", e => {
+  const q = e.target.value.toLowerCase();
+  node.classed("dim", n => q && !n.label.toLowerCase().includes(q));
+  if (q) { const hit = nodes.find(n => n.label.toLowerCase().includes(q)); if (hit && hit.x != null) {
+    const t = d3.zoomIdentity.translate(window.innerWidth/2 - hit.x, window.innerHeight/2 - hit.y);
+    svg.transition().duration(400).call(d3.zoom().on("zoom", ev => g.attr("transform", ev.transform)).transform, t);
+  } }
+});
+</script>
+</body></html>`;
+}
+
 // Map raw edge rows → { nodes: [...], edges: [...] }. Nodes are de-duped by id; each
 // accumulates its source refs (for tooltips) and any candidate paths (ambiguous/external).
 export function mapEdges(rows) {

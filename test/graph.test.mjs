@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mapEdges, applyFilters, egoGraph, capByDegree, rollupToFiles, buildGraph, worstConf } from "../src/graph.mjs";
+import { mapEdges, applyFilters, egoGraph, capByDegree, rollupToFiles, buildGraph, worstConf, renderHtml } from "../src/graph.mjs";
 
 // Edge factory matching the store.loadEdges() row shape.
 const E = (o = {}) => ({
@@ -168,4 +168,20 @@ test("buildGraph: focus prunes, rollup collapses, cap bounds", () => {
   assert.ok(!focused.nodes.some((n) => n.id.includes("z.ts")));
   const rolled = buildGraph(rows, { rollup: true });
   assert.ok(rolled.nodes.every((n) => !n.id.includes("\x00")));
+});
+
+test("renderHtml: self-contained — inlines d3, embeds data, no external refs", () => {
+  const g = buildGraph([E({ from_symbol: "verifyToken", from_path: "auth/jwt.ts", to_symbol: "signToken", to_path: "auth/jwt.ts", ref_name: "signToken" })]);
+  const html = renderHtml({ nodes: g.nodes, edges: g.edges, meta: { truncated: false, dropped: 0 } }, "/* D3SRC */ var d3={};");
+  assert.match(html, /<!doctype html>/i);
+  assert.ok(html.includes("/* D3SRC */"));            // inlined d3 present
+  assert.ok(html.includes("__GTIR_GRAPH__"));          // data hook present
+  assert.ok(html.includes("verifyToken"));             // a node label present
+  assert.ok(!html.includes("<script src"));            // nothing fetched
+  assert.ok(!html.includes("//unpkg") && !html.includes("//cdn"));
+});
+
+test("renderHtml: shows truncation note when capped", () => {
+  const html = renderHtml({ nodes: [], edges: [], meta: { truncated: true, dropped: 12 } }, "var d3={};");
+  assert.ok(html.includes("dropped 12"));
 });
