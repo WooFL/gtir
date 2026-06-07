@@ -193,6 +193,9 @@ gtir mcp     --repo <project> [--label name:<repo>] [--watch] [--print-config]  
 gtir eval    --repo <corpus> --golden <f> [--save] [--json]            # score retrieval quality
 gtir eval    --repo <corpus> --tune ["ftsWeight=0,0.2;ftsWeightMixed=0,1"]   # sweep fusion weights
 gtir graph   --repo <project> [--focus <symbol>] [--rollup] [--out FILE]    # render edge graph as HTML
+gtir impact  <symbol> --repo <project> [--downstream] [--depth N] [--path F]  # transitive blast radius
+gtir orphans --repo <project>                                               # likely-dead symbols
+gtir cycles  --repo <project>                                               # circular dependencies
 ```
 
 `search` prints JSON to stdout; everything human-readable goes to stderr. The index lives in
@@ -383,6 +386,25 @@ In the page, a control panel filters live: a **min-degree** slider hides leaf no
 Flags: `--out FILE` (default `gtir-graph.html`), `--focus SYM [--depth N]`, `--rollup`, `--kind`/`--conf`/`--path-prefix` pre-filters, `--max-nodes N` (optional hard cap; off by default). The graph reads edges built during `gtir index`.
 
 > The vendored WebGL bundle (`vendor/cosmos.min.js`) is regenerated with `npm run bundle:cosmos` (needs dev deps); it ships in the npm package.
+
+### Graph analysis: impact, orphans, cycles
+
+Beyond 1-hop `callers`/`callees`, gtir traverses the whole edge graph. All three are JSON on
+stdout and exist as MCP tools (`impact_<label>`, `orphans_<label>`, `cycles_<label>`).
+
+- `gtir impact <symbol>` — transitive blast radius (who calls this, recursively).
+  `--downstream` for what it depends on; `--depth N` to cap hops; `--path <file>` to
+  disambiguate a name defined in multiple files; `--include-ambiguous` to also follow
+  name-coincidence edges. Capped at 500 nodes (`--limit`); `truncated:true` when hit.
+- `gtir orphans` — likely-dead symbols (no inbound call/import edges). Entrypoints
+  (exports, `bin/`/`main`/`index`/`cli`, test files, Go-exported names, handler names)
+  are split into a separate `possible_entrypoint` list, not flagged dead.
+- `gtir cycles` — circular dependencies: call cycles and import cycles (Tarjan SCC
+  groups, each with one sample path). Self-recursion is excluded.
+
+Traversal uses **resolved** edges only by default (ambiguous edges are name-coincidence
+guesses); pass `--include-ambiguous` to widen. Requires an index built with the edge layer
+(`gtir index`); on an older index, run `gtir index --rebuild` first.
 
 ## 🤖 Model
 
