@@ -255,6 +255,8 @@ export function resolveEdges(rawEdges, symbolIndex, noteIndex, opts = {}) {
       const stem = resolveSourceStem(e.fromPath, e.source);
       const from = { path: e.fromPath, fromLine: e.fromLine };
       const conf = stem ? "resolved" : "external";
+      // ref_name = the module specifier (same value as from_symbol here). It names the
+      // TARGET node for the graph layer: an unresolved import renders as ext:<specifier>.
       out.push(row("imports", { ...from, symbol: e.source },
         stem ? { path: stem, line_start: 0, line_end: 0, symbol: null } : null, conf, [], contentHash, e.source));
     } else if (e.kind === "links" || e.kind === "embeds") {

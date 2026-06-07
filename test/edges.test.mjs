@@ -61,6 +61,7 @@ test("resolveEdges: note link resolves via noteIndex", () => {
   const [e] = resolveEdges(raw, new Map(), notes);
   assert.equal(e.conf, "resolved");
   assert.equal(e.to_path, "wiki/Token Auth.md");
+  assert.equal(e.ref_name, "Token Auth");
 });
 
 async function edgesFor(langId, src, path = "a.ts") {
