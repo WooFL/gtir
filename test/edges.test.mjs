@@ -180,3 +180,41 @@ test("extractNotesEdges ignores wikilinks inside code fences", () => {
   assert.ok(edges.some((e) => e.target === "RealLink"));
   assert.ok(!edges.some((e) => e.target === "NotALink"));
 });
+
+import { buildAdjacency, callersOf, calleesOf, neighborsOf } from "../src/edges.mjs";
+
+const rows = [
+  { kind: "calls", conf: "resolved", from_path: "mw.ts", from_lines: "12", from_symbol: null,
+    to_path: "token.ts", to_lines: "48-79", to_symbol: "verifyToken", candidates: [] },
+  { kind: "calls", conf: "resolved", from_path: "login.ts", from_lines: "40", from_symbol: null,
+    to_path: "token.ts", to_lines: "48-79", to_symbol: "verifyToken", candidates: [] },
+  { kind: "calls", conf: "resolved", from_path: "token.ts", from_lines: "50", from_symbol: "verifyToken",
+    to_path: "jwt.ts", to_lines: "5-9", to_symbol: "decode", candidates: [] },
+];
+
+test("callersOf returns spans that call the symbol", () => {
+  const adj = buildAdjacency(rows);
+  const callers = callersOf(adj, "verifyToken");
+  assert.equal(callers.length, 2);
+  assert.ok(callers.some((c) => c.path === "mw.ts" && c.lines === "12"));
+  assert.equal(callers[0].conf, "resolved");
+});
+
+test("calleesOf returns what the symbol calls", () => {
+  const adj = buildAdjacency(rows);
+  const callees = calleesOf(adj, "verifyToken");
+  assert.ok(callees.some((c) => c.symbol === "decode" && c.path === "jwt.ts"));
+});
+
+test("neighborsOf folds in derived siblings from the chunk list", () => {
+  const adj = buildAdjacency(rows);
+  const siblings = [
+    { line_start: 48, line_end: 79, signature: "verifyToken()" },
+    { line_start: 80, line_end: 92, signature: "refreshToken()" },
+  ];
+  const out = neighborsOf(adj, { symbol: "verifyToken", path: "token.ts", lines: "48-79", siblings });
+  assert.ok(out.callers.length === 2);
+  assert.ok(out.callees.some((c) => c.symbol === "decode"));
+  assert.ok(out.siblings.some((s) => s.signature === "refreshToken()"));
+  assert.ok(!out.siblings.some((s) => s.signature === "verifyToken()")); // self excluded
+});

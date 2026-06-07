@@ -236,6 +236,49 @@ export function resolveEdges(rawEdges, symbolIndex, noteIndex, opts = {}) {
   return out;
 }
 
+// Index resolved edges for O(1) traversal. callers: target symbol -> incoming rows;
+// callees: source symbol -> outgoing rows.
+export function buildAdjacency(rows) {
+  const callers = new Map();      // to_symbol -> rows[]
+  const callees = new Map();      // from_symbol -> rows[]
+  for (const r of rows) {
+    if (r.to_symbol) {
+      if (!callers.has(r.to_symbol)) callers.set(r.to_symbol, []);
+      callers.get(r.to_symbol).push(r);
+    }
+    if (r.from_symbol) {
+      if (!callees.has(r.from_symbol)) callees.set(r.from_symbol, []);
+      callees.get(r.from_symbol).push(r);
+    }
+  }
+  return { callers, callees };
+}
+
+const callerRec = (r) => ({ path: r.from_path, lines: r.from_lines, kind: r.kind, conf: r.conf });
+const calleeRec = (r) => ({ path: r.to_path, lines: r.to_lines, symbol: r.to_symbol, kind: r.kind,
+  conf: r.conf, ...(r.candidates?.length ? { candidates: r.candidates } : {}) });
+
+export function callersOf(adj, symbol) {
+  return (adj.callers.get(symbol) ?? []).map(callerRec);
+}
+
+export function calleesOf(adj, symbol) {
+  return (adj.callees.get(symbol) ?? []).map(calleeRec);
+}
+
+// Blast radius around a span: callers + callees of its symbol, plus derived siblings (the
+// other chunks in the same file — the `contains` relation we compute on demand, never store).
+export function neighborsOf(adj, { symbol, path, lines, siblings = [] }) {
+  return {
+    symbol, path, lines,
+    callers: symbol ? callersOf(adj, symbol) : [],
+    callees: symbol ? calleesOf(adj, symbol) : [],
+    siblings: siblings
+      .filter((s) => `${s.line_start}-${s.line_end}` !== lines)
+      .map((s) => ({ lines: `${s.line_start}-${s.line_end}`, signature: s.signature })),
+  };
+}
+
 export function extractCodeEdges(tree, langId, relPath) {
   const types = edgeTypes(langId);
   if (!tree?.rootNode) return [];
