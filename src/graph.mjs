@@ -359,7 +359,11 @@ function draw() {
     if (frame % 12 === 1) computeIslands(graph.getNodePositionsMap());
     lctx.textAlign = "center"; lctx.textBaseline = "middle"; lctx.font = "11px system-ui,sans-serif";
     for (const g of islandGeo) {
-      const [sx, sy] = graph.spaceToScreenPosition([g.cx, g.cy]); const sr = graph.spaceToScreenRadius(g.r);
+      // Derive the screen radius from two POSITION conversions (center, center+r) so it scales
+      // exactly like the nodes at any zoom — spaceToScreenRadius drifts from spaceToScreenPosition.
+      const [sx, sy] = graph.spaceToScreenPosition([g.cx, g.cy]);
+      const [ex, ey] = graph.spaceToScreenPosition([g.cx + g.r, g.cy]);
+      const sr = Math.hypot(ex - sx, ey - sy);
       lctx.fillStyle = hexA(g.color, 0.10); lctx.beginPath(); lctx.arc(sx, sy, sr, 0, 6.2832); lctx.fill();
       lctx.fillStyle = "rgba(230,237,243,0.22)"; lctx.fillText(g.name, sx, sy);
     }
