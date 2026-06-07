@@ -202,3 +202,42 @@ test("compareTiers: a tier missing from baseline is skipped (no false regression
   const base = { byTier: {} };
   assert.equal(compareTiers(cur, base, 0.005).length, 0);
 });
+
+import { scoreEdgeGolden, evalEdges } from "../src/eval.mjs";
+import { readFileSync } from "node:fs";
+
+const edges = [
+  { kind: "calls", conf: "resolved", from_path: "mw.ts", to_path: "token.ts", to_symbol: "verifyToken" },
+  { kind: "calls", conf: "ambiguous", from_path: "x.ts", to_path: null, to_symbol: null, candidates: ["a.ts", "b.ts"] },
+  { kind: "calls", conf: "external", from_path: "y.ts", to_path: null, to_symbol: null },
+];
+
+test("scoreEdgeGolden flags a present resolved edge as a hit", () => {
+  const hit = scoreEdgeGolden(edges, { from: "mw.ts", to: "token.ts", symbol: "verifyToken", kind: "calls" });
+  assert.equal(hit.found, true);
+  assert.equal(hit.resolved, true);
+});
+test("scoreEdgeGolden misses an absent edge", () => {
+  const hit = scoreEdgeGolden(edges, { from: "nope.ts", to: "token.ts", symbol: "verifyToken", kind: "calls" });
+  assert.equal(hit.found, false);
+});
+test("evalEdges reports recall and resolution split", () => {
+  const golden = [
+    { from: "mw.ts", to: "token.ts", symbol: "verifyToken", kind: "calls" },
+    { from: "absent.ts", to: "z.ts", symbol: "q", kind: "calls" },
+  ];
+  const m = evalEdges(edges, golden);
+  assert.equal(m.recall, 0.5);
+  assert.equal(m.split.resolved, 1);
+  assert.equal(m.split.ambiguous, 1);
+  assert.equal(m.split.external, 1);
+});
+
+test("edges-golden.json is a non-empty array of well-formed entries", () => {
+  const golden = JSON.parse(readFileSync(new URL("../eval/edges-golden.json", import.meta.url)));
+  assert.ok(Array.isArray(golden) && golden.length >= 8);
+  for (const g of golden) {
+    assert.ok(g.from && g.kind, `entry missing from/kind: ${JSON.stringify(g)}`);
+    assert.ok(["calls", "links", "imports", "embeds"].includes(g.kind));
+  }
+});
