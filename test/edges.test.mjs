@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { getParser } from "../src/parser.mjs";
-import { extractCodeEdges } from "../src/edges.mjs";
+import { extractCodeEdges, extractNotesEdges } from "../src/edges.mjs";
 
 async function edgesFor(langId, src, path = "a.ts") {
   const parser = await getParser(langId);
@@ -113,4 +113,20 @@ test("extractCodeEdges: python from-import still works after Fix 2", async () =>
   const imp = edges.find((e) => e.kind === "imports");
   assert.ok(imp, "expected an imports edge");
   assert.equal(imp.source, "token");
+});
+
+test("extractNotesEdges captures wikilinks and embeds", () => {
+  const md = `See [[Token Auth]] and [[Sessions#expiry|here]].\n![[diagram.png]]\n`;
+  const edges = extractNotesEdges("notes/a.md", md);
+  assert.ok(edges.some((e) => e.kind === "links" && e.target === "Token Auth"));
+  assert.ok(edges.some((e) => e.kind === "links" && e.target === "Sessions"));
+  assert.ok(edges.some((e) => e.kind === "embeds" && e.target === "diagram.png"));
+  assert.equal(edges[0].fromPath, "notes/a.md");
+});
+
+test("extractNotesEdges ignores wikilinks inside code fences", () => {
+  const md = "```\n[[NotALink]]\n```\n[[RealLink]]\n";
+  const edges = extractNotesEdges("a.md", md);
+  assert.ok(edges.some((e) => e.target === "RealLink"));
+  assert.ok(!edges.some((e) => e.target === "NotALink"));
 });

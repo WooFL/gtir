@@ -144,6 +144,30 @@ function importSources(node) {
   return [{ source: src, names }];
 }
 
+// [[target]], [[target#heading]], [[target|alias]], and ![[embed]]. The leading "!" marks an embed.
+const WIKILINK = /(!)?\[\[([^\]]+)\]\]/g;
+
+export function extractNotesEdges(relPath, text) {
+  const norm = String(text).replace(/\r\n?/g, "\n");
+  const lines = norm.split("\n");
+  const edges = [];
+  let inFence = false;
+  for (let i = 0; i < lines.length; i++) {
+    const t = lines[i].trimStart();
+    if (t.startsWith("```") || t.startsWith("~~~")) { inFence = !inFence; continue; }
+    if (inFence) continue;
+    let m;
+    WIKILINK.lastIndex = 0;
+    while ((m = WIKILINK.exec(lines[i]))) {
+      const isEmbed = m[1] === "!";
+      const target = m[2].split("|")[0].split("#")[0].trim();
+      if (!target) continue;
+      edges.push({ kind: isEmbed ? "embeds" : "links", target, fromPath: relPath, fromLine: i + 1 });
+    }
+  }
+  return edges;
+}
+
 export function extractCodeEdges(tree, langId, relPath) {
   const types = edgeTypes(langId);
   if (!tree?.rootNode) return [];
