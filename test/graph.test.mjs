@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mapEdges, applyFilters, egoGraph, capByDegree, rollupToFiles, buildGraph, worstConf, renderHtml } from "../src/graph.mjs";
+import { mapEdges, applyFilters, egoGraph, capByDegree, rollupToFiles, buildGraph, worstConf, renderHtml, withDegree, clusterOf } from "../src/graph.mjs";
 
 // Edge factory matching the store.loadEdges() row shape.
 const E = (o = {}) => ({
@@ -237,4 +237,51 @@ test("buildGraph: whole-repo rollup caps FILE degree, not symbol degree", () => 
   // Rolling up BEFORE the cap ranks hub.ts (file-degree 5) above the degree-1 leaf files, so it
   // survives. Capping symbols first drops all 5 low-degree hub symbols and hub.ts would vanish.
   assert.ok(g.nodes.some((n) => n.id === "hub.ts"));
+});
+
+test("withDegree: counts incident edges per node (both endpoints)", () => {
+  const { nodes, edges } = mapEdges([
+    E({ from_symbol: "h", from_path: "h.ts", to_symbol: "a", to_path: "a.ts", ref_name: "a" }),
+    E({ from_symbol: "h", from_path: "h.ts", to_symbol: "b", to_path: "b.ts", ref_name: "b" }),
+  ]);
+  const out = withDegree(nodes, edges);
+  assert.equal(out.find((n) => n.id === "h\x00h.ts").degree, 2);
+  assert.equal(out.find((n) => n.id === "a\x00a.ts").degree, 1);
+});
+
+test("withDegree: isolated node gets degree 0 and inputs are not mutated", () => {
+  const nodes = [{ id: "x", label: "x", cls: "code", refs: [], candidates: [] }];
+  const out = withDegree(nodes, []);
+  assert.equal(out[0].degree, 0);
+  assert.equal(nodes[0].degree, undefined); // pure — original untouched
+});
+
+test("clusterOf: directory-based clusters", () => {
+  assert.equal(clusterOf({ id: "packages/ui/Button.tsx", cls: "code" }), "packages/ui");
+  assert.equal(clusterOf({ id: "apps/web/src/Foo.tsx", cls: "code" }), "apps/web");
+  assert.equal(clusterOf({ id: "Button.tsx", cls: "code" }), "(root)");
+  assert.equal(clusterOf({ id: "verifyToken\x00auth/jwt.ts", cls: "code" }), "auth");
+  assert.equal(clusterOf({ id: "ext:Error", cls: "external" }), "external");
+  assert.equal(clusterOf({ id: "amb:log", cls: "ambiguous" }), "ambiguous");
+  assert.equal(clusterOf({ id: "note:Auth", cls: "note", refs: [{ path: "concepts/auth.md", line: 0 }] }), "concepts");
+  assert.equal(clusterOf({ id: "note:Loose", cls: "note", refs: [] }), "notes");
+});
+
+test("buildGraph: every node carries degree (number) and cluster (string)", () => {
+  const g = buildGraph([E({ from_symbol: "f", from_path: "packages/a/x.ts", to_symbol: "g", to_path: "packages/a/y.ts", ref_name: "g" })]);
+  for (const n of g.nodes) {
+    assert.equal(typeof n.degree, "number");
+    assert.equal(typeof n.cluster, "string");
+  }
+  assert.ok(g.nodes.some((n) => n.cluster === "packages/a"));
+});
+
+test("buildGraph: maxNodes defaults to uncapped (>400 nodes survive)", () => {
+  // 250 edges → 500 nodes. Under the OLD default (400) this truncates; uncapped it must not.
+  const rows = [];
+  for (let i = 0; i < 250; i++) rows.push(E({ from_symbol: `f${i}`, from_path: `f${i}.ts`, to_symbol: `g${i}`, to_path: `g${i}.ts`, ref_name: `g${i}` }));
+  const g = buildGraph(rows); // no maxNodes
+  assert.equal(g.nodes.length, 500);
+  assert.equal(g.truncated, false);
+  assert.equal(g.dropped, 0);
 });

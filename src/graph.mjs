@@ -144,12 +144,44 @@ export function rollupToFiles({ nodes, edges }) {
   return { nodes: [...out.values()], edges: [...merged.values()] };
 }
 
+// Incident-edge count per node. Pure: returns NEW node objects with `degree` added.
+export function withDegree(nodes, edges) {
+  const deg = new Map(nodes.map((n) => [n.id, 0]));
+  for (const e of edges) {
+    deg.set(e.source, (deg.get(e.source) ?? 0) + 1);
+    deg.set(e.target, (deg.get(e.target) ?? 0) + 1);
+  }
+  return nodes.map((n) => ({ ...n, degree: deg.get(n.id) ?? 0 }));
+}
+
+// Cluster key from the directory a node lives in: the dirname's first two segments
+// (packages/ui), or the first one, or "(root)" for a top-level file. Synthetic nodes
+// cluster to their kind; notes cluster to their top folder.
+function clusterFromPath(p) {
+  const parts = String(p).split(/[\\/]/).filter(Boolean);
+  parts.pop(); // drop the filename — cluster by directory
+  if (parts.length === 0) return "(root)";
+  return parts.slice(0, 2).join("/");
+}
+
+export function clusterOf(node) {
+  const id = node.id;
+  if (id.startsWith("ext:")) return "external";
+  if (id.startsWith("amb:")) return "ambiguous";
+  if (id.startsWith("note:")) {
+    const ref = node.refs && node.refs[0] && node.refs[0].path;
+    return ref ? clusterFromPath(ref) : "notes";
+  }
+  const path = id.includes("\x00") ? id.split("\x00")[1] : id;
+  return clusterFromPath(path);
+}
+
 // Compose the pipeline: filter → map → focus|cap, with rollup placed so the cap acts on the
 // FINAL node grain. Focus: bound by depth first, then collapse the small ego-graph. Whole-repo:
 // collapse to files BEFORE capping so the cap keeps the highest-degree FILES (a real file-level
 // overview) rather than the highest-degree symbols that happen to survive a symbol-grain cap.
 export function buildGraph(edges, opts = {}) {
-  const { focus = null, depth = 2, rollup = false, kind = null, conf = null, pathPrefix = null, maxNodes = 400 } = opts;
+  const { focus = null, depth = 2, rollup = false, kind = null, conf = null, pathPrefix = null, maxNodes = Infinity } = opts;
   const rows = applyFilters(edges, { kind, conf, pathPrefix });
   let g = mapEdges(rows);
   let truncated = false, dropped = 0;
@@ -164,7 +196,8 @@ export function buildGraph(edges, opts = {}) {
     truncated = capped.truncated; dropped = capped.dropped;
   }
 
-  return { nodes: g.nodes, edges: g.edges, truncated, dropped };
+  const nodes = withDegree(g.nodes, g.edges).map((n) => ({ ...n, cluster: clusterOf(n) }));
+  return { nodes, edges: g.edges, truncated, dropped };
 }
 
 const CONF_COLOR = { resolved: "#3fb950", ambiguous: "#d29922", external: "#8b949e" };
