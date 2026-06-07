@@ -201,6 +201,20 @@ export async function openStore(cfg) {
     return rows.sort((a, b) => Number(a.line_start) - Number(b.line_start));
   }
 
+  // All chunk rows projected to `cols` — the source for the query-time symbol inventory
+  // (declaredSymbols is re-run over text). [] when there is no chunks table.
+  async function allChunkRows(cols = ["path", "line_start", "line_end", "text"]) {
+    const tbl = await chunksTable();
+    if (!tbl) return [];
+    return tbl.query().select(cols).toArray();
+  }
+
+  // Whether an edges table exists — distinguishes "never indexed / pre-edge index" (no graph
+  // queries possible) from "indexed but a file genuinely has no edges".
+  async function hasEdges() {
+    return (await edgesTable()) != null;
+  }
+
   // The chunk covering `line` in `path` (or the file's first chunk if line is null) —
   // returns the full row including its embedding, the seed for `similar`.
   async function chunkAt(path, line = null) {
@@ -213,5 +227,5 @@ export async function openStore(cfg) {
     return rows.find((r) => Number(r.line_start) <= line && line <= Number(r.line_end)) || rows[0];
   }
 
-  return { chunksTable, upsertRows, loadManifest, evictPaths, writeMeta, readMeta, hasContentHash, chunkColumns, loadEmbedCache, dropChunks, chunksByPath, chunkAt, upsertEdges, loadEdges, evictEdgePaths, dropEdges };
+  return { chunksTable, upsertRows, loadManifest, evictPaths, writeMeta, readMeta, hasContentHash, chunkColumns, loadEmbedCache, dropChunks, chunksByPath, allChunkRows, hasEdges, chunkAt, upsertEdges, loadEdges, evictEdgePaths, dropEdges };
 }

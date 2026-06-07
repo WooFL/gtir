@@ -126,3 +126,23 @@ test("upsertRows builds the FTS index once, then maintains it incrementally (opt
   const hitOld = await (await store.chunksTable()).query().nearestToText("apple", ["fts_text"]).limit(5).toArray();
   assert.ok(!hitOld.some((r) => r.path === "a.py"), "replaced content's old term no longer matches");
 });
+
+import { rmSync } from "node:fs";
+
+test("allChunkRows returns selected columns; hasEdges reflects the edges table", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "gtir-store-aq-"));
+  const cfg = { indexDir: join(dir, ".gtir") };
+  try {
+    const store = await openStore(cfg);
+    assert.equal(await store.hasEdges(), false);
+    await store.upsertRows([
+      { id: "1", path: "a.mjs", line_start: 1, line_end: 3, language: "js", text: "function f(){}", embedding: [0.1, 0.2], mtime_ms: 1, content_hash: "h1" },
+    ]);
+    const rows = await store.allChunkRows(["path", "text"]);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].path, "a.mjs");
+    assert.equal(rows[0].text, "function f(){}");
+    await store.upsertEdges([{ kind: "calls", conf: "resolved", from_path: "a.mjs", from_lines: "1", from_symbol: "f", to_path: "a.mjs", to_lines: "1", to_symbol: "f", candidates: [], content_hash: "h1" }]);
+    assert.equal(await store.hasEdges(), true);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
