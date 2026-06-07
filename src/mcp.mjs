@@ -498,7 +498,7 @@ export function serveStdio(indexes, { version } = {}) {
       if (res) process.stdout.write(JSON.stringify(res) + "\n");
     }
   });
-  process.stderr.write(`gtir mcp: serving [${indexes.map((i) => i.label).join(", ")}] × {search,read,outline,similar,find} + gtir_status\n`);
+  process.stderr.write(`gtir mcp: serving [${indexes.map((i) => i.label).join(", ")}] × {search,read,outline,similar,find,callers,callees,neighbors} + gtir_status\n`);
 }
 
 // Start a live file-watcher per served index (`gtir mcp --watch`). Each watcher runs an
