@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mapEdges, applyFilters, egoGraph, capByDegree, rollupToFiles, buildGraph, worstConf, renderHtml, withDegree, clusterOf } from "../src/graph.mjs";
+import { mapEdges, applyFilters, egoGraph, capByDegree, rollupToFiles, buildGraph, worstConf, renderHtml, withDegree, clusterOf, clusterIndex } from "../src/graph.mjs";
 
 // Edge factory matching the store.loadEdges() row shape.
 const E = (o = {}) => ({
@@ -301,4 +301,31 @@ test("buildGraph: maxNodes defaults to uncapped (>400 nodes survive)", () => {
   assert.equal(g.nodes.length, 500);
   assert.equal(g.truncated, false);
   assert.equal(g.dropped, 0);
+});
+
+test("clusterIndex: orders clusters by node count desc, then name", () => {
+  const nodes = [
+    { id: "1", cluster: "b" }, { id: "2", cluster: "a" }, { id: "3", cluster: "a" }, { id: "4", cluster: "c" }, { id: "5", cluster: "a" },
+  ];
+  const ci = clusterIndex(nodes);
+  assert.deepEqual(ci.clusters, ["a", "b", "c"]);        // a=3, b=1, c=1 → a first, then b,c by name
+});
+
+test("clusterIndex: clusterOfNode is aligned to node order", () => {
+  const nodes = [{ id: "1", cluster: "a" }, { id: "2", cluster: "b" }, { id: "3", cluster: "a" }];
+  const ci = clusterIndex(nodes);
+  // a has 2, b has 1 → a=index0, b=index1
+  assert.deepEqual(ci.clusterOfNode, [0, 1, 0]);
+});
+
+test("clusterIndex: clusterXY is a grid filling spaceSize, deterministic", () => {
+  const nodes = [{ id: "1", cluster: "a" }, { id: "2", cluster: "b" }, { id: "3", cluster: "c" }, { id: "4", cluster: "d" }];
+  const ci = clusterIndex(nodes, 1000);
+  assert.equal(ci.cols, 2);                              // ceil(sqrt(4))
+  assert.equal(ci.cell, Math.floor(1000 / 3));           // spaceSize/(cols+1)
+  assert.equal(ci.clusterXY.length, 4);
+  // first cell center = (0.5*cell, 0.5*cell)
+  assert.deepEqual(ci.clusterXY[0], [0.5 * ci.cell, 0.5 * ci.cell]);
+  // running twice gives identical output (deterministic)
+  assert.deepEqual(clusterIndex(nodes, 1000), ci);
 });

@@ -176,6 +176,21 @@ export function clusterOf(node) {
   return clusterFromPath(path);
 }
 
+// Deterministic cluster bookkeeping for the renderer: clusters ordered by node count (desc, then
+// name), a per-node cluster index aligned to `nodes`, and a fixed grid of cluster centers filling
+// `spaceSize`. Pure — used at render time and embedded for the browser's cosmos cluster force.
+export function clusterIndex(nodes, spaceSize = 16384) {
+  const counts = new Map();
+  for (const n of nodes) counts.set(n.cluster, (counts.get(n.cluster) ?? 0) + 1);
+  const clusters = [...counts.keys()].sort((a, b) => (counts.get(b) - counts.get(a)) || (a < b ? -1 : a > b ? 1 : 0));
+  const idxOf = new Map(clusters.map((c, i) => [c, i]));
+  const clusterOfNode = nodes.map((n) => idxOf.get(n.cluster));
+  const cols = Math.max(1, Math.ceil(Math.sqrt(clusters.length)));
+  const cell = Math.floor(spaceSize / (cols + 1));
+  const clusterXY = clusters.map((c, i) => [((i % cols) + 0.5) * cell, (Math.floor(i / cols) + 0.5) * cell]);
+  return { clusters, clusterOfNode, clusterXY, cols, cell };
+}
+
 // Compose the pipeline: filter → map → focus|cap, with rollup placed so the cap acts on the
 // FINAL node grain. Focus: bound by depth first, then collapse the small ego-graph. Whole-repo:
 // collapse to files BEFORE capping so the cap keeps the highest-degree FILES (a real file-level
