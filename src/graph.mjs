@@ -201,116 +201,149 @@ export function buildGraph(edges, opts = {}) {
 }
 
 const CONF_COLOR = { resolved: "#3fb950", ambiguous: "#d29922", external: "#8b949e" };
-const CLS_COLOR = { code: "#58a6ff", note: "#bc8cff", external: "#8b949e", ambiguous: "#d29922" };
+// Categorical palette for directory clusters (no d3 — fixed hex set; wraps past 20 clusters).
+const PALETTE = [
+  "#58a6ff", "#bc8cff", "#3fb950", "#e3b341", "#f85149", "#39c5cf", "#db61a2", "#a371f7",
+  "#7ee787", "#ff7b72", "#79c0ff", "#ffa657", "#d2a8ff", "#56d364", "#f0883e", "#1f6feb",
+  "#bf4b8a", "#8ddb8c", "#cea5fb", "#ffdf5d",
+];
 
 // JSON for embedding in a <script> — escape `<` so a "</script>" inside any string can't close the tag.
 function safeJson(obj) {
   return JSON.stringify(obj).replace(/</g, "\\u003c");
 }
 
-export function renderHtml({ nodes, edges, meta = {} }, d3Source) {
-  const data = safeJson({ nodes, edges });
-  const colors = safeJson({ conf: CONF_COLOR, cls: CLS_COLOR });
-  const trunc = meta.truncated ? `truncated: dropped ${meta.dropped ?? 0}` : "";
-  const d3Safe = String(d3Source).replace(/<\/script>/gi, "<\\/script>");
+export function renderHtml({ nodes, edges, meta = {} }, cosmosSource) {
+  const data = safeJson({ nodes, edges, meta });
+  const conf = safeJson(CONF_COLOR);
+  const pal = safeJson(PALETTE);
+  const cosmosSafe = String(cosmosSource).replace(/<\/script>/gi, "<\\/script>");
+  const trunc = meta.truncated ? `dropped ${meta.dropped ?? 0}` : "";
   return `<!doctype html>
 <html><head><meta charset="utf-8"><title>gtir graph</title>
 <style>
-  html,body{margin:0;height:100%;background:#0d1117;color:#c9d1d9;font:13px system-ui,sans-serif}
-  #chrome{position:fixed;top:8px;left:8px;z-index:10;background:#161b22cc;border:1px solid #30363d;border-radius:6px;padding:8px 10px;max-width:240px}
-  #chrome h1{font-size:13px;margin:0 0 6px}
-  #search{width:100%;box-sizing:border-box;background:#0d1117;border:1px solid #30363d;color:#c9d1d9;border-radius:4px;padding:4px}
-  .legend{margin-top:8px;line-height:1.6}
-  .sw{display:inline-block;width:22px;height:0;border-top-width:3px;border-top-style:solid;vertical-align:middle;margin-right:6px}
-  .dot{display:inline-block;width:10px;height:10px;border-radius:50%;vertical-align:middle;margin-right:6px}
-  #trunc{color:#d29922;margin-top:6px}
-  #tip{position:fixed;z-index:20;pointer-events:none;background:#161b22;border:1px solid #30363d;border-radius:4px;padding:6px 8px;display:none;max-width:340px}
-  svg{width:100vw;height:100vh;display:block}
-  text{fill:#8b949e;font-size:10px;pointer-events:none}
-  .node circle{cursor:pointer}
-  .dim{opacity:0.12}
+  html,body{margin:0;height:100%;overflow:hidden;background:#0d1117;color:#c9d1d9;font:12px system-ui,sans-serif}
+  #cv{position:fixed;inset:0;width:100vw;height:100vh}
+  #panel{position:fixed;top:8px;left:8px;z-index:10;background:#161b22e6;border:1px solid #30363d;border-radius:6px;padding:10px 12px;max-width:240px;max-height:94vh;overflow:auto}
+  #panel h1{font-size:13px;margin:0 0 8px}
+  #panel label{display:block;margin:2px 0}
+  #search{width:100%;box-sizing:border-box;background:#0d1117;border:1px solid #30363d;color:#c9d1d9;border-radius:4px;padding:4px;margin-bottom:8px}
+  .row{margin:6px 0}
+  .sw{display:inline-block;width:10px;height:10px;border-radius:50%;vertical-align:middle;margin-right:6px}
+  #legend{margin-top:8px;max-height:30vh;overflow:auto}
+  #legend .lg{cursor:pointer;line-height:1.6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #counts{margin-top:8px;color:#8b949e}
+  #info{position:fixed;bottom:8px;left:8px;z-index:10;background:#161b22e6;border:1px solid #30363d;border-radius:6px;padding:8px 10px;max-width:340px;display:none}
+  #msg{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:20;color:#f85149;font-size:16px}
+  button{background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:3px 8px;cursor:pointer}
 </style></head>
 <body>
-<div id="chrome">
-  <h1>gtir graph</h1>
+<canvas id="cv"></canvas>
+<div id="msg"></div>
+<div id="panel">
+  <h1>gtir graph <button id="pause">⏸ pause</button></h1>
   <input id="search" placeholder="find node…" autocomplete="off">
-  <div class="legend">
-    <div><span class="sw" style="border-top-color:${CONF_COLOR.resolved}"></span>resolved</div>
-    <div><span class="sw" style="border-top-color:${CONF_COLOR.ambiguous}"></span>ambiguous</div>
-    <div><span class="sw" style="border-top-color:${CONF_COLOR.external}"></span>external</div>
-    <div style="margin-top:4px"><span class="sw" style="border-top-color:#8b949e"></span>calls — / imports ┄ / links ··</div>
-    <div style="margin-top:4px"><span class="dot" style="background:${CLS_COLOR.code}"></span>code <span class="dot" style="background:${CLS_COLOR.note};margin-left:8px"></span>note</div>
+  <div class="row">min degree <span id="minDegV">0</span><br><input id="minDeg" type="range" min="0" max="20" value="0" style="width:100%"></div>
+  <div class="row"><b>kind</b>
+    <label><input type="checkbox" class="k" value="calls" checked> calls</label>
+    <label><input type="checkbox" class="k" value="imports" checked> imports</label>
+    <label><input type="checkbox" class="k" value="links" checked> links</label>
+    <label><input type="checkbox" class="k" value="embeds" checked> embeds</label>
   </div>
-  <div id="trunc">${trunc}</div>
+  <div class="row"><b>confidence</b>
+    <label><input type="checkbox" class="cf" value="resolved" checked> <span style="color:${CONF_COLOR.resolved}">resolved</span></label>
+    <label><input type="checkbox" class="cf" value="ambiguous" checked> <span style="color:${CONF_COLOR.ambiguous}">ambiguous</span></label>
+    <label><input type="checkbox" class="cf" value="external"> <span style="color:${CONF_COLOR.external}">external</span></label>
+  </div>
+  <div id="legend"></div>
+  <div id="counts">${trunc}</div>
 </div>
-<div id="tip"></div>
-<svg></svg>
-<script>${d3Safe}</script>
+<div id="info"></div>
+<script>/* cosmos (vendored) */
+${cosmosSafe}
+</script>
 <script>
 window.__GTIR_GRAPH__ = ${data};
-const COLORS = ${colors};
-const { nodes, edges } = window.__GTIR_GRAPH__;
-const links = edges.map(e => ({ ...e }));
-const dash = k => k === "imports" ? "6,4" : (k === "links" || k === "embeds") ? "1,4" : null;
-
-const svg = d3.select("svg");
-const g = svg.append("g");
-svg.call(d3.zoom().scaleExtent([0.1, 4]).on("zoom", ev => g.attr("transform", ev.transform)));
-
-const link = g.append("g").attr("stroke-opacity", 0.7).selectAll("line").data(links).join("line")
-  .attr("stroke", d => COLORS.conf[d.conf]).attr("stroke-width", d => Math.min(6, (d.count || 1)))
-  .attr("stroke-dasharray", d => dash(d.kind));
-
-const node = g.append("g").attr("class", "node").selectAll("g").data(nodes).join("g");
-node.append("circle").attr("r", 6).attr("fill", d => COLORS.cls[d.cls])
-  .attr("stroke", "#0d1117").attr("stroke-width", 1.5);
-node.append("text").attr("x", 9).attr("y", 3).text(d => d.label);
-
-const sim = d3.forceSimulation(nodes)
-  .force("link", d3.forceLink(links).id(d => d.id).distance(70))
-  .force("charge", d3.forceManyBody().strength(-180))
-  .force("center", d3.forceCenter(window.innerWidth / 2, window.innerHeight / 2))
-  .on("tick", () => {
-    link.attr("x1", d => d.source.x).attr("y1", d => d.source.y).attr("x2", d => d.target.x).attr("y2", d => d.target.y);
-    node.attr("transform", d => \`translate(\${d.x},\${d.y})\`);
-  });
-
-node.call(d3.drag()
-  .on("start", (ev, d) => { if (!ev.active) sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
-  .on("drag", (ev, d) => { d.fx = ev.x; d.fy = ev.y; })
-  .on("end", (ev, d) => { if (!ev.active) sim.alphaTarget(0); }));
-
+const CONF = ${conf}, PAL = ${pal};
+const { nodes: ALLN, edges: ALLE, meta } = window.__GTIR_GRAPH__;
 const esc = s => String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
-const tip = document.getElementById("tip");
-function show(html, ev) { tip.innerHTML = html; tip.style.display = "block"; tip.style.left = (ev.clientX + 12) + "px"; tip.style.top = (ev.clientY + 12) + "px"; }
-function hide() { tip.style.display = "none"; }
-node.on("mousemove", (ev, d) => {
-  const refs = (d.refs || []).map(r => \`\${esc(r.path)}:\${r.line}\`).join("<br>");
-  const cand = (d.candidates || []).length ? "<br><i>candidates:</i><br>" + d.candidates.map(esc).join("<br>") : "";
-  show(\`<b>\${esc(d.label)}</b><br><span style="color:#8b949e">\${d.cls}</span><br>\${refs}\${cand}\`, ev);
-}).on("mouseleave", hide);
-link.on("mousemove", (ev, d) => show(\`\${d.kind} · <span style="color:\${COLORS.conf[d.conf]}">\${d.conf}</span>\`, ev)).on("mouseleave", hide);
+const $ = id => document.getElementById(id);
 
-const nb = new Map(nodes.map(n => [n.id, new Set([n.id])]));
-edges.forEach(e => { nb.get(e.source).add(e.target); nb.get(e.target).add(e.source); });
-let active = null;
-node.on("click", (ev, d) => {
-  ev.stopPropagation();
-  active = active === d.id ? null : d.id;
-  const keep = active ? nb.get(active) : null;
-  node.classed("dim", n => keep && !keep.has(n.id));
-  link.classed("dim", l => keep && !(keep.has(l.source.id) && keep.has(l.target.id)));
-});
-svg.on("click", () => { active = null; node.classed("dim", false); link.classed("dim", false); });
+const clusters = [...new Set(ALLN.map(n => n.cluster))];
+const clusterColor = new Map(clusters.map((c, i) =>
+  [c, c === "external" ? CONF.external : c === "ambiguous" ? CONF.ambiguous : PAL[i % PAL.length]]));
+ALLN.forEach(n => { n.color = clusterColor.get(n.cluster); n.size = 2 + Math.sqrt(n.degree || 0) * 1.4; });
+ALLE.forEach(e => { e.color = CONF[e.conf] || "#666"; e.width = Math.min(4, e.count || 1); });
 
-document.getElementById("search").addEventListener("input", e => {
-  const q = e.target.value.toLowerCase();
-  node.classed("dim", n => q && !n.label.toLowerCase().includes(q));
-  if (q) { const hit = nodes.find(n => n.label.toLowerCase().includes(q)); if (hit && hit.x != null) {
-    const t = d3.zoomIdentity.translate(window.innerWidth/2 - hit.x, window.innerHeight/2 - hit.y);
-    svg.transition().duration(400).call(d3.zoom().on("zoom", ev => g.attr("transform", ev.transform)).transform, t);
-  } }
+const cols = Math.max(1, Math.ceil(Math.sqrt(clusters.length))), CELL = 600;
+const cIdx = new Map(clusters.map((c, i) => [c, i]));
+ALLN.forEach(n => { const i = cIdx.get(n.cluster); n.x = (i % cols) * CELL + (Math.random() * 120 - 60); n.y = Math.floor(i / cols) * CELL + (Math.random() * 120 - 60); });
+
+function showInfo(n) {
+  const refs = (n.refs || []).map(r => esc(r.path) + ":" + r.line).join("<br>");
+  const cand = (n.candidates || []).length ? "<br><i>candidates:</i><br>" + n.candidates.map(esc).join("<br>") : "";
+  $("info").innerHTML = "<b>" + esc(n.label) + "</b><br><span style='color:#8b949e'>" + esc(n.cluster) + " · deg " + (n.degree || 0) + "</span><br>" + refs + cand;
+  $("info").style.display = "block";
+}
+function hideInfo() { $("info").style.display = "none"; }
+
+let graph = null, paused = false;
+try {
+  graph = new window.cosmos.Graph($("cv"), {
+    spaceSize: 8192,
+    backgroundColor: "#0d1117",
+    nodeColor: n => n.color,
+    nodeSize: n => n.size,
+    renderLinks: true,
+    linkColor: l => l.color,
+    linkWidth: l => l.width,
+    scaleNodesOnZoom: true,
+    simulation: { gravity: 0.2, repulsion: 1.0, linkSpring: 1.2, linkDistance: 8, friction: 0.85, decay: 100000 },
+    events: { onClick: (n) => { if (n) { graph.selectNodeById(n.id, true); showInfo(n); } else { graph.unselectNodes(); hideInfo(); } } },
+  });
+} catch (err) {
+  $("msg").style.display = "flex";
+  $("msg").textContent = "WebGL is required to view this graph.";
+}
+
+function recompute() {
+  const minDeg = +$("minDeg").value;
+  const kinds = new Set([...document.querySelectorAll(".k:checked")].map(x => x.value));
+  const confs = new Set([...document.querySelectorAll(".cf:checked")].map(x => x.value));
+  const passN = ALLN.filter(n => (n.degree || 0) >= minDeg);
+  const idset = new Set(passN.map(n => n.id));
+  const vE = ALLE.filter(e => kinds.has(e.kind) && confs.has(e.conf) && idset.has(e.source) && idset.has(e.target));
+  const used = new Set(); vE.forEach(e => { used.add(e.source); used.add(e.target); });
+  const vN = passN.filter(n => used.has(n.id));
+  if (graph) { graph.setData(vN, vE); graph.start(0.3); }
+  $("counts").textContent = vN.length + " nodes · " + vE.length + " edges" + (meta && meta.truncated ? " · dropped " + meta.dropped : "");
+}
+
+const ccount = {}; ALLN.forEach(n => { ccount[n.cluster] = (ccount[n.cluster] || 0) + 1; });
+const topC = Object.entries(ccount).sort((a, b) => b[1] - a[1]).slice(0, 16);
+$("legend").innerHTML = topC.map(([c]) => "<div class='lg' data-c='" + esc(c) + "'><span class='sw' style='background:" + clusterColor.get(c) + "'></span>" + esc(c) + "</div>").join("");
+$("legend").querySelectorAll(".lg").forEach(el => el.addEventListener("click", () => {
+  const c = el.getAttribute("data-c");
+  const ids = ALLN.filter(n => n.cluster === c).map(n => n.id);
+  if (graph && ids.length) { graph.selectNodesByIds(ids); graph.fitViewByNodeIds(ids); }
+}));
+
+$("minDeg").max = String(Math.max(1, ...ALLN.map(n => n.degree || 0)));
+$("minDeg").addEventListener("input", () => { $("minDegV").textContent = $("minDeg").value; recompute(); });
+document.querySelectorAll(".k,.cf").forEach(el => el.addEventListener("change", recompute));
+$("search").addEventListener("input", () => {
+  const q = $("search").value.toLowerCase();
+  if (!q) { if (graph) graph.unselectNodes(); hideInfo(); return; }
+  const hit = ALLN.find(n => n.label.toLowerCase().includes(q));
+  if (hit && graph) { graph.selectNodeById(hit.id, true); graph.fitViewByNodeIds([hit.id]); showInfo(hit); }
 });
+$("pause").addEventListener("click", () => {
+  if (!graph) return;
+  paused = !paused;
+  if (paused) { graph.pause(); $("pause").textContent = "▶ resume"; } else { graph.restart(); $("pause").textContent = "⏸ pause"; }
+});
+
+if (graph) recompute();
 </script>
 </body></html>`;
 }

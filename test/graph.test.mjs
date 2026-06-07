@@ -170,27 +170,39 @@ test("buildGraph: focus prunes, rollup collapses, cap bounds", () => {
   assert.ok(rolled.nodes.every((n) => !n.id.includes("\x00")));
 });
 
-test("renderHtml: self-contained — inlines d3, embeds data, no external refs", () => {
+test("renderHtml: self-contained cosmos page — inlines cosmos, embeds data, no external refs", () => {
   const g = buildGraph([E({ from_symbol: "verifyToken", from_path: "auth/jwt.ts", to_symbol: "signToken", to_path: "auth/jwt.ts", ref_name: "signToken" })]);
-  const html = renderHtml({ nodes: g.nodes, edges: g.edges, meta: { truncated: false, dropped: 0 } }, "/* D3SRC */ var d3={};");
+  const html = renderHtml({ nodes: g.nodes, edges: g.edges, meta: { truncated: false, dropped: 0 } }, "/* COSMOSSRC */ window.cosmos={Graph:function(){}};");
   assert.match(html, /<!doctype html>/i);
-  assert.ok(html.includes("/* D3SRC */"));            // inlined d3 present
-  assert.ok(html.includes("__GTIR_GRAPH__"));          // data hook present
-  assert.ok(html.includes("verifyToken"));             // a node label present
-  assert.ok(!html.includes("<script src"));            // nothing fetched
+  assert.ok(html.includes("/* cosmos (vendored) */"));
+  assert.ok(html.includes("/* COSMOSSRC */"));
+  assert.ok(html.includes("window.cosmos"));
+  assert.ok(html.includes("__GTIR_GRAPH__"));
+  assert.ok(html.includes('id="minDeg"'));
+  assert.ok(html.includes('class="cf"'));
+  assert.ok(html.includes("verifyToken"));
+  assert.ok(!html.includes("<script src"));
   assert.ok(!html.includes("//unpkg") && !html.includes("//cdn"));
 });
 
+test("renderHtml: external confidence checkbox is unchecked by default", () => {
+  const g = buildGraph([E()]);
+  const html = renderHtml({ nodes: g.nodes, edges: g.edges, meta: {} }, "x");
+  assert.match(html, /value="resolved"[^>]*checked/);
+  assert.match(html, /value="ambiguous"[^>]*checked/);
+  assert.ok(!/value="external"[^>]*checked/.test(html));
+});
+
 test("renderHtml: shows truncation note when capped", () => {
-  const html = renderHtml({ nodes: [], edges: [], meta: { truncated: true, dropped: 12 } }, "var d3={};");
+  const html = renderHtml({ nodes: [], edges: [], meta: { truncated: true, dropped: 12 } }, "x");
   assert.ok(html.includes("dropped 12"));
 });
 
-test("renderHtml: tooltip escapes user data (esc helper present)", () => {
-  const g = buildGraph([E({ from_symbol: "f", from_path: "a.ts", to_symbol: "g", to_path: "b.ts", ref_name: "g" })]);
-  const html = renderHtml({ nodes: g.nodes, edges: g.edges, meta: {} }, "var d3={};");
-  assert.ok(html.includes("&amp;") && html.includes("&lt;"));   // esc map literal embedded
-  assert.ok(html.includes("esc(d.label)"));                      // label is escaped at render time
+test("renderHtml: tooltip/info escapes user data (esc helper present)", () => {
+  const g = buildGraph([E()]);
+  const html = renderHtml({ nodes: g.nodes, edges: g.edges, meta: {} }, "x");
+  assert.ok(html.includes("&amp;") && html.includes("&lt;"));
+  assert.ok(html.includes("esc(n.label)"));
 });
 
 test("buildGraph: conf filter reaches the pipeline (whole-repo)", () => {
