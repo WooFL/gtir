@@ -8,7 +8,7 @@ import { preflight } from "./doctor.mjs";
 import { parseLines } from "./eval.mjs";
 import { watchRepo } from "./watch.mjs";
 import { buildAdjacency, callersOf, calleesOf, neighborsOf } from "./edges.mjs";
-import { impactQuery, orphansQuery, cyclesQuery, graphForSearch } from "./graph-queries.mjs";
+import { impactQuery, orphansQuery, cyclesQuery, graphForSearch, clearGraphCache } from "./graph-queries.mjs";
 import { contextFor } from "./graph-retrieval.mjs";
 
 export function sanitizeLabel(s) {
@@ -593,6 +593,7 @@ export function startWatchers(indexes, { debounceMs = 1500, sweepMs, log = () =>
         try {
           const r = await buildIndex(ix.cfg, { rebuild: false, paths });
           adjCache.delete(ix.repo); // invalidate adjacency cache after any refresh
+          clearGraphCache(ix.cfg.indexDir); // and the centrality/edges graph cache (parity with adjCache)
           if (r && (r.chunks > 0 || r.evicted > 0)) {
             log(`[${ix.label}] refreshed — ${r.chunks} chunks (${r.embedded} embedded, ${r.reused} reused, ${r.skipped} skipped, ${r.evicted} evicted)`);
           }
