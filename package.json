@@ -56,7 +56,7 @@
     "web-tree-sitter": "^0.25.0"
   },
   "devDependencies": {
-    "@cosmograph/cosmos": "^1.6.1",
+    "@cosmograph/cosmos": "2.0.0-beta.20",
     "esbuild": "^0.21.5",
     "tree-sitter-wasms": "^0.1.12"
   }
