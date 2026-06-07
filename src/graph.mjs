@@ -235,16 +235,20 @@ export function renderHtml({ nodes, edges, meta = {} }, cosmosSource) {
   #counts{margin-top:8px;color:#8b949e}
   #info{position:fixed;bottom:8px;left:8px;z-index:10;background:#161b22e6;border:1px solid #30363d;border-radius:6px;padding:8px 10px;max-width:340px;display:none}
   #msg{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:20;color:#f85149;font-size:16px}
+  #labels{position:fixed;inset:0;pointer-events:none;z-index:5;overflow:hidden}
+  .nl{position:absolute;top:0;left:0;color:#e6edf3;font-size:10px;white-space:nowrap;text-shadow:0 0 3px #000,0 0 3px #000,0 0 3px #000;will-change:transform}
   button{background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:3px 8px;cursor:pointer}
 </style></head>
 <body>
 <canvas id="cv"></canvas>
+<div id="labels"></div>
 <div id="msg"></div>
 <div id="panel">
   <h1>gtir graph <button id="pause">⏸ pause</button></h1>
   <input id="search" placeholder="find node…" autocomplete="off">
   <div class="row">min degree <span id="minDegV">0</span><br><input id="minDeg" type="range" min="0" max="20" value="0" style="width:100%"></div>
   <div class="row">spacing <span id="spaceV">22</span><br><input id="space" type="range" min="6" max="80" value="22" style="width:100%"></div>
+  <label><input type="checkbox" id="lbls" checked> hub labels</label>
   <div class="row"><b>kind</b>
     <label><input type="checkbox" class="k" value="calls" checked> calls</label>
     <label><input type="checkbox" class="k" value="imports" checked> imports</label>
@@ -293,7 +297,28 @@ function hideInfo() { $("info").style.display = "none"; }
 
 // Layout forces. Low gravity + strong repulsion + long links = spread, not clumped. The spacing
 // slider scales linkDistance and repulsion together at runtime via setConfig.
-const SIM = { gravity: 0.08, repulsion: 1.8, repulsionTheta: 1.15, linkSpring: 0.5, linkDistance: 22, friction: 0.9, decay: 100000 };
+const SIM = { gravity: 0.08, repulsion: 1.8, repulsionTheta: 1.15, linkSpring: 0.5, linkDistance: 22, friction: 0.9, decay: 100000, onTick: () => positionLabels() };
+
+// Always-on text labels for the top-degree hubs (cosmos renders GPU points, no native text):
+// DOM spans positioned over the canvas, re-synced from GPU node positions each tick/zoom.
+const shortName = n => (n.label.includes(" · ") ? n.label.split(" · ")[0] : (n.label.split(/[\\/]/).pop() || n.label));
+const LABELN = [...ALLN].sort((a, b) => (b.degree || 0) - (a.degree || 0)).slice(0, 30);
+const labelEls = new Map();
+const labelBox = $("labels");
+LABELN.forEach(n => { const el = document.createElement("div"); el.className = "nl"; el.textContent = shortName(n); labelBox.appendChild(el); labelEls.set(n.id, el); });
+let showLabels = true;
+function positionLabels() {
+  if (!graph) return;
+  const pos = graph.getTrackedNodePositionsMap();
+  labelEls.forEach((el, id) => {
+    const p = showLabels && pos.get(id);
+    if (!p) { el.style.display = "none"; return; }
+    const [sx, sy] = graph.spaceToScreenPosition(p);
+    el.style.display = "block";
+    el.style.transform = "translate(" + (sx + 7) + "px," + (sy - 6) + "px)";
+  });
+}
+
 let graph = null, paused = false;
 try {
   graph = new window.cosmos.Graph($("cv"), {
@@ -306,7 +331,11 @@ try {
     linkWidth: l => l.width,
     scaleNodesOnZoom: true,
     simulation: SIM,
-    events: { onClick: (n) => { if (n) { graph.selectNodeById(n.id, true); showInfo(n); } else { graph.unselectNodes(); hideInfo(); } } },
+    onZoom: () => positionLabels(),
+    events: {
+      onClick: (n) => { if (n) { graph.selectNodeById(n.id, true); showInfo(n); } else { graph.unselectNodes(); hideInfo(); } },
+      onNodeMouseOver: (n) => { if (n) showInfo(n); },
+    },
   });
 } catch (err) {
   $("msg").style.display = "flex";
@@ -322,7 +351,11 @@ function recompute() {
   const vE = ALLE.filter(e => kinds.has(e.kind) && confs.has(e.conf) && idset.has(e.source) && idset.has(e.target));
   const used = new Set(); vE.forEach(e => { used.add(e.source); used.add(e.target); });
   const vN = passN.filter(n => used.has(n.id));
-  if (graph) { graph.setData(vN, vE); graph.start(0.3); }
+  if (graph) {
+    graph.setData(vN, vE); graph.start(0.3);
+    graph.trackNodePositionsByIds(LABELN.map(n => n.id));   // re-track hubs against the new data
+    positionLabels();
+  }
   $("counts").textContent = vN.length + " nodes · " + vE.length + " edges" + (meta && meta.truncated ? " · dropped " + meta.dropped : "");
 }
 
@@ -343,6 +376,7 @@ $("space").addEventListener("input", () => {
   SIM.linkDistance = d; SIM.repulsion = Math.max(1, d / 12);
   if (graph) { graph.setConfig({ simulation: SIM }); graph.start(0.5); }
 });
+$("lbls").addEventListener("change", () => { showLabels = $("lbls").checked; positionLabels(); });
 document.querySelectorAll(".k,.cf").forEach(el => el.addEventListener("change", recompute));
 $("search").addEventListener("input", () => {
   const q = $("search").value.toLowerCase();
