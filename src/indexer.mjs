@@ -83,7 +83,15 @@ async function indexEdges(cfg, store, toIndex, { rebuild }) {
     });
   }
   if (cfg.disambiguate !== false && all.length) {
-    all = disambiguateEdges(all, { symbolIndex, callSiteVec,
+    const importMap = new Map(); // from_path → Set(imported file stems) — for the import-reachability prior
+    for (const e of all) {
+      if (e.kind === "imports" && e.to_path) {
+        let s = importMap.get(e.from_path);
+        if (!s) { s = new Set(); importMap.set(e.from_path, s); }
+        s.add(e.to_path); // to_path is already a stem (resolveEdges strips the extension)
+      }
+    }
+    all = disambiguateEdges(all, { symbolIndex, callSiteVec, importMap,
       threshold: cfg.disambigThreshold, margin: cfg.disambigMargin });
   }
   const changed = [...new Set(toIndex.map((f) => f.relPath))];

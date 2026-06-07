@@ -260,7 +260,7 @@ test("indexer: ambiguous call promoted to inferred toward the embedding-closest 
   const repo = mkdtempSync(join(tmpdir(), "gtir-disambig-"));
   writeFileSync(join(repo, "near.js"), "function target(){ /* MARKER */ return 1; }\n");
   writeFileSync(join(repo, "far.js"), "function target(){ return 2; }\n");
-  writeFileSync(join(repo, "caller.js"), "function use(){ /* MARKER */ return target(); }\n");
+  writeFileSync(join(repo, "caller.js"), "import \"./near\";\nfunction use(){ /* MARKER */ return target(); }\n");
   // Embedder: chunks containing MARKER → [1,0,0]; others → [0,1,0]. So caller≈near, far orthogonal.
   const markerEmbed = (texts) => Promise.resolve(texts.map((t) => (/MARKER/.test(t) ? [1, 0, 0] : [0, 1, 0])));
   try {
@@ -272,6 +272,22 @@ test("indexer: ambiguous call promoted to inferred toward the embedding-closest 
     assert.equal(call.conf, "inferred");
     assert.equal(call.to_path, "near.js");
     assert.ok(call.score > 0.5);
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
+test("indexer: a cross-file ambiguous call is NOT promoted when the call site imports neither candidate", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-noimport-"));
+  writeFileSync(join(repo, "near.js"), "function target(){ /* MARKER */ return 1; }\n");
+  writeFileSync(join(repo, "far.js"), "function target(){ return 2; }\n");
+  // caller imports NEITHER candidate -> neither is import-reachable -> stays ambiguous.
+  writeFileSync(join(repo, "caller.js"), "function use(){ /* MARKER */ return target(); }\n");
+  const markerEmbed = (texts) => Promise.resolve(texts.map((t) => (/MARKER/.test(t) ? [1, 0, 0] : [0, 1, 0])));
+  try {
+    await buildIndex({ ...loadConfig(repo), embedImpl: markerEmbed, minChars: 1 }, { rebuild: true });
+    const edges = await openStore(loadConfig(repo)).then((s) => s.loadEdges());
+    const call = edges.find((e) => e.kind === "calls" && e.ref_name === "target");
+    assert.ok(call, "expected a calls edge for target");
+    assert.equal(call.conf, "ambiguous"); // no import-reachable candidate -> not promoted
   } finally { rmSync(repo, { recursive: true, force: true }); }
 });
 
