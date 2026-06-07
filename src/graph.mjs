@@ -254,7 +254,7 @@ export function renderHtml({ nodes, edges, meta = {} }, cosmosSource) {
   button{background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:3px 8px;cursor:pointer}
 </style></head>
 <body>
-<canvas id="cv"></canvas>
+<div id="cv"></div>
 <canvas id="lblcv"></canvas>
 <div id="msg"></div>
 <div id="panel">
@@ -321,20 +321,21 @@ try {
   graph = new window.cosmos.Graph($("cv"), {
     spaceSize: 16384,
     backgroundColor: "#0d1117",
-    simulationGravity: 0.1,
-    simulationRepulsion: 1.0,
+    simulationGravity: 0.05,
+    simulationRepulsion: 1.4,
     simulationRepulsionTheta: 1.15,
-    simulationCluster: 0.5,
-    simulationLinkSpring: 0.1,
+    simulationCluster: 1.0,
+    simulationLinkSpring: 0.01,
     simulationLinkDistance: 20,
     simulationFriction: 0.9,
     simulationDecay: 3000,
-    scaleNodesOnZoom: true,
+    scalePointsOnZoom: true,
     onClick: (index) => {
       if (index != null) { graph.selectPointByIndex(index, true); const n = NODES[curVisIdx[index]]; if (n) showInfo(n); }
       else { graph.unselectPoints(); hideInfo(); }
     },
   });
+  window.gtirGraph = graph;   // expose for power users / debugging
 } catch (err) {
   $("msg").style.display = "flex";
   $("msg").textContent = "WebGL is required to view this graph.";
@@ -469,7 +470,8 @@ $("pause").addEventListener("click", () => {
   if (paused) { graph.pause(); $("pause").textContent = "▶ resume"; } else { graph.restart(); $("pause").textContent = "⏸ pause"; }
 });
 
-if (graph) { recompute(); setTimeout(() => graph.fitView(500), 200); }
+function fitAll(ms) { if (graph && curVisIdx.length) graph.fitViewByPointIndices(curVisIdx.map((_, i) => i), ms); }
+if (graph) { recompute(); setTimeout(() => fitAll(600), 2200); setTimeout(() => fitAll(600), 5000); }
 </script>
 </body></html>`;
 }
