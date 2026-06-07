@@ -422,15 +422,17 @@ stdout and exist as MCP tools (`impact_<label>`, `orphans_<label>`, `cycles_<lab
   `--downstream` for what it depends on; `--depth N` to cap hops; `--path <file>` to
   disambiguate a name defined in multiple files; `--include-ambiguous` to also follow
   name-coincidence edges. Capped at 500 nodes (`--limit`); `truncated:true` when hit.
-- `gtir orphans` — likely-dead symbols (no inbound call/import edges). Entrypoints
-  (exports, `bin/`/`main`/`index`/`cli`, test files, Go-exported names, handler names)
-  are split into a separate `possible_entrypoint` list, not flagged dead.
+- `gtir orphans` — likely-dead **callable** symbols (functions/classes/methods with no inbound
+  reference). Local variables and types are excluded; entrypoints (exports, `bin/`/`main`/`index`/
+  `cli`, test files, Go-exported names, handler names) go to a separate `possible_entrypoint` list.
+  Always counts ambiguous inbound as a reference (a method only called via `obj.method()` is not dead).
 - `gtir cycles` — circular dependencies: call cycles and import cycles (Tarjan SCC
   groups, each with one sample path). Self-recursion is excluded.
 
-Traversal uses **resolved** edges only by default (ambiguous edges are name-coincidence
-guesses); pass `--include-ambiguous` to widen. Requires an index built with the edge layer
-(`gtir index`); on an older index, run `gtir index --rebuild` first.
+`impact` and `cycles` traverse **resolved** (and embedding-`inferred`) edges by default (ambiguous
+edges are name-coincidence guesses); pass `--include-ambiguous` to widen. (`orphans` always counts
+ambiguous inbound — see above.) Requires an index built with the edge layer (`gtir index`); on an
+older index, run `gtir index --rebuild` first.
 
 ## 🤖 Model
 

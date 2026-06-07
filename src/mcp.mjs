@@ -519,10 +519,10 @@ export function defaultImpactFn(indexes) {
   };
 }
 export function defaultOrphansFn(indexes) {
-  return async (label, opts) => {
+  return async (label) => {
     const ix = indexes.find((i) => i.label === label);
     if (!ix) throw new Error(`unknown index: ${label}`);
-    return orphansQuery(ix.cfg, opts);
+    return orphansQuery(ix.cfg);
   };
 }
 export function defaultCyclesFn(indexes) {
