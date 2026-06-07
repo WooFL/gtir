@@ -20,15 +20,25 @@ export function centralityMultiplier(text, path, degree, { weight = 0.15, K = 8 
   return 1 + weight * (c / (c + K));
 }
 
-// Re-rank fused hits by centrality (pure): multiply each hit.score by its multiplier, re-sort desc,
-// annotate `centrality` only when ≠1. Does NOT slice — the caller slices to k afterward.
-export function applyCentrality(hits, degree, opts = {}) {
-  const out = hits.map((h) => {
-    const mult = centralityMultiplier(h.snippet ?? "", h.path, degree, opts);
-    return { ...h, score: Number((h.score * mult).toFixed(4)),
-      ...(mult !== 1 ? { centrality: Number(mult.toFixed(3)) } : {}) };
-  });
-  out.sort((a, b) => b.score - a.score);
+// Tiebreaker-only centrality (pure). Reorders hits ONLY within bands of near-equal RRF score
+// (consecutive items within `eps` of the band's leading score); inside each band, higher centrality
+// leads. Never crosses a real score gap — exact matches keep their rank, so this cannot demote a
+// relevant top hit (measured: the score-multiplier variant cost ~4.5pp recall@1; this is neutral).
+// Scores are left unchanged; `centrality` is annotated on items whose multiplier ≠ 1. Does NOT
+// slice — the caller slices to k afterward. Assumes hits are already sorted by score desc.
+// NOTE: fuseRRF rounds scores to 4 decimals, so in practice this band fires only on post-rounding
+// ties — eps just needs to be < the rounding step (1e-4). The 1e-6 default keeps that property even
+// if a caller omits it; never raise it above the inter-rank RRF gap (~2.6e-4) or exact matches demote.
+export function applyCentrality(hits, degree, { weight = 0.15, K = 8, eps = 0.000001 } = {}) {
+  const withC = hits.map((h) => ({ h, c: centralityMultiplier(h.snippet ?? "", h.path, degree, { weight, K }) }));
+  const out = [];
+  for (let i = 0; i < withC.length;) {
+    let j = i + 1;
+    while (j < withC.length && Math.abs(withC[i].h.score - withC[j].h.score) < eps) j++;
+    const band = withC.slice(i, j).sort((a, b) => b.c - a.c);
+    for (const { h, c } of band) out.push(c !== 1 ? { ...h, centrality: Number(c.toFixed(3)) } : h);
+    i = j;
+  }
   return out;
 }
 

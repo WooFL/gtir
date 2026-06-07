@@ -30,16 +30,28 @@ test("centralityMultiplier: 1 at centrality 0; bounded by 1+weight; monotonic", 
 import { applyCentrality, contextFor } from "../src/graph-retrieval.mjs";
 import { buildGraph } from "../src/edge-graph.mjs";
 
-test("applyCentrality: re-sorts by boosted score and annotates only when >1", () => {
+test("applyCentrality (tiebreak): reorders within a near-equal score band, higher centrality first", () => {
   const deg = { call: new Map([["a.mjs#hub", 50]]), importIn: new Map() };
   const hits = [
-    { path: "z.mjs", score: 0.30, snippet: "function lonely(){}" },         // no degree
-    { path: "a.mjs", score: 0.29, snippet: "function hub(){}" },            // high degree
+    { path: "z.mjs", score: 0.3000, snippet: "function lonely(){}" },  // tied with a, no degree
+    { path: "a.mjs", score: 0.3000, snippet: "function hub(){}" },     // tied, high degree
+    { path: "low.mjs", score: 0.1000, snippet: "function lonely(){}" }, // far below the band
   ];
-  const out = applyCentrality(hits, deg, { weight: 0.15, K: 8 });
-  assert.equal(out[0].path, "a.mjs");                 // boosted past the 0.30 lonely hit
+  const out = applyCentrality(hits, deg, { weight: 0.15, K: 8, eps: 0.001 });
+  assert.equal(out[0].path, "a.mjs");        // within the tie band, higher centrality leads
   assert.ok(out[0].centrality > 1);
+  assert.equal(out[2].path, "low.mjs");      // outside the band — rank preserved
   assert.equal(out.find((h) => h.path === "z.mjs").centrality, undefined); // ×1 → no annotation
+});
+
+test("applyCentrality (tiebreak): a clear score gap is NOT reordered (precision preserved)", () => {
+  const deg = { call: new Map([["a.mjs#hub", 50]]), importIn: new Map() };
+  const hits = [
+    { path: "z.mjs", score: 0.30, snippet: "function lonely(){}" }, // clearly #1
+    { path: "a.mjs", score: 0.25, snippet: "function hub(){}" },    // high degree but 0.05 below
+  ];
+  const out = applyCentrality(hits, deg, { weight: 0.15, K: 8, eps: 0.001 });
+  assert.equal(out[0].path, "z.mjs"); // gap > eps → exact match keeps #1, centrality cannot override
 });
 
 test("contextFor: callers from rev, callees from fwd, precise keys, capped", () => {
