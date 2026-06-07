@@ -45,6 +45,7 @@ function toNode(e) {
 }
 
 // Keep only edges matching the kind / conf / pathPrefix filters (each optional).
+// Operates on RAW edge rows (pre-mapEdges) — mapEdges drops from_path, so always filter first.
 export function applyFilters(edges, { kind = null, conf = null, pathPrefix = null } = {}) {
   const kindSet = kind ? new Set(kind) : null;
   const confSet = conf ? new Set(conf) : null;
@@ -60,9 +61,9 @@ export function mapEdges(rows) {
   const nodes = new Map();
   const register = (d) => {
     let cur = nodes.get(d.id);
-    if (!cur) { cur = { id: d.id, label: d.label, cls: d.cls, refs: [], candidates: [] }; nodes.set(d.id, cur); }
+    if (!cur) { cur = { id: d.id, label: d.label, cls: d.cls, refs: [], candidates: [], _cand: new Set() }; nodes.set(d.id, cur); }
     if (d.ref && !cur.refs.some((r) => r.path === d.ref.path && r.line === d.ref.line)) cur.refs.push(d.ref);
-    for (const c of d.candidates ?? []) if (!cur.candidates.includes(c)) cur.candidates.push(c);
+    for (const c of d.candidates ?? []) if (!cur._cand.has(c)) { cur._cand.add(c); cur.candidates.push(c); }
     return cur.id;
   };
   const edges = rows.map((e) => {
@@ -70,5 +71,7 @@ export function mapEdges(rows) {
     const target = register(toNode(e));
     return { source, target, kind: e.kind, conf: e.conf };
   });
-  return { nodes: [...nodes.values()], edges };
+  const out = [...nodes.values()];
+  for (const n of out) delete n._cand;   // drop the transient dedup index
+  return { nodes: out, edges };
 }
