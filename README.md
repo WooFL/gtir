@@ -380,11 +380,24 @@ MCP server exposes them as traversal tools:
 
 Each edge carries a confidence tag: **`resolved`** (a same-file definition, or an import-scoped one),
 **`ambiguous`** (a cross-file match no import vouches for, or several same-named definitions — the
-candidate path(s) returned, never a guess passed off as fact), or **`external`** (a library/builtin not in
-the index). Resolution is import-scoped *heuristic*, not type-resolved — a cross-file call only counts as
-`resolved` when an import links the two files; otherwise a same-name coincidence (a builtin `Error`, a
-method `.split`) stays `ambiguous`. It is not an LSP. `find … references` prefers real call edges and falls
-back to the lexical sweep when none exist.
+candidate path(s) returned, never a guess passed off as fact), **`inferred`** (an ambiguous edge promoted
+by embedding similarity — see below), or **`external`** (a library/builtin not in the index). Resolution
+is import-scoped *heuristic*, not type-resolved — a cross-file call only counts as `resolved` when an
+import links the two files; otherwise a same-name coincidence (a builtin `Error`, a method `.split`) stays
+`ambiguous`. It is not an LSP. `find … references` prefers real call edges and falls back to the lexical
+sweep when none exist.
+
+### Inferred edges (embedding-disambiguation)
+
+When a call name resolves to several candidate definitions (or one unvouched cross-file
+candidate), the rule resolver marks the edge `ambiguous`. At index time gtir then compares the
+call-site chunk's embedding against each candidate definition's embedding and, when one is a
+confident match, promotes the edge to **`inferred`** — choosing the target and recording a cosine
+`score`. Inferred edges are traversed like `resolved` ones (they show up in `callers`/`callees`,
+`impact`, `cycles`, and `--centrality`), but stay distinct so you can tell a proven edge from a
+guessed one. It reuses vectors already in the index (no extra embedding cost) and is on by default.
+
+Tunables (config): `disambiguate` (default true), `disambigThreshold` (0.55), `disambigMargin` (0.05).
 
 ### Visualizing the edge graph
 
