@@ -43,7 +43,8 @@
     "gtir": "node bin/gtir.mjs",
     "eval": "node bin/gtir.mjs eval --repo eval/corpus --golden eval/golden.json --baseline eval/baseline.json",
     "build:shaders": "node scripts/build-shader-grammars.mjs",
-    "prepack": "node scripts/bundle-grammars.mjs"
+    "prepack": "node scripts/bundle-grammars.mjs",
+    "bundle:cosmos": "node scripts/bundle-cosmos.mjs"
   },
   "engines": {
     "node": ">=20"
@@ -55,6 +56,8 @@
     "web-tree-sitter": "^0.25.0"
   },
   "devDependencies": {
+    "@cosmograph/cosmos": "^1.6.1",
+    "esbuild": "^0.21.5",
     "tree-sitter-wasms": "^0.1.12"
   }
 }
