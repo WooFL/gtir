@@ -203,6 +203,7 @@ test("renderHtml: tooltip/info escapes user data (esc helper present)", () => {
   const html = renderHtml({ nodes: g.nodes, edges: g.edges, meta: {} }, "x");
   assert.ok(html.includes("&amp;") && html.includes("&lt;"));
   assert.ok(html.includes("esc(n.label)"));
+  assert.ok(html.includes("&#39;") && html.includes("&quot;"));   // esc covers quotes too
 });
 
 test("buildGraph: conf filter reaches the pipeline (whole-repo)", () => {

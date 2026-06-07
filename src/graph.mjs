@@ -266,7 +266,7 @@ ${cosmosSafe}
 window.__GTIR_GRAPH__ = ${data};
 const CONF = ${conf}, PAL = ${pal};
 const { nodes: ALLN, edges: ALLE, meta } = window.__GTIR_GRAPH__;
-const esc = s => String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+const esc = s => String(s).replace(/[&<>'"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[c]));
 const $ = id => document.getElementById(id);
 
 const clusters = [...new Set(ALLN.map(n => n.cluster))];
