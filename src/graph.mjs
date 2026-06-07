@@ -24,10 +24,10 @@ function fromNode(e) {
   return { id: e.from_path, label: e.from_path, cls: "code", ref: { path: e.from_path, line: lineOf(e.from_lines) } };
 }
 
-// TO-side node descriptor. Resolved → real target; non-resolved → named synthetic node
+// TO-side node descriptor. Resolved/inferred → real target; non-resolved → named synthetic node
 // keyed by ref_name (degrading to a shared "" sink when ref_name is null, i.e. a stale index).
 function toNode(e) {
-  if (e.conf === "resolved") {
+  if (e.conf === "resolved" || e.conf === "inferred") {
     if (NOTE_KINDS.has(e.kind)) {
       const name = e.ref_name || e.to_symbol || base(e.to_path);
       return { id: `note:${name}`, label: `[[${name}]]`, cls: "note", ref: { path: e.to_path, line: 0 } };
@@ -111,8 +111,8 @@ export function capByDegree({ nodes, edges }, maxNodes) {
 }
 
 // Confidence severity for rollup merges: ambiguous (a wrong guess) is the audit target, so it
-// dominates; external (correctly outside the index) next; resolved is the baseline.
-const SEVERITY = { resolved: 0, external: 1, ambiguous: 2 };
+// dominates; external (correctly outside the index) next; inferred sits just above resolved; resolved is the baseline.
+const SEVERITY = { resolved: 0, inferred: 1, external: 2, ambiguous: 3 };
 export function worstConf(a, b) { return SEVERITY[b] > SEVERITY[a] ? b : a; }
 
 // Re-key code symbol nodes to their file; synthetic ext:/amb: and note: nodes pass through.
@@ -215,7 +215,7 @@ export function buildGraph(edges, opts = {}) {
   return { nodes, edges: g.edges, truncated, dropped };
 }
 
-const CONF_COLOR = { resolved: "#3fb950", ambiguous: "#d29922", external: "#8b949e" };
+const CONF_COLOR = { resolved: "#3fb950", inferred: "#39c5cf", ambiguous: "#d29922", external: "#8b949e" };
 const PALETTE = [
   "#58a6ff", "#bc8cff", "#3fb950", "#e3b341", "#f85149", "#39c5cf", "#db61a2", "#a371f7",
   "#7ee787", "#ff7b72", "#79c0ff", "#ffa657", "#d2a8ff", "#56d364", "#f0883e", "#1f6feb",
@@ -273,6 +273,7 @@ export function renderHtml({ nodes, edges, meta = {} }, cosmosSource) {
   </div>
   <div class="row"><b>confidence</b>
     <label><input type="checkbox" class="cf" value="resolved" checked> <span style="color:${CONF_COLOR.resolved}">resolved</span></label>
+    <label><input type="checkbox" class="cf" value="inferred" checked> <span style="color:${CONF_COLOR.inferred}">inferred</span></label>
     <label><input type="checkbox" class="cf" value="ambiguous" checked> <span style="color:${CONF_COLOR.ambiguous}">ambiguous</span></label>
     <label><input type="checkbox" class="cf" value="external"> <span style="color:${CONF_COLOR.external}">external</span></label>
   </div>
@@ -297,7 +298,7 @@ const shortName = n => (n.label.includes(" · ") ? n.label.split(" · ")[0] : (n
 
 const clusterHex = clusters.map((c, i) => c === "external" ? CONF.external : c === "ambiguous" ? CONF.ambiguous : PAL[i % PAL.length]);
 const clusterRGB = clusterHex.map(hexRGB);
-const confRGB = { resolved: hexRGB(CONF.resolved), ambiguous: hexRGB(CONF.ambiguous), external: hexRGB(CONF.external) };
+const confRGB = { resolved: hexRGB(CONF.resolved), inferred: hexRGB(CONF.inferred), ambiguous: hexRGB(CONF.ambiguous), external: hexRGB(CONF.external) };
 const clusterPosFlat = []; clusterXY.forEach(p => { clusterPosFlat.push(p[0], p[1]); });
 
 const idToIdx = new Map(NODES.map((n, i) => [n.id, i]));

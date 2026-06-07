@@ -331,3 +331,20 @@ test("clusterIndex: clusterXY is a grid filling spaceSize, deterministic", () =>
   // running twice gives identical output (deterministic)
   assert.deepEqual(clusterIndex(nodes, 1000), ci);
 });
+
+test("inferred edge renders as a real target node (not an amb: sink)", () => {
+  const { nodes } = buildGraph([{ kind: "calls", conf: "inferred", from_path: "a.mjs", from_lines: "1",
+    from_symbol: "f", to_path: "b.mjs", to_lines: "10-20", to_symbol: "g", ref_name: "g", candidates: [], score: 0.71 }]);
+  assert.ok(nodes.some((n) => n.id.includes("b.mjs") && !n.id.startsWith("amb:")), "expected a real target node for g");
+  assert.ok(!nodes.some((n) => n.id.startsWith("amb:")), "no synthetic ambiguous node for an inferred edge");
+});
+
+test("worstConf ranks inferred above resolved, below ambiguous", () => {
+  assert.equal(worstConf("resolved", "inferred"), "inferred");
+  assert.equal(worstConf("inferred", "ambiguous"), "ambiguous");
+});
+
+test("renderHtml includes an inferred confidence toggle", () => {
+  const html = renderHtml({ nodes: [], edges: [], meta: {} }, "window.cosmos={};");
+  assert.ok(html.includes('value="inferred"'));
+});
