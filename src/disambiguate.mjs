@@ -10,7 +10,7 @@ export function cosine(a, b) {
 
 // Promote ambiguous `calls` rows to conf:"inferred" when embedding similarity confidently picks one
 // candidate. Pure — returns a NEW array; non-calls / non-ambiguous rows pass through unchanged.
-// ctx: { symbolIndex: Map(name → [{path,line_start,line_end,embedding}]),
+// ctx: { symbolIndex: Map(name → [{path,line_start,line_end,embedding,content_hash}]),
 //        callSiteVec: Map(content_hash → embedding), threshold = 0.55, margin = 0.05 }
 export function disambiguateEdges(rows, { symbolIndex, callSiteVec, threshold = 0.55, margin = 0.05 } = {}) {
   return rows.map((r) => {
@@ -22,6 +22,9 @@ export function disambiguateEdges(rows, { symbolIndex, callSiteVec, threshold = 
       let sim = -1, def = null;
       for (const d of defs) {
         if (d.path !== path || !d.embedding) continue;
+        // Skip a def that IS the call-site chunk: cosine(chunk, itself) ≈ 1.0 is a degenerate signal,
+        // not evidence — it's almost always a method/builtin name colliding with a same-chunk decl.
+        if (d.content_hash && d.content_hash === r.content_hash) continue;
         const s = cosine(callVec, d.embedding);
         if (s > sim) { sim = s; def = d; }
       }
