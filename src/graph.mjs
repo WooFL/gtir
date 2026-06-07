@@ -327,11 +327,23 @@ window.addEventListener("resize", sizeLabelCanvas);
 // from all visible node positions; each frame we just convert the ≤N centroids to screen + draw.
 let islandGeo = [], frame = 0;
 function computeIslands(pos) {
-  const sum = new Map();
-  ALLN.forEach(n => { const p = pos.get(n.id); if (!p) return; let a = sum.get(n.cluster); if (!a) { a = [0, 0, 0]; sum.set(n.cluster, a); } a[0] += p[0]; a[1] += p[1]; a[2]++; });
-  const cen = new Map(); sum.forEach((a, c) => cen.set(c, [a[0] / a[2], a[1] / a[2], 0]));
-  ALLN.forEach(n => { const p = pos.get(n.id); if (!p) return; const c = cen.get(n.cluster); const dx = p[0] - c[0], dy = p[1] - c[1], d = dx * dx + dy * dy; if (d > c[2]) c[2] = d; });
-  islandGeo = [...cen.entries()].map(([name, c]) => ({ cx: c[0], cy: c[1], r: Math.sqrt(c[2]) + 90, name, color: clusterColor.get(name) || "#888" }));
+  const buck = new Map();   // cluster -> { x,y sums, n, xs[], ys[] } in space coords (visible nodes only)
+  ALLN.forEach(n => {
+    const p = pos.get(n.id); if (!p) return;
+    let a = buck.get(n.cluster);
+    if (!a) { a = { x: 0, y: 0, n: 0, xs: [], ys: [] }; buck.set(n.cluster, a); }
+    a.x += p[0]; a.y += p[1]; a.n++; a.xs.push(p[0]); a.ys.push(p[1]);
+  });
+  islandGeo = [];
+  buck.forEach((a, name) => {
+    if (a.n < 3) return;                                  // skip noise clusters
+    const cx = a.x / a.n, cy = a.y / a.n;
+    const ds = [];
+    for (let i = 0; i < a.n; i++) { const dx = a.xs[i] - cx, dy = a.ys[i] - cy; ds.push(Math.sqrt(dx * dx + dy * dy)); }
+    ds.sort((u, v) => u - v);
+    const r = ds[Math.floor(a.n * 0.7)] * 1.25 + 10;      // robust radius (70th pct) — not the max outlier
+    islandGeo.push({ cx, cy, r, name, color: clusterColor.get(name) || "#888" });
+  });
 }
 function draw() {
   lctx.clearRect(0, 0, lcv.width, lcv.height);
