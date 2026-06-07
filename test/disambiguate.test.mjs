@@ -86,3 +86,31 @@ test("disambiguateEdges: non-calls / resolved / external pass through untouched"
   const out = disambiguateEdges(rows, { symbolIndex, callSiteVec });
   assert.deepEqual(out, rows);
 });
+
+test("disambiguateEdges: member-call to a denylisted name is NOT promoted", () => {
+  // perfect-score candidate in a DIFFERENT chunk — would promote if not for the structural filter.
+  const si = new Map([["get", [{ path: "store.ts", line_start: 1, line_end: 5, embedding: [1, 0, 0], content_hash: "h2" }]]]);
+  const csv = new Map([["hc", [1, 0, 0]]]);
+  const row = { kind: "calls", conf: "ambiguous", from_path: "c.ts", from_symbol: "f", to_path: null, to_symbol: null,
+    ref_name: "get", candidates: ["store.ts"], content_hash: "hc", isMethod: true };
+  const [r] = disambiguateEdges([row], { symbolIndex: si, callSiteVec: csv });
+  assert.equal(r.conf, "ambiguous"); // suppressed despite cosine 1.0
+});
+
+test("disambiguateEdges: a BARE denylisted name still promotes (free function)", () => {
+  const si = new Map([["get", [{ path: "store.ts", line_start: 1, line_end: 5, embedding: [1, 0, 0], content_hash: "h2" }]]]);
+  const csv = new Map([["hc", [1, 0, 0]]]);
+  const row = { kind: "calls", conf: "ambiguous", from_path: "c.ts", from_symbol: "f", to_path: null, to_symbol: null,
+    ref_name: "get", candidates: ["store.ts"], content_hash: "hc", isMethod: false };
+  const [r] = disambiguateEdges([row], { symbolIndex: si, callSiteVec: csv });
+  assert.equal(r.conf, "inferred");
+});
+
+test("disambiguateEdges: a member-call to a DISTINCTIVE name still promotes", () => {
+  const si = new Map([["canUndo", [{ path: "history.ts", line_start: 1, line_end: 5, embedding: [1, 0, 0], content_hash: "h2" }]]]);
+  const csv = new Map([["hc", [1, 0, 0]]]);
+  const row = { kind: "calls", conf: "ambiguous", from_path: "c.ts", from_symbol: "f", to_path: null, to_symbol: null,
+    ref_name: "canUndo", candidates: ["history.ts"], content_hash: "hc", isMethod: true };
+  const [r] = disambiguateEdges([row], { symbolIndex: si, callSiteVec: csv });
+  assert.equal(r.conf, "inferred");
+});

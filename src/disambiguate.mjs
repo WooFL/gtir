@@ -8,6 +8,21 @@ export function cosine(a, b) {
   return d ? dot / d : 0;
 }
 
+// Common container / iterator / promise / event / test-framework method names. A member-call
+// (receiver.method()) to one of these is almost never resolvable by bare-name matching: the real
+// target is the receiver's class method, which name-matching can't find — the candidate set is noise
+// and embedding similarity just picks the least-wrong. Leave such calls ambiguous, do not promote.
+const DENY_METHODS = new Set([
+  "get", "set", "has", "delete", "add", "clear", "find", "findIndex", "findLast",
+  "filter", "map", "flatMap", "forEach", "reduce", "reduceRight", "some", "every",
+  "includes", "indexOf", "lastIndexOf", "push", "pop", "shift", "unshift", "slice",
+  "splice", "concat", "join", "split", "sort", "reverse", "fill", "keys", "values", "entries",
+  "next", "then", "catch", "finally",
+  "on", "off", "emit", "once", "addListener", "removeListener", "addEventListener", "removeEventListener", "dispatchEvent",
+  "toString", "valueOf", "hasOwnProperty", "call", "apply", "bind",
+  "mock", "spy", "fn", "mockReturnValue", "mockResolvedValue", "mockImplementation",
+]);
+
 // Promote ambiguous `calls` rows to conf:"inferred" when embedding similarity confidently picks one
 // candidate. Pure — returns a NEW array; non-calls / non-ambiguous rows pass through unchanged.
 // ctx: { symbolIndex: Map(name → [{path,line_start,line_end,embedding,content_hash}]),
@@ -15,6 +30,7 @@ export function cosine(a, b) {
 export function disambiguateEdges(rows, { symbolIndex, callSiteVec, threshold = 0.55, margin = 0.05 } = {}) {
   return rows.map((r) => {
     if (r.kind !== "calls" || r.conf !== "ambiguous") return r;
+    if (r.isMethod && DENY_METHODS.has(r.ref_name)) return r; // structural filter: leave ambiguous
     const callVec = callSiteVec?.get(r.content_hash);
     if (!callVec) return r;
     const defs = symbolIndex?.get(r.ref_name) || [];
