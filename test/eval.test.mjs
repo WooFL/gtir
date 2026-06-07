@@ -251,3 +251,35 @@ test("edges-golden.json is a non-empty array of well-formed entries", () => {
     assert.ok(["calls", "links", "imports", "embeds"].includes(g.kind));
   }
 });
+
+import { scoreEdge } from "../src/eval.mjs";
+
+// Edges carrying ref_name (what scoreEdge keys on), unlike the to_symbol-keyed set above.
+const callEdges = [
+  { kind: "calls", conf: "resolved", from_path: "a.ts", to_path: "b.ts", ref_name: "g" },
+  { kind: "calls", conf: "resolved", from_path: "c.ts", to_path: "wrong.ts", ref_name: "h" },
+  { kind: "calls", conf: "external", from_path: "x.ts", to_path: null, ref_name: "ext" },
+];
+
+test("scoreEdge: produced edge hits the expected target → correct", () => {
+  assert.equal(scoreEdge(callEdges, { from: "a.ts", to: "b.ts", symbol: "g", kind: "calls" }), "correct");
+});
+test("scoreEdge: produced edge resolves to a different file → wrong", () => {
+  assert.equal(scoreEdge(callEdges, { from: "c.ts", to: "right.ts", symbol: "h", kind: "calls" }), "wrong");
+});
+test("scoreEdge: no produced edge for the call → missing", () => {
+  assert.equal(scoreEdge(callEdges, { from: "a.ts", to: "b.ts", symbol: "absent", kind: "calls" }), "missing");
+});
+test("scoreEdge: expected-external (to=null) matched by an external edge → correct", () => {
+  assert.equal(scoreEdge(callEdges, { from: "x.ts", to: null, symbol: "ext", kind: "calls" }), "correct");
+});
+test("scoreEdge: expected-external but edge resolved to a file → wrong", () => {
+  assert.equal(scoreEdge(callEdges, { from: "a.ts", to: null, symbol: "g", kind: "calls" }), "wrong");
+});
+test("scoreEdge: any produced edge hitting the target counts (multi-call site)", () => {
+  const multi = [
+    { kind: "calls", conf: "ambiguous", from_path: "m.ts", to_path: null, ref_name: "f" },
+    { kind: "calls", conf: "resolved", from_path: "m.ts", to_path: "t.ts", ref_name: "f" },
+  ];
+  assert.equal(scoreEdge(multi, { from: "m.ts", to: "t.ts", symbol: "f", kind: "calls" }), "correct");
+});
