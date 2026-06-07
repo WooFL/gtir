@@ -80,3 +80,22 @@ test("edge upserted without ref_name coerces undefined -> '' -> null", async () 
     assert.equal(e.ref_name, null);
   } finally { rmSync(cfg._root, { recursive: true, force: true }); }
 });
+
+test("edge score round-trips; edgeColumns reflects the table", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "gtir-edge-score-"));
+  const cfg = { indexDir: join(dir, ".gtir") };
+  try {
+    const store = await openStore(cfg);
+    assert.equal(await store.edgeColumns(), null); // no edges table yet
+    await store.upsertEdges([
+      { kind: "calls", conf: "inferred", from_path: "a.ts", from_lines: "1", from_symbol: "f",
+        to_path: "b.ts", to_lines: "10-20", to_symbol: "g", ref_name: "g", candidates: [], content_hash: "h", score: 0.71 },
+      { kind: "calls", conf: "resolved", from_path: "c.ts", from_lines: "2", from_symbol: "x",
+        to_path: "c.ts", to_lines: "5", to_symbol: "x", ref_name: "x", candidates: [], content_hash: "h2" },
+    ]);
+    const rows = await store.loadEdges();
+    assert.equal(rows.find((r) => r.conf === "inferred").score, 0.71);
+    assert.equal(rows.find((r) => r.conf === "resolved").score, null); // unset → null
+    assert.ok((await store.edgeColumns()).has("score"));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
