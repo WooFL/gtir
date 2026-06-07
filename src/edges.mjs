@@ -43,6 +43,11 @@ function unquote(s) {
   return String(s).replace(/^["'<]/, "").replace(/["'>]$/, "");
 }
 
+// Strip a known source-file extension to get a path stem, so an import source ("./token")
+// and an indexed candidate path ("src/token.ts") compare equal.
+const SRC_EXT = /\.(m?[jt]sx?|d\.ts|py|rs|go|c|cc|cpp|cxx|h|hpp|hh)$/i;
+function stripExt(p) { return String(p).replace(SRC_EXT, ""); }
+
 // Collect named import specifiers from an import node (best-effort; precise for JS/TS-style
 // `import { a, b } from "..."` and Python `from module import a, b`). Returns a Set of identifier names.
 function importNames(node) {
@@ -174,7 +179,7 @@ export function extractNotesEdges(relPath, text) {
 function resolveSourceStem(fromPath, source) {
   if (!source || !/^[./]/.test(source)) return null;
   const joined = join(dirname(fromPath), source).replace(/\\/g, "/");
-  return joined.replace(/\.(m?[jt]sx?|py|rs|go|c|cc|cpp|h|hpp)$/i, "");
+  return stripExt(joined);
 }
 
 const noteKey = (s) => basename(String(s)).replace(/\.(md|mdx)$/i, "").toLowerCase();
@@ -210,7 +215,7 @@ export function resolveEdges(rawEdges, symbolIndex, noteIndex, opts = {}) {
       const from = { path: e.fromPath, fromLine: e.fromLine, symbol: null };
       if (cands.length === 0) { out.push(row("calls", from, null, "external", [], contentHash)); continue; }
       const stem = importByName.get(e.fromPath)?.get(e.refName);
-      const scoped = stem ? cands.find((c) => c.path.replace(/\.(m?[jt]sx?|py|rs|go|c|cc|cpp|h|hpp)$/i, "") === stem) : null;
+      const scoped = stem ? cands.find((c) => stripExt(c.path) === stem) : null;
       if (scoped) { out.push(row("calls", from, { ...scoped, symbol: e.refName }, "resolved", [], contentHash)); continue; }
       if (cands.length === 1) { out.push(row("calls", from, { ...cands[0], symbol: e.refName }, "resolved", [], contentHash)); continue; }
       out.push(row("calls", from, null, "ambiguous", cands.map((c) => c.path), contentHash));
