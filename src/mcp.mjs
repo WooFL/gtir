@@ -503,13 +503,25 @@ export function defaultNeighborsFn(indexes) {
 }
 
 export function defaultImpactFn(indexes) {
-  return async (label, opts) => impactQuery(indexes.find((i) => i.label === label).cfg, opts);
+  return async (label, opts) => {
+    const ix = indexes.find((i) => i.label === label);
+    if (!ix) throw new Error(`unknown index: ${label}`);
+    return impactQuery(ix.cfg, opts);
+  };
 }
 export function defaultOrphansFn(indexes) {
-  return async (label, opts) => orphansQuery(indexes.find((i) => i.label === label).cfg, opts);
+  return async (label, opts) => {
+    const ix = indexes.find((i) => i.label === label);
+    if (!ix) throw new Error(`unknown index: ${label}`);
+    return orphansQuery(ix.cfg, opts);
+  };
 }
 export function defaultCyclesFn(indexes) {
-  return async (label, opts) => cyclesQuery(indexes.find((i) => i.label === label).cfg, opts);
+  return async (label, opts) => {
+    const ix = indexes.find((i) => i.label === label);
+    if (!ix) throw new Error(`unknown index: ${label}`);
+    return cyclesQuery(ix.cfg, opts);
+  };
 }
 
 // Gate each served index on a readiness probe before serving. A broken/unready index is dropped
@@ -553,7 +565,7 @@ export function serveStdio(indexes, { version } = {}) {
       if (res) process.stdout.write(JSON.stringify(res) + "\n");
     }
   });
-  process.stderr.write(`gtir mcp: serving [${indexes.map((i) => i.label).join(", ")}] × {search,read,outline,similar,find,callers,callees,neighbors} + gtir_status\n`);
+  process.stderr.write(`gtir mcp: serving [${indexes.map((i) => i.label).join(", ")}] × {search,read,outline,similar,find,callers,callees,neighbors,impact,orphans,cycles} + gtir_status\n`);
 }
 
 // Start a live file-watcher per served index (`gtir mcp --watch`). Each watcher runs an

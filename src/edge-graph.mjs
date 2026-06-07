@@ -165,6 +165,8 @@ export function classifyEntrypoint(name, path, text) {
 // notes: {name,path}). A symbol is an orphan candidate when its inbound (graph.rev) set is empty.
 // includeAmbiguous is already reflected in graph.rev when the graph was built with that flag.
 export function orphans(inventory, graph, { includeAmbiguous = false } = {}) {
+  // includeAmbiguous is intentionally not read here: it was already applied to `graph.rev`
+  // when buildGraph(edges, { includeAmbiguous }) ran. Accepted only so callers can pass it through.
   void includeAmbiguous;
   const likely_dead = [], possible_entrypoint = [];
   for (const def of inventory) {
