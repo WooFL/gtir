@@ -89,6 +89,27 @@ export function applyFilters(edges, { kind = null, conf = null, pathPrefix = nul
     (!pathPrefix || String(e.from_path ?? "").startsWith(pathPrefix)));
 }
 
+// Cap node count by dropping the lowest-degree nodes (and their incident edges). Returns the
+// graph plus { truncated, dropped }. Used only for the whole-repo view; focus is already bounded.
+export function capByDegree({ nodes, edges }, maxNodes) {
+  if (nodes.length <= maxNodes) return { nodes, edges, truncated: false, dropped: 0 };
+  const degree = new Map(nodes.map((n) => [n.id, 0]));
+  for (const e of edges) {
+    degree.set(e.source, (degree.get(e.source) ?? 0) + 1);
+    degree.set(e.target, (degree.get(e.target) ?? 0) + 1);
+  }
+  const keep = new Set(
+    [...nodes].sort((a, b) => (degree.get(b.id) - degree.get(a.id)))
+      .slice(0, maxNodes).map((n) => n.id));
+  const keptNodes = nodes.filter((n) => keep.has(n.id));
+  return {
+    nodes: keptNodes,
+    edges: edges.filter((e) => keep.has(e.source) && keep.has(e.target)),
+    truncated: true,
+    dropped: nodes.length - keptNodes.length,
+  };
+}
+
 // Map raw edge rows → { nodes: [...], edges: [...] }. Nodes are de-duped by id; each
 // accumulates its source refs (for tooltips) and any candidate paths (ambiguous/external).
 export function mapEdges(rows) {

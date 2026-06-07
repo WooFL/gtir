@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mapEdges, applyFilters, egoGraph } from "../src/graph.mjs";
+import { mapEdges, applyFilters, egoGraph, capByDegree } from "../src/graph.mjs";
 
 // Edge factory matching the store.loadEdges() row shape.
 const E = (o = {}) => ({
@@ -93,4 +93,29 @@ test("applyFilters: narrows by kind, conf, pathPrefix", () => {
   assert.equal(applyFilters(rows, { kind: ["calls"] }).length, 2);
   assert.equal(applyFilters(rows, { conf: ["external"] }).length, 1);
   assert.equal(applyFilters(rows, { pathPrefix: "src/" }).length, 2);
+});
+
+test("capByDegree: drops lowest-degree nodes and reports truncation", () => {
+  // hub h connects to a,b,c; isolated pair p-q. Cap to 4 nodes should drop the 2 lowest-degree.
+  const g = mapEdges([
+    E({ from_symbol: "h", from_path: "h.ts", to_symbol: "a", to_path: "a.ts", ref_name: "a" }),
+    E({ from_symbol: "h", from_path: "h.ts", to_symbol: "b", to_path: "b.ts", ref_name: "b" }),
+    E({ from_symbol: "h", from_path: "h.ts", to_symbol: "c", to_path: "c.ts", ref_name: "c" }),
+    E({ from_symbol: "p", from_path: "p.ts", to_symbol: "q", to_path: "q.ts", ref_name: "q" }),
+  ]);
+  assert.equal(g.nodes.length, 6);
+  const capped = capByDegree(g, 4);
+  assert.ok(capped.nodes.length <= 4);
+  assert.equal(capped.truncated, true);
+  assert.equal(capped.dropped, g.nodes.length - capped.nodes.length);
+  // the hub (highest degree) survives
+  assert.ok(capped.nodes.some((n) => n.id === "h\x00h.ts"));
+});
+
+test("capByDegree: under the cap is a no-op", () => {
+  const g = mapEdges([E()]);
+  const capped = capByDegree(g, 400);
+  assert.equal(capped.truncated, false);
+  assert.equal(capped.dropped, 0);
+  assert.equal(capped.nodes.length, 2);
 });
