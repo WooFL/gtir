@@ -362,8 +362,10 @@ needs a separate `llama-server`.
 Keys (defaults): `rerankUrl` (`http://127.0.0.1:8088`), `rerankModel` (`bge-reranker-v2-m3`),
 `rerankCandidates` (`24`), `rerankMaxChars` (`2000`). If the server is unreachable, gtir falls back to
 hybrid order with a stderr note — a search never fails because the reranker is down. On the bundled
-corpus reranking didn't beat the hybrid order; measure on yours with `gtir eval --rerank` before relying
-on it.
+corpus the bge-reranker-v2-m3 cross-encoder **hurts**: it costs ~5pp Recall@1 (0.900 → 0.846) and ~3.5pp
+MRR (0.937 → 0.902) versus the hybrid order — the qwen3 code-tuned embedding already lands the right doc
+at rank 1, so a general reranker mostly demotes it. Rerank pays off when the base retriever is weak;
+measure on yours with `gtir eval --rerank` before relying on it.
 
 ## 🔌 MCP server
 
