@@ -5,7 +5,8 @@
 
 // Out-of-class definition: `RetType Class::method(params) [quals] {`. The trailing `{` body
 // requirement excludes calls (`std::move(x)`) and prototypes (`Class::method();`).
-// Match balanced parens: params may contain nested parens but must balance properly.
+// Params use `[^;{}()]*` (no nested parens) — linear (ReDoS-safe) and it rejects `if (C::m()) {`;
+// a def whose params themselves contain parens (fn-pointer / std::function) is a graceful miss.
 const CPP_OUT_DEF = /([A-Za-z_]\w*)\s*::\s*([A-Za-z_]\w*)\s*\([^;{}()]*\)\s*(?:const|noexcept|override|final|mutable|volatile|\s)*\{/g;
 // In-class inline definition: `method(params) [quals] {` inside a `class|struct Name { … }` chunk.
 const CPP_IN_DEF = /(?:^|[\s;{}*&])([A-Za-z_]\w*)\s*\([^;{}()]*\)\s*(?:const|noexcept|override|final|mutable|volatile|\s)*\{/g;
