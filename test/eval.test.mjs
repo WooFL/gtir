@@ -283,3 +283,38 @@ test("scoreEdge: any produced edge hitting the target counts (multi-call site)",
   ];
   assert.equal(scoreEdge(multi, { from: "m.ts", to: "t.ts", symbol: "f", kind: "calls" }), "correct");
 });
+
+import { evalEdgeExtraction } from "../src/eval.mjs";
+
+test("evalEdgeExtraction: recall/wrong/missing sum to 1, byLang groups by `from` extension, split counts conf", () => {
+  const edges = [
+    { kind: "calls", conf: "resolved", from_path: "a.ts", to_path: "b.ts", ref_name: "g" },     // correct (ts)
+    { kind: "calls", conf: "resolved", from_path: "c.py", to_path: "wrong.py", ref_name: "h" },  // wrong   (py)
+    { kind: "calls", conf: "inferred", from_path: "d.py", to_path: "e.py", ref_name: "k" },       // correct (py)
+    { kind: "calls", conf: "ambiguous", from_path: "z.ts", to_path: null, ref_name: "noise" },    // not in golden
+  ];
+  const golden = [
+    { from: "a.ts", to: "b.ts", symbol: "g", kind: "calls" },
+    { from: "c.py", to: "right.py", symbol: "h", kind: "calls" },
+    { from: "d.py", to: "e.py", symbol: "k", kind: "calls" },
+    { from: "x.ts", to: "y.ts", symbol: "absent", kind: "calls" }, // missing (ts)
+  ];
+  const m = evalEdgeExtraction(edges, golden);
+  assert.equal(m.n, 4);
+  assert.deepEqual(m.tally, { correct: 2, wrong: 1, missing: 1 });
+  assert.equal(m.recall, 0.5);
+  assert.equal(m.wrong_rate, 0.25);
+  assert.equal(m.missing_rate, 0.25);
+  // rates sum to 1 (inline tolerance — `round` is module-private, not importable here)
+  assert.ok(Math.abs(m.recall + m.wrong_rate + m.missing_rate - 1) < 1e-9);
+  assert.deepEqual(m.byLang.ts, { correct: 1, wrong: 0, missing: 1, n: 2 });
+  assert.deepEqual(m.byLang.py, { correct: 1, wrong: 1, missing: 0, n: 2 });
+  assert.deepEqual(m.split, { resolved: 2, inferred: 1, ambiguous: 1, external: 0 });
+});
+
+test("evalEdgeExtraction: empty golden → zeros, no divide-by-zero", () => {
+  const m = evalEdgeExtraction([], []);
+  assert.equal(m.n, 0);
+  assert.equal(m.recall, 0);
+  assert.deepEqual(m.tally, { correct: 0, wrong: 0, missing: 0 });
+});

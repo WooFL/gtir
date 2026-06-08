@@ -132,6 +132,33 @@ export function scoreEdge(edges, g) {
   return hit ? "correct" : "wrong";
 }
 
+// Per-edge correctness over a call-edge golden. byLang is keyed by the caller file's extension.
+// Returns { n, tally, byLang, split, recall, wrong_rate, missing_rate } — the three rates sum to 1.
+export function evalEdgeExtraction(edges, golden) {
+  const tally = { correct: 0, wrong: 0, missing: 0 };
+  const byLang = {};
+  for (const g of golden) {
+    const r = scoreEdge(edges, g);
+    tally[r]++;
+    const lang = g.from.split(".").pop() || "?";
+    (byLang[lang] ??= { correct: 0, wrong: 0, missing: 0, n: 0 });
+    byLang[lang][r]++;
+    byLang[lang].n++;
+  }
+  const denom = golden.length || 1;
+  const split = { resolved: 0, inferred: 0, ambiguous: 0, external: 0 };
+  for (const e of edges) if (e.conf in split) split[e.conf]++;
+  return {
+    n: golden.length,
+    tally,
+    byLang,
+    split,
+    recall: round(tally.correct / denom),
+    wrong_rate: round(tally.wrong / denom),
+    missing_rate: round(tally.missing / denom),
+  };
+}
+
 // Compare per-tier metrics. Returns regressions with metric names prefixed "<tier>:".
 // A tier present in cur but absent from base is skipped (mirrors compareBaseline's missing-metric rule).
 export function compareTiers(cur, base, tol = 0.005) {
