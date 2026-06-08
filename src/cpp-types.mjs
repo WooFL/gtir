@@ -10,7 +10,11 @@
 const CPP_OUT_DEF = /([A-Za-z_]\w*)\s*::\s*([A-Za-z_]\w*)\s*\([^;{}()]*\)\s*(?:const|noexcept|override|final|mutable|volatile|\s)*\{/g;
 // In-class inline definition: `method(params) [quals] {` inside a `class|struct Name { … }` chunk.
 const CPP_IN_DEF = /(?:^|[\s;{}*&])([A-Za-z_]\w*)\s*\([^;{}()]*\)\s*(?:const|noexcept|override|final|mutable|volatile|\s)*\{/g;
-const CPP_CLASS = /\b(?:class|struct)\s+([A-Za-z_]\w*)/;
+// The enclosing class/struct of a chunk. The name must be followed by `{` (body), `:` (base clause),
+// or an optional `final` then one of those — anchoring on the REAL declaration. This rejects a comment
+// (`// describes class Widget`) and a template type parameter (`template <class T>`), both of which
+// would otherwise win the first .match() and mis-key the in-class method index.
+const CPP_CLASS = /\b(?:class|struct)\s+([A-Za-z_]\w*)\s*(?:final\b\s*)?(?:\{|:)/;
 const CPP_CTRL = new Set(["if", "for", "while", "switch", "catch", "return", "sizeof", "do"]);
 
 export function extractCppMethodDefs(text) {

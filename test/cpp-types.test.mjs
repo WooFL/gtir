@@ -35,6 +35,17 @@ test("extractCppMethodDefs: a def with paren-containing params is a graceful mis
   // function-pointer param contains (); excluded by [^;{}()] — we'd rather miss than false-positive.
   assert.deepEqual(extractCppMethodDefs(`void Foo::set(void (*cb)(int)) { }`), []);
 });
+test("extractCppMethodDefs: a comment naming a class before the real decl does not mis-key (regression)", () => {
+  // `// describes class Widget` precedes the real `struct Gadget` decl; the in-class method must
+  // key Gadget#run, not Widget#run. CPP_CLASS must anchor on the real declaration, not a comment.
+  const defs = extractCppMethodDefs(`// describes class Widget\nstruct Gadget { void run(){} };`);
+  assert.deepEqual(defs, [{ cls: "Gadget", method: "run" }]);
+});
+test("extractCppMethodDefs: a template type parameter is not the enclosing class (regression)", () => {
+  // `template <class T>` must not key methods to T; the real class is Gadget.
+  const defs = extractCppMethodDefs(`template <class T> struct Gadget { void run(){} };`);
+  assert.deepEqual(defs, [{ cls: "Gadget", method: "run" }]);
+});
 
 const idx = new Map([
   ["Encoder#flush", [{ path: "encoder.cpp", line_start: 1, line_end: 5 }]],
