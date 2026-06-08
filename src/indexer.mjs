@@ -196,7 +196,7 @@ async function indexEdges(cfg, store, toIndex, { rebuild, deleted = [] }) {
     const stack = [...(cppBaseIndex.get(child) || [])];
     while (stack.length) {
       const base = stack.pop();
-      if (seen.has(base)) continue;
+      if (seen.has(base) || base === child) continue;   // skip self (a cycle never makes a class its own derived)
       seen.add(base);
       if (!cppDerivedIndex.has(base)) cppDerivedIndex.set(base, new Set());
       cppDerivedIndex.get(base).add(child);
