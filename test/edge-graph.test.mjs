@@ -167,6 +167,30 @@ test("orphans: unreferenced plain symbol is likely_dead; exported is entrypoint"
   assert.equal(r.likely_dead.find((d) => d.symbol === "dead").lines, "1-2");
 });
 
+test("orphans: a zero-inbound symbol that calls external code is external-facing, not dead", () => {
+  const inv = [
+    { name: "EffectRender", path: "plugin.cpp", line_start: 1, line_end: 9, text: "void EffectRender(){ SDK_Begin(); }" },
+    { name: "deadHelper", path: "util.cpp", line_start: 1, line_end: 2, text: "int deadHelper(){ return 0; }" },
+  ];
+  const g = buildGraph([
+    { kind: "calls", conf: "external", from_path: "plugin.cpp", from_symbol: "EffectRender", to_path: null, to_symbol: null, ref_name: "SDK_Begin", candidates: [] },
+  ]);
+  const r = orphans(inv, g);
+  assert.deepEqual(r.likely_dead.map((d) => d.symbol), ["deadHelper"]);
+  const ext = r.possible_entrypoint.find((d) => d.symbol === "EffectRender");
+  assert.ok(ext, "EffectRender should be a possible_entrypoint");
+  assert.equal(ext.reason, "external-facing");
+});
+
+test("orphans: classifyEntrypoint reason still wins over external-facing", () => {
+  const inv = [{ name: "api", path: "lib.ts", line_start: 1, line_end: 3, text: "export function api(){ ext(); }" }];
+  const g = buildGraph([
+    { kind: "calls", conf: "external", from_path: "lib.ts", from_symbol: "api", to_path: null, to_symbol: null, ref_name: "ext", candidates: [] },
+  ]);
+  const r = orphans(inv, g);
+  assert.equal(r.possible_entrypoint.find((d) => d.symbol === "api").reason, "exported");
+});
+
 test("orphans: includeAmbiguous suppresses flag when ambiguous inbound exists", () => {
   const g = buildGraph([
     { kind: "calls", conf: "ambiguous", from_path: "x.mjs", from_symbol: "c", to_path: null, to_symbol: null, ref_name: "maybe", candidates: ["util.mjs"] },
@@ -194,6 +218,17 @@ test("degreeMap: call-degree keyed by symbol; import in-degree by file", () => {
 
 test("degreeMap: empty graph yields empty map", () => {
   assert.equal(degreeMap(buildGraph([])).size, 0);
+});
+
+test("buildGraph: externalOut records nodes that emit an external call", () => {
+  const g = buildGraph([
+    { kind: "calls", conf: "external", from_path: "a.cpp", from_symbol: "f", to_path: null, to_symbol: null, ref_name: "SDK_Do", candidates: [] },
+    { kind: "calls", conf: "resolved", from_path: "a.cpp", from_symbol: "g", to_path: "b.cpp", to_symbol: "h", candidates: [] },
+    { kind: "calls", conf: "external", from_path: "a.cpp", from_symbol: null, to_path: null, to_symbol: null, ref_name: "topLevelExt", candidates: [] },
+  ]);
+  assert.ok(g.externalOut.has("a.cpp#f"));
+  assert.ok(!g.externalOut.has("a.cpp#g"));
+  assert.ok(g.externalOut.has("a.cpp"));
 });
 
 test("buildGraph: inferred call edge wires like resolved (one link, not fan-out)", () => {

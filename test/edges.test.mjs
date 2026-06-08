@@ -190,6 +190,24 @@ test("extractCodeEdges fromSymbol is null for a top-level call", async () => {
   assert.equal(call.fromSymbol, null);
 });
 
+test("extractCodeEdges (cpp): a call in a free function is attributed to that function", async () => {
+  // C++ function_definition keeps its name inside the `declarator` field, not as a direct child —
+  // nodeName must reach it so the call is attributed to EffectRender, not the file (regression).
+  const edges = await edgesFor("cpp", `void EffectRender() { SDK_Begin(); }`, "p.cpp");
+  const call = edges.find((e) => e.kind === "calls" && e.refName === "SDK_Begin");
+  assert.ok(call, "expected a call edge to SDK_Begin");
+  assert.equal(call.fromSymbol, "EffectRender");
+});
+
+test("extractCodeEdges (cpp): an out-of-class method call is attributed to the bare method name", async () => {
+  // `Foo::m` lives in a qualified_identifier; from_symbol must be "m" (matching how the def is
+  // keyed), not "Foo::m" — the BFS descends through the qualifier to the inner identifier.
+  const edges = await edgesFor("cpp", `void Foo::m() { helper(); }`, "p.cpp");
+  const call = edges.find((e) => e.kind === "calls" && e.refName === "helper");
+  assert.ok(call, "expected a call edge to helper");
+  assert.equal(call.fromSymbol, "m");
+});
+
 // Part 2 — resolveEdges uses fromSymbol
 test("resolveEdges populates from_symbol for calls (enables calleesOf)", () => {
   const sym = new Map([["helper", [{ path: "h.ts", line_start: 1, line_end: 2 }]]]);

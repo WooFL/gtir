@@ -30,12 +30,13 @@ function edgeToLinks(e, includeAmbiguous) {
 }
 
 // Build a directed graph from edge rows.
-// Returns { edgeList:[{src,dst,kind,conf}], fwd:Map(key->Set), rev:Map(key->Set), nodeMeta:Map(key->{path,symbol,kinds:Set}) }.
+// Returns { edgeList:[{src,dst,kind,conf}], fwd:Map(key->Set), rev:Map(key->Set), nodeMeta:Map(key->{path,symbol,kinds:Set}), externalOut:Set }.
 export function buildGraph(edges, { includeAmbiguous = false } = {}) {
   const edgeList = [];
   const fwd = new Map();
   const rev = new Map();
   const nodeMeta = new Map();
+  const externalOut = new Set(); // external edges stay dropped from fwd/rev but their source is recorded for orphan reclassification
   const meta = (key) => {
     let m = nodeMeta.get(key);
     if (!m) {
@@ -47,6 +48,7 @@ export function buildGraph(edges, { includeAmbiguous = false } = {}) {
   };
   const addAdj = (map, a, b) => { let s = map.get(a); if (!s) { s = new Set(); map.set(a, s); } s.add(b); };
   for (const e of edges) {
+    if (e.kind === "calls" && e.conf === "external") externalOut.add(nodeKey(e.from_path, e.from_symbol || null));
     for (const lk of edgeToLinks(e, includeAmbiguous)) {
       edgeList.push(lk);
       meta(lk.src).kinds.add(lk.kind);
@@ -55,7 +57,7 @@ export function buildGraph(edges, { includeAmbiguous = false } = {}) {
       addAdj(rev, lk.dst, lk.src);
     }
   }
-  return { edgeList, fwd, rev, nodeMeta };
+  return { edgeList, fwd, rev, nodeMeta, externalOut };
 }
 
 // Transitive reachability from startKeys. direction "upstream" walks rev (callers),
@@ -177,6 +179,7 @@ export function orphans(inventory, graph, { includeAmbiguous = false } = {}) {
     const base = { path: def.path, symbol: def.name, ...(lines ? { lines } : {}) };
     const cls = classifyEntrypoint(def.name, def.path, def.text);
     if (cls.entrypoint) possible_entrypoint.push({ ...base, reason: cls.reason });
+    else if (graph.externalOut?.has(key)) possible_entrypoint.push({ ...base, reason: "external-facing" });
     else likely_dead.push(base);
   }
   likely_dead.sort((a, b) => a.path.localeCompare(b.path) || (a.lines || "").localeCompare(b.lines || ""));
