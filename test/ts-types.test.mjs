@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { extractTsClassNames, resolveTsMethods, extractTsImplements } from "../src/ts-types.mjs";
+import { extractTsClassNames, resolveTsMethods, extractTsImplements, resolveTsDispatch } from "../src/ts-types.mjs";
 
 test("extractTsClassNames: class / export class / multiple", () => {
   assert.deepEqual(extractTsClassNames(`class Foo {}`), ["Foo"]);
@@ -81,4 +81,102 @@ test("extractTsImplements: interface extends → empty", () => {
 test("extractTsImplements: export abstract class implements", () => {
   assert.deepEqual(extractTsImplements(`export abstract class A implements IFoo {}`),
     [{ cls: "A", bases: ["IFoo"] }]);
+});
+
+// ── resolveTsDispatch ─────────────────────────────────────────────────────────
+
+// Shared helpers for dispatch tests.
+const dispatchRow = (over = {}) => ({
+  kind: "calls", conf: "ambiguous", isMethod: true,
+  from_path: "u.ts", receiverType: "Sender", ref_name: "send",
+  to_path: null, to_symbol: null, to_lines: null, candidates: [],
+  ...over,
+});
+
+test("resolveTsDispatch: interface receiver → dispatch with all implementer files", () => {
+  // Sender is an interface (no tsClassFiles entry). Two implementers each define send().
+  const tsImplementers = new Map([["Sender", new Set(["EmailSender", "SmsSender"])]]);
+  const tsClassFiles   = new Map([
+    ["EmailSender", new Set(["a.ts"])],
+    ["SmsSender",   new Set(["b.ts"])],
+  ]);
+  const tsCallableFiles = new Map([["send", [
+    { path: "a.ts", line_start: 1, line_end: 3 },
+    { path: "b.ts", line_start: 4, line_end: 6 },
+  ]]]);
+  const [r] = resolveTsDispatch([dispatchRow()], tsImplementers, tsClassFiles, tsCallableFiles);
+  assert.equal(r.conf, "dispatch");
+  assert.equal(r.to_path, null);
+  assert.equal(r.to_symbol, "send");
+  assert.equal(r.to_lines, null);
+  assert.deepEqual([...r.candidates].sort(), ["a.ts", "b.ts"]);
+});
+
+test("resolveTsDispatch: base-class receiver → dispatch candidates include both base and sub files", () => {
+  // Base is a class (has a tsClassFiles entry). Sub also defines m. Both paths must appear.
+  const tsImplementers  = new Map([["Base", new Set(["Sub"])]]);
+  const tsClassFiles    = new Map([
+    ["Base", new Set(["base.ts"])],
+    ["Sub",  new Set(["sub.ts"])],
+  ]);
+  const tsCallableFiles = new Map([["m", [
+    { path: "base.ts", line_start: 1, line_end: 2 },
+    { path: "sub.ts",  line_start: 1, line_end: 2 },
+  ]]]);
+  const row = dispatchRow({ receiverType: "Base", ref_name: "m" });
+  const [r] = resolveTsDispatch([row], tsImplementers, tsClassFiles, tsCallableFiles);
+  assert.equal(r.conf, "dispatch");
+  assert.deepEqual([...r.candidates].sort(), ["base.ts", "sub.ts"]);
+});
+
+test("resolveTsDispatch: no implementers for receiverType → row unchanged", () => {
+  const tsImplementers  = new Map();  // nothing registered for "Sender"
+  const tsClassFiles    = new Map();
+  const tsCallableFiles = new Map([["send", [{ path: "a.ts", line_start: 1, line_end: 1 }]]]);
+  const [r] = resolveTsDispatch([dispatchRow()], tsImplementers, tsClassFiles, tsCallableFiles);
+  assert.equal(r.conf, "ambiguous");
+});
+
+test("resolveTsDispatch: implementer exists but does NOT define the method → excluded; no other impl → unchanged", () => {
+  // SmsSender is registered but has no tsCallableFiles entry for "send".
+  const tsImplementers  = new Map([["Sender", new Set(["SmsSender"])]]);
+  const tsClassFiles    = new Map([["SmsSender", new Set(["sms.ts"])]]);
+  const tsCallableFiles = new Map([["send", [
+    { path: "other.ts", line_start: 1, line_end: 1 },  // not in SmsSender's files
+  ]]]);
+  const [r] = resolveTsDispatch([dispatchRow()], tsImplementers, tsClassFiles, tsCallableFiles);
+  assert.equal(r.conf, "ambiguous");
+});
+
+test("resolveTsDispatch: only base defines method, no implementer override → unchanged (left for resolveTsMethods)", () => {
+  // Base defines m; Sub is an implementer but Sub has no entry in tsCallableFiles for m.
+  const tsImplementers  = new Map([["Base", new Set(["Sub"])]]);
+  const tsClassFiles    = new Map([
+    ["Base", new Set(["base.ts"])],
+    ["Sub",  new Set(["sub.ts"])],
+  ]);
+  const tsCallableFiles = new Map([["m", [
+    { path: "base.ts", line_start: 1, line_end: 2 },  // only base defines it
+  ]]]);
+  const row = dispatchRow({ receiverType: "Base", ref_name: "m" });
+  const [r] = resolveTsDispatch([row], tsImplementers, tsClassFiles, tsCallableFiles);
+  assert.equal(r.conf, "ambiguous");  // no implementer defines it → not a dispatch
+});
+
+test("resolveTsDispatch: non-TS from_path → row unchanged", () => {
+  const tsImplementers  = new Map([["Sender", new Set(["EmailSender"])]]);
+  const tsClassFiles    = new Map([["EmailSender", new Set(["a.ts"])]]);
+  const tsCallableFiles = new Map([["send", [{ path: "a.ts", line_start: 1, line_end: 1 }]]]);
+  const row = dispatchRow({ from_path: "x.go" });
+  const [r] = resolveTsDispatch([row], tsImplementers, tsClassFiles, tsCallableFiles);
+  assert.equal(r.conf, "ambiguous");
+});
+
+test("resolveTsDispatch: no receiverType → row unchanged", () => {
+  const tsImplementers  = new Map([["Sender", new Set(["EmailSender"])]]);
+  const tsClassFiles    = new Map([["EmailSender", new Set(["a.ts"])]]);
+  const tsCallableFiles = new Map([["send", [{ path: "a.ts", line_start: 1, line_end: 1 }]]]);
+  const row = dispatchRow({ receiverType: null });
+  const [r] = resolveTsDispatch([row], tsImplementers, tsClassFiles, tsCallableFiles);
+  assert.equal(r.conf, "ambiguous");
 });

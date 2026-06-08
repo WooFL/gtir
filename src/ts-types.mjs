@@ -190,6 +190,37 @@ export function extractTsImplements(text) {
 // Matches .ts/.tsx/.js/.jsx plus the .mjs/.cjs/.mts/.cts module variants (.d.ts via its .ts suffix).
 const TS_EXTS = /\.[cm]?[jt]sx?$/i;
 
+// Upgrade an ambiguous TS/JS member call on an interface/abstract-base-typed receiver to
+// conf:"dispatch" — the set of in-repo implementers (and the base itself, if it defines the method)
+// that define the called method. Requires >=1 IMPLEMENTER def (real polymorphism): if only the base
+// defines the method (no implementer override), the row is left unchanged for resolveTsMethods to
+// handle concretely. For an interface receiver, tsClassFiles.get(interfaceName) is undefined — the
+// base contributes nothing, only implementers. Runs BEFORE resolveTsMethods. Pure.
+export function resolveTsDispatch(rows, tsImplementers, tsClassFiles, tsCallableFiles) {
+  // Returns the files where `cls` is declared AND `method` is defined (intersection by path).
+  const filesDefiningMethodInClass = (cls, method) => {
+    const classFiles = tsClassFiles.get(cls);
+    const defs = tsCallableFiles.get(method);
+    if (!classFiles || !defs) return [];
+    return defs.filter((d) => classFiles.has(d.path)).map((d) => d.path);
+  };
+  return rows.map((r) => {
+    if (r.kind !== "calls" || r.conf !== "ambiguous" || !r.isMethod || !r.receiverType) return r;
+    if (!TS_EXTS.test(r.from_path ?? "")) return r;
+    const implementers = tsImplementers.get(r.receiverType);
+    if (!implementers || !implementers.size) return r;
+    // Collect files from implementers that define the method (polymorphism signal).
+    const implPaths = new Set();
+    for (const cls of implementers)
+      for (const p of filesDefiningMethodInClass(cls, r.ref_name)) implPaths.add(p);
+    if (implPaths.size === 0) return r;                 // no implementer defines it → not a dispatch
+    // Also include the base's own def, if any (the call may bind to the base for abstract/virtual impls).
+    const paths = new Set(implPaths);
+    for (const p of filesDefiningMethodInClass(r.receiverType, r.ref_name)) paths.add(p);
+    return { ...r, conf: "dispatch", to_path: null, to_symbol: r.ref_name, to_lines: null, candidates: [...paths] };
+  });
+}
+
 // Upgrade an ambiguous TS/JS member-call row to resolved when the receiver type pins a unique file.
 // Chunk-robust: TS/JS methods are in-class only, so instead of a `class#method` key (which breaks when
 // the chunker splits a method out of its class), intersect the file(s) declaring class T with the
