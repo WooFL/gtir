@@ -536,3 +536,25 @@ test("extractCodeEdges (ts): this in a nested arrow still → enclosing class (l
   const edges = await edgesFor("typescript", `class C { drive() { const f = () => { this.flush(); }; f(); } flush(){} }`, "a.ts");
   assert.equal(edges.find((e) => e.refName === "flush").receiverType, "C");
 });
+
+test("extractCodeEdges (cpp): a bare member field resolves its declared type (inline method)", async () => {
+  const edges = await edgesFor("cpp", `class C { Widget* m_w; void run(){ m_w->go(); } };`, "c.cpp");
+  const call = edges.find((e) => e.kind === "calls" && e.refName === "go");
+  assert.ok(call, "expected a go() call edge");
+  assert.equal(call.receiverType, "Widget");
+});
+test("extractCodeEdges (cpp): a smart-pointer member field unwraps on -> (inline method)", async () => {
+  const edges = await edgesFor("cpp", `class C { std::shared_ptr<Foo> m_f; void run(){ m_f->tick(); } };`, "c.cpp");
+  const call = edges.find((e) => e.kind === "calls" && e.refName === "tick");
+  assert.equal(call.receiverType, "Foo");
+});
+test("extractCodeEdges (cpp): a local variable shadows a same-named field", async () => {
+  const edges = await edgesFor("cpp", `class C { Widget* x; void run(){ Gadget* x; x->go(); } };`, "c.cpp");
+  const call = edges.find((e) => e.kind === "calls" && e.refName === "go");
+  assert.equal(call.receiverType, "Gadget");   // local x (Gadget) wins over field x (Widget)
+});
+test("extractCodeEdges (cpp): a non-field bare receiver stays unresolved", async () => {
+  const edges = await edgesFor("cpp", `class C { void run(){ unknownThing->go(); } };`, "c.cpp");
+  const call = edges.find((e) => e.kind === "calls" && e.refName === "go");
+  assert.equal(call.receiverType, null);
+});
