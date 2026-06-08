@@ -222,7 +222,7 @@ export function inferCppFactory(callNode, receiverName) {
 const CPP_EXTS = /\.(cpp|cc|cxx|c|h|hpp|hh|hxx|metal)$/i;
 
 // Upgrade ambiguous C++ member-call rows to resolved when the receiver type pins a single target FILE.
-// Pure — new array; only touches kind:"calls" conf:"ambiguous" isMethod rows with a receiverType.
+// Pure — new array; only touches kind:"calls" conf:"ambiguous" isMethod rows with a resolved receiver type (direct r.receiverType, or via a unique cppReturnIndex factory lookup).
 // Unique-PATH (not unique-def): overloads (several defs in one file) resolve; the same class#method
 // in two files stays ambiguous (don't guess). Mirrors resolveGoMethods.
 export function resolveCppMethods(rows, cppMethodIndex, cppReturnIndex = new Map()) {

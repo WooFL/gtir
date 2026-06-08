@@ -145,3 +145,12 @@ test("resolveCppMethods: existing receiverType path still works with the 3rd arg
   const methodIdx = new Map([["Foo#run", [{ path: "a.cpp", line_start: 2, line_end: 4 }]]]);
   assert.equal(resolveCppMethods(rows, methodIdx, new Map())[0].conf, "resolved");
 });
+test("resolveCppMethods: receiverType wins when both receiverType and receiverFactory are set", () => {
+  const rows = [{ kind: "calls", conf: "ambiguous", isMethod: true, receiverType: "Foo",
+    receiverFactory: "makeBar", ref_name: "run", from_path: "use.cpp", candidates: ["a.cpp"] }];
+  const methodIdx = new Map([["Foo#run", [{ path: "a.cpp", line_start: 1, line_end: 1 }]]]);
+  const returnIdx = new Map([["makeBar", new Set(["Bar"])]]);   // would resolve to Bar#run if used
+  const out = resolveCppMethods(rows, methodIdx, returnIdx);
+  assert.equal(out[0].conf, "resolved");
+  assert.equal(out[0].to_path, "a.cpp");   // resolved via Foo (receiverType), not Bar (factory)
+});
