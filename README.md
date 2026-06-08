@@ -425,6 +425,9 @@ receiver is a typed parameter, local declaration, `new` expression, or the enclo
 resolves to that type's method exactly (a precise `resolved` edge), before the embedding-disambiguation
 tier sees it. C++ also unwraps smart pointers on `->` calls (`unique_ptr`/`shared_ptr`/`weak_ptr` by
 default; add project wrappers via `cppSmartPointers` in `.gtir/config.json`).
+C++ additionally infers an `auto`-declared local's type from a free function's return type
+(`auto x = makeFoo(); x.run()` resolves to `Foo::run`), including trailing-return and
+smart-pointer-returning factories.
 
 ### Inferred edges (embedding-disambiguation)
 
