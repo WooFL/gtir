@@ -541,3 +541,20 @@ test("indexEdges resolves a TS member call by receiver type (cross-file)", async
     rmSync(repo, { recursive: true, force: true });
   }
 });
+
+test("indexEdges resolves a Go interface call to its implementers (dispatch)", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-godisp-"));
+  try {
+    writeFileSync(join(repo, "shape.go"), `package p\ntype Shaper interface { Area() float64 }\n`);
+    writeFileSync(join(repo, "circle.go"), `package p\ntype Circle struct{}\nfunc (c Circle) Area() float64 { return 1 }\n`);
+    writeFileSync(join(repo, "square.go"), `package p\ntype Square struct{}\nfunc (s Square) Area() float64 { return 2 }\n`);
+    writeFileSync(join(repo, "use.go"), `package p\nfunc run(s Shaper) float64 { return s.Area() }\n`);
+    const cfg = loadConfig(repo); cfg.embedImpl = (t) => Promise.resolve(t.map(() => [1,0,0])); cfg.minChars = 1;
+    await buildIndex(cfg, { rebuild: true });
+    const edges = await (await openStore(cfg)).loadEdges();
+    const call = edges.find((e) => e.kind === "calls" && e.from_path === "use.go" && e.ref_name === "Area");
+    assert.ok(call, "expected an Area call edge from use.go");
+    assert.equal(call.conf, "dispatch");
+    assert.deepEqual([...call.candidates].sort(), ["circle.go", "square.go"]);
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});

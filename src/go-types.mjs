@@ -65,6 +65,32 @@ export function inferReceiverType(callNode, receiverName) {
   return collectGoBindings(fn).get(receiverName) ?? null;
 }
 
+// type Name interface { M1(...) ...; M2(...) ... } → { name, methods:[M1,M2] }. A method name is an
+// identifier that STARTS a method spec — at the interface-body start, or after a newline or ';' — and
+// is followed by '('. Anchoring to the spec start (not just any `ident(`) avoids capturing a func-typed
+// param or return (`Register(cb func())`, `Make() func()`) as a phantom method. Embedded interfaces
+// (an identifier not followed by '(') and method signatures are ignored — name-based satisfaction (v1).
+const GO_IFACE = /type\s+([A-Za-z_]\w*)\s+interface\s*\{/g;
+const GO_IFACE_METHOD = /(?:^|[;\n])\s*([A-Za-z_]\w*)\s*\(/g;
+export function extractGoInterfaces(text) {
+  const s = String(text || "");
+  const out = [];
+  GO_IFACE.lastIndex = 0;
+  let m;
+  while ((m = GO_IFACE.exec(s))) {
+    const name = m[1];
+    let depth = 1, i = GO_IFACE.lastIndex;
+    for (; i < s.length && depth > 0; i++) { if (s[i] === "{") depth++; else if (s[i] === "}") depth--; }
+    const body = s.slice(GO_IFACE.lastIndex, i - 1);
+    const methods = [];
+    GO_IFACE_METHOD.lastIndex = 0;
+    let mm;
+    while ((mm = GO_IFACE_METHOD.exec(body))) methods.push(mm[1]);
+    out.push({ name, methods });
+  }
+  return out;
+}
+
 // Upgrade ambiguous Go method-call rows to resolved when the receiver type pins a unique target.
 // Pure — returns a NEW array; only touches kind:"calls" conf:"ambiguous" isMethod rows that carry a
 // receiverType. 0 or >1 matching defs → left ambiguous (don't guess). Mirrors disambiguateEdges' shape.
@@ -77,5 +103,27 @@ export function resolveGoMethods(rows, goMethodIndex) {
     const d = defs[0];
     return { ...r, conf: "resolved", to_path: d.path, to_symbol: r.ref_name,
       to_lines: `${d.line_start}-${d.line_end}`, candidates: [] };
+  });
+}
+
+// Upgrade an ambiguous Go method call on an INTERFACE-typed receiver to conf:"dispatch" — the set of
+// concrete implementers that satisfy the interface (name-based: methodSet(T) ⊇ interface method set)
+// and define the called method. Pure. Run AFTER resolveGoMethods (concrete receivers resolve first).
+export function resolveGoDispatch(rows, goMethodIndex, goInterfaceIndex, goTypeMethodSets) {
+  return rows.map((r) => {
+    if (r.kind !== "calls" || r.conf !== "ambiguous" || !r.isMethod || !r.receiverType) return r;
+    if (!/\.go$/.test(r.from_path ?? "")) return r;
+    const need = goInterfaceIndex.get(r.receiverType);
+    if (!need) return r;
+    const paths = new Set();
+    for (const [type, mset] of goTypeMethodSets) {
+      let satisfies = true;
+      for (const meth of need) if (!mset.has(meth)) { satisfies = false; break; }
+      if (!satisfies) continue;
+      const defs = goMethodIndex.get(`${type}#${r.ref_name}`);
+      if (defs) for (const d of defs) paths.add(d.path);
+    }
+    if (paths.size === 0) return r;
+    return { ...r, conf: "dispatch", to_path: null, to_symbol: r.ref_name, to_lines: null, candidates: [...paths] };
   });
 }

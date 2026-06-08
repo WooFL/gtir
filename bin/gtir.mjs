@@ -325,7 +325,7 @@ function printEdgeEval(m) {
     const b = m.byLang[lang];
     out.push(`    ${lang.padEnd(5)} n=${b.n} correct=${b.correct} wrong=${b.wrong} missing=${b.missing}`);
   }
-  out.push(`  conf split: resolved=${m.split.resolved} inferred=${m.split.inferred} ambiguous=${m.split.ambiguous} external=${m.split.external}`);
+  out.push(`  conf split: resolved=${m.split.resolved} inferred=${m.split.inferred} dispatch=${m.split.dispatch ?? 0} ambiguous=${m.split.ambiguous} external=${m.split.external}`);
   process.stderr.write(out.join("\n") + "\n");
 }
 

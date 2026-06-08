@@ -18,6 +18,11 @@ function edgeToLinks(e, includeAmbiguous) {
       if (!e.to_path || !e.to_symbol) return [];
       return [{ src, dst: nodeKey(e.to_path, e.to_symbol), kind: "calls", conf: e.conf }];
     }
+    if (e.conf === "dispatch") {
+      const dname = e.ref_name;
+      if (!dname || !Array.isArray(e.candidates)) return [];
+      return e.candidates.map((p) => ({ src, dst: nodeKey(p, dname), kind: "calls", conf: "dispatch" }));
+    }
     const name = e.ref_name;
     if (!name || !Array.isArray(e.candidates)) return [];
     return e.candidates.map((p) => ({ src, dst: nodeKey(p, name), kind: "calls", conf: "ambiguous" }));

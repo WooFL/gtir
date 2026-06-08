@@ -309,7 +309,7 @@ test("evalEdgeExtraction: recall/wrong/missing sum to 1, byLang groups by `from`
   assert.ok(Math.abs(m.recall + m.wrong_rate + m.missing_rate - 1) < 1e-9);
   assert.deepEqual(m.byLang.ts, { correct: 1, wrong: 0, missing: 1, n: 2 });
   assert.deepEqual(m.byLang.py, { correct: 1, wrong: 1, missing: 0, n: 2 });
-  assert.deepEqual(m.split, { resolved: 2, inferred: 1, ambiguous: 1, external: 0 });
+  assert.deepEqual(m.split, { resolved: 2, inferred: 1, dispatch: 0, ambiguous: 1, external: 0 });
 });
 
 test("evalEdgeExtraction: empty golden → zeros, no divide-by-zero", () => {
@@ -317,6 +317,16 @@ test("evalEdgeExtraction: empty golden → zeros, no divide-by-zero", () => {
   assert.equal(m.n, 0);
   assert.equal(m.recall, 0);
   assert.deepEqual(m.tally, { correct: 0, wrong: 0, missing: 0 });
+});
+
+test("scoreEdge: a dispatch edge counts correct when golden.to is among candidates", () => {
+  const edges = [{ kind: "calls", from_path: "use.go", ref_name: "Area", conf: "dispatch", to_path: null, candidates: ["circle.go", "square.go"] }];
+  assert.equal(scoreEdge(edges, { kind: "calls", from: "use.go", symbol: "Area", to: "circle.go" }), "correct");
+});
+
+test("evalEdgeExtraction: split counts the dispatch tier", () => {
+  const edges = [{ kind: "calls", from_path: "u.go", ref_name: "Area", conf: "dispatch", to_path: null, candidates: ["c.go"] }];
+  assert.equal(evalEdgeExtraction(edges, []).split.dispatch, 1);
 });
 
 import { scoreDisambig } from "../src/eval.mjs";
