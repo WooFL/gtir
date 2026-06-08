@@ -16,3 +16,17 @@ export function extractGoMethodDefs(text) {
   while ((m = GO_METHOD_DEF.exec(s))) out.push({ type: m[1], method: m[2] });
   return out;
 }
+
+// Upgrade ambiguous Go method-call rows to resolved when the receiver type pins a unique target.
+// Pure — returns a NEW array; only touches kind:"calls" conf:"ambiguous" isMethod rows that carry a
+// receiverType. 0 or >1 matching defs → left ambiguous (don't guess). Mirrors disambiguateEdges' shape.
+export function resolveGoMethods(rows, goMethodIndex) {
+  return rows.map((r) => {
+    if (r.kind !== "calls" || r.conf !== "ambiguous" || !r.isMethod || !r.receiverType) return r;
+    const defs = goMethodIndex.get(`${r.receiverType}#${r.ref_name}`);
+    if (!defs || defs.length !== 1) return r;
+    const d = defs[0];
+    return { ...r, conf: "resolved", to_path: d.path, to_symbol: r.ref_name,
+      to_lines: `${d.line_start}-${d.line_end}`, candidates: [] };
+  });
+}
