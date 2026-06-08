@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { extractCppMethodDefs, resolveCppMethods, extractCppReturnTypes, extractCppBases } from "../src/cpp-types.mjs";
+import { extractCppMethodDefs, resolveCppMethods, extractCppReturnTypes, extractCppBases, extractCppVirtuals } from "../src/cpp-types.mjs";
 
 test("extractCppMethodDefs: out-of-class definition", () => {
   assert.deepEqual(extractCppMethodDefs(`int Foo::bar(int x) { return x; }`), [{ cls: "Foo", method: "bar" }]);
@@ -194,4 +194,15 @@ test("extractCppBases: qualified/external base keeps the trailing identifier", (
 });
 test("extractCppBases: a class with no base clause yields nothing", () => {
   assert.deepEqual(extractCppBases(`class Plain { int x; };`), []);
+});
+
+test("extractCppVirtuals: plain virtual and pure virtual", () => {
+  const defs = extractCppVirtuals(`class B { virtual void run(); virtual int size() const = 0; };`);
+  assert.deepEqual(defs, [{ cls: "B", method: "run" }, { cls: "B", method: "size" }]);
+});
+test("extractCppVirtuals: scopeClass supplies the class for a headerless chunk", () => {
+  assert.deepEqual(extractCppVirtuals(`virtual void flush() = 0;`, "Sink"), [{ cls: "Sink", method: "flush" }]);
+});
+test("extractCppVirtuals: a non-virtual method is not captured", () => {
+  assert.deepEqual(extractCppVirtuals(`class B { void plain(); virtual void v(); };`), [{ cls: "B", method: "v" }]);
 });

@@ -229,6 +229,21 @@ export function inferCppFactory(callNode, receiverName) {
   return null;
 }
 
+// Method names a class declares `virtual` (incl pure `= 0`). Keyed to the in-text class, else scopeClass
+// (chunk-robust). The `virtual` keyword is the polymorphism signal for resolveCppDispatch.
+const CPP_VIRTUAL = /\bvirtual\b[^;{()]*?\b([A-Za-z_]\w*)\s*\(/g;
+export function extractCppVirtuals(text, scopeClass = null) {
+  const s = String(text || "");
+  const cm = s.match(CPP_CLASS);
+  const cls = cm ? cm[1] : scopeClass;
+  if (!cls) return [];
+  const out = [];
+  CPP_VIRTUAL.lastIndex = 0;
+  let m;
+  while ((m = CPP_VIRTUAL.exec(s))) if (!CPP_CTRL.has(m[1])) out.push({ cls, method: m[1] });
+  return out;
+}
+
 // A class/struct head with a base clause → { cls, bases:[...] }. Captures the base-clause text between
 // `:` and `{`, then pulls each base's trailing identifier, skipping access/virtual keywords. Qualified
 // bases (std::exception) keep the last segment; a class with no `:` clause yields no entry.
