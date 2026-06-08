@@ -205,13 +205,14 @@ export function evalDisambiguation(edges, golden) {
 }
 
 // Rank sweep rows precision-first: prefer precision===1, then higher recall, then higher precision,
-// then lower threshold. rows: [{ threshold, margin, precision, recall, promotions }].
+// then lower threshold, then lower margin. rows: [{ threshold, margin, precision, recall, promotions }].
 export function rankDisambigOperatingPoint(rows) {
   return [...rows].sort((a, b) => {
     const pa = a.precision === 1 ? 1 : 0, pb = b.precision === 1 ? 1 : 0;
     if (pa !== pb) return pb - pa;
     if (b.recall !== a.recall) return b.recall - a.recall;
     if (b.precision !== a.precision) return b.precision - a.precision;
-    return a.threshold - b.threshold;
+    if (a.threshold !== b.threshold) return a.threshold - b.threshold;
+    return a.margin - b.margin;
   });
 }

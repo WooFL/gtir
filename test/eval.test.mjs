@@ -402,3 +402,12 @@ test("rankDisambigOperatingPoint: precision-first — prefer precision 1, then h
   assert.equal(best.recall, 0.5);
   assert.equal(best.threshold, 0.50);
 });
+
+test("rankDisambigOperatingPoint: equal precision/recall/threshold → lower margin wins (deterministic)", () => {
+  const rows = [
+    { threshold: 0.5, margin: 0.08, precision: 1, recall: 1, promotions: 2 },
+    { threshold: 0.5, margin: 0.03, precision: 1, recall: 1, promotions: 2 },
+    { threshold: 0.5, margin: 0.05, precision: 1, recall: 1, promotions: 2 },
+  ];
+  assert.equal(rankDisambigOperatingPoint(rows)[0].margin, 0.03);
+});

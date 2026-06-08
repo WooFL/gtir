@@ -365,6 +365,10 @@ export async function runDisambigEval({ repo, golden: goldenArg = null, baseline
   const root = repo || process.cwd();
   const cfg = loadConfig(root);
   cfg.disambiguate = false; // persist RAW ambiguous edges (full candidate sets) for the replay
+  if (!repo && !noBuild) {
+    process.stderr.write("eval --disambig: WARNING no --repo given — building the current directory with "
+      + "disambiguation OFF (downgrades stored inferred edges). Pass --repo <corpus> (or --no-build) to avoid this.\n");
+  }
   const goldenPath = goldenArg || path.join(root, "eval", "disambig-golden.json");
   if (!existsSync(goldenPath)) {
     process.stderr.write(`eval --disambig: no golden file at ${goldenPath} — pass --golden <file>\n`);
