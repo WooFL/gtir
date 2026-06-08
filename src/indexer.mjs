@@ -31,10 +31,35 @@ function chunkScopeClass(scopeJson) {
 // Build edges for the changed files and persist them. Re-reads + re-parses only the changed
 // files (cheap on a refresh). symbolIndex/noteIndex are built from the FULL current chunk set so
 // a call in a changed file can resolve to a definition in an unchanged file.
-async function indexEdges(cfg, store, toIndex, { rebuild, deleted = [] }) {
-  if (rebuild) await store.dropEdges();
+//
+// Two call shapes:
+//   indexEdges(cfg, store, toIndex, { rebuild, deleted })  — internal, persisting (buildIndex's path).
+//   indexEdges(cfg, { rebuild, collect:true })             — collect seam (gtir callstats): opens its
+//     own store, walks the whole repo as toIndex, runs the FULL resolver chain but SKIPS the
+//     disambiguate (embedding) tier and SKIPS persist, and returns { rows, sets } where rows is the
+//     in-memory resolved row array (rows still carry isMethod/receiver/receiverType/enclosingClass —
+//     toEdgeRow/persist is what strips them) and sets is the in-repo { types, methods } universe the
+//     callstats classifier needs. Non-collect callers are byte-for-byte unchanged.
+export async function indexEdges(cfg, storeOrOpts, toIndex, optsArg) {
+  // Collect-convenience overload: indexEdges(cfg, { rebuild, collect, ... }).
+  const collectForm = toIndex === undefined && storeOrOpts && typeof storeOrOpts === "object"
+    && !storeOrOpts.chunksTable && ("collect" in storeOrOpts || storeOrOpts.collect);
+  let store, opts;
+  if (collectForm) {
+    opts = storeOrOpts;
+    store = await openStore(cfg);
+    // rebuild:true ⇒ reExtract = every file (full coverage), matching how callstats invokes it.
+    toIndex = walkRepo(cfg);
+  } else {
+    store = storeOrOpts;
+    opts = optsArg ?? {};
+  }
+  const { rebuild, deleted = [], collect = false } = opts;
+  const empty = () => (collect ? { rows: [], sets: { types: new Set(), methods: new Map() } } : undefined);
+  // Collect mode never drops the persisted edges (read-only benchmark) — only the real build does.
+  if (rebuild && !collect) await store.dropEdges();
   const tbl = await store.chunksTable();
-  if (!tbl) return;
+  if (!tbl) return empty();
 
   const changedSet = new Set(toIndex.map((f) => f.relPath));
   const deletedSet = new Set(deleted);
@@ -168,7 +193,7 @@ async function indexEdges(cfg, store, toIndex, { rebuild, deleted = [] }) {
     }
   }
   for (const d of deletedSet) reExtract.delete(d);
-  if (reExtract.size === 0 && deletedSet.size === 0) return;
+  if (reExtract.size === 0 && deletedSet.size === 0) return empty();
 
   const byRel = new Map(toIndex.map((f) => [f.relPath, f]));
   const targets = [...reExtract].map((rel) => byRel.get(rel) ?? { relPath: rel, absPath: join(cfg.repo, rel) });
@@ -233,6 +258,10 @@ async function indexEdges(cfg, store, toIndex, { rebuild, deleted = [] }) {
       return chunk ? { ...e, content_hash: chunk.content_hash } : e;
     });
   }
+  // Collect seam: skip the disambiguate (embedding) tier AND persist — return the in-memory rows
+  // plus the in-repo type/method universe the callstats classifier needs. The disambiguate skip
+  // (regardless of cfg.disambiguate) is what keeps the benchmark deterministic + Ollama-free.
+  if (collect) return { rows: all, sets: buildTypeMethodSets(cppMethodIndex, goMethodIndex, tsClassFiles, tsCallableFiles) };
   if (cfg.disambiguate !== false && all.length) {
     const importMap = new Map();
     for (const e of all) {
@@ -247,6 +276,34 @@ async function indexEdges(cfg, store, toIndex, { rebuild, deleted = [] }) {
   }
   await store.evictEdgePaths([...reExtract, ...deletedSet]);
   if (all.length) await store.upsertEdges(all);
+}
+
+// The in-repo type/method universe the callstats classifier consults: { types: Set<typeName>,
+// methods: Map<typeName -> Set<methodName>> }. Folds the per-language indexes the resolvers already
+// built — Go/C++ method indexes (keyed `Type#method`) give both types and their methods; TS class
+// files give the type names and tsCallableFiles approximates their methods (TS methods are in-class
+// callables, so a class T with a callable m in the same file is treated as T.m). The TS method side is
+// file-scoped, not class-scoped, so it can over-attribute a same-file free function as a method — an
+// acceptable over-count that only ever moves a row OUT of method-external (toward `other`), never a
+// wrong resolution. Pure helper over already-built maps.
+function buildTypeMethodSets(cppMethodIndex, goMethodIndex, tsClassFiles, tsCallableFiles) {
+  const types = new Set();
+  const methods = new Map();
+  const add = (t, m) => {
+    types.add(t);
+    if (!methods.has(t)) methods.set(t, new Set());
+    if (m) methods.get(t).add(m);
+  };
+  for (const k of cppMethodIndex.keys()) { const h = k.indexOf("#"); if (h > 0) add(k.slice(0, h), k.slice(h + 1)); }
+  for (const k of goMethodIndex.keys()) { const h = k.indexOf("#"); if (h > 0) add(k.slice(0, h), k.slice(h + 1)); }
+  // TS/JS: class T declared in file F; any callable m defined in F is treated as a method of T.
+  for (const [cls, files] of tsClassFiles) {
+    add(cls, null);
+    for (const [m, defs] of tsCallableFiles) {
+      if (defs.some((d) => files.has(d.path))) methods.get(cls).add(m);
+    }
+  }
+  return { types, methods };
 }
 
 export async function buildIndex(cfg, { rebuild = false, paths = null } = {}) {
