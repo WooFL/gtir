@@ -135,6 +135,57 @@ export function inferTsReceiverType(callNode, receiverName) {
   return collectTsBindings(scope).get(receiverName) ?? null;
 }
 
+// [{cls, bases}] for each class head in `text`. `bases` = extends base (≤1) then implements interfaces,
+// in order. Classes with neither clause are omitted. `interface X extends Y` yields no entry.
+// Generic args are stripped: `Base<T>` → `Base`. Multi-class per chunk is fully supported.
+const TS_CLASS_HEAD = /(?<![A-Za-z_$\w])class\s+([A-Za-z_$][\w$]*)(?:\s*<[^{]*?>)?\s*((?:extends|implements)\s[^{]*?)\s*\{/g;
+function stripTsGenerics(s) {
+  let prev;
+  do { prev = s; s = s.replace(/<[^<>]*>/g, ""); } while (s !== prev);
+  return s;
+}
+export function extractTsImplements(text) {
+  const s = String(text || "");
+  // Reject if preceded by "interface " — check by scanning the full string with a negative lookbehind
+  // that is position-aware. We use a fresh regex to locate each class head, then pre-scan for
+  // "interface ... class" patterns to skip. Simplest: reject any match where the preceding non-ws token
+  // is "interface". We do this by checking the substring before the match start.
+  const out = [];
+  // Reset state-carrying regex
+  TS_CLASS_HEAD.lastIndex = 0;
+  let m;
+  while ((m = TS_CLASS_HEAD.exec(s))) {
+    // Ensure this `class` is not inside an interface declaration:
+    // look back at text before match and check the immediately preceding keyword token isn't "interface"
+    const before = s.slice(0, m.index);
+    const prevToken = before.match(/([A-Za-z_$][\w$]*)[\s]*$/);
+    if (prevToken && prevToken[1] === "interface") continue;
+
+    const cls = m[1];
+    const clauseRaw = m[2];
+    const clause = stripTsGenerics(clauseRaw);
+
+    // Parse extends and implements from the clause text
+    const bases = [];
+
+    // extends: optional single base
+    const extendsMatch = clause.match(/\bextends\s+([A-Za-z_$][\w$]*)/);
+    if (extendsMatch) bases.push(extendsMatch[1]);
+
+    // implements: comma-separated list
+    const implMatch = clause.match(/\bimplements\s+([\s\S]+)/);
+    if (implMatch) {
+      for (const part of implMatch[1].split(",")) {
+        const id = part.trim().match(/^([A-Za-z_$][\w$]*)/);
+        if (id) bases.push(id[1]);
+      }
+    }
+
+    if (bases.length > 0) out.push({ cls, bases });
+  }
+  return out;
+}
+
 // TS/JS source-file extensions — used to gate resolveTsMethods to TS/JS callers only.
 // Matches .ts/.tsx/.js/.jsx plus the .mjs/.cjs/.mts/.cts module variants (.d.ts via its .ts suffix).
 const TS_EXTS = /\.[cm]?[jt]sx?$/i;

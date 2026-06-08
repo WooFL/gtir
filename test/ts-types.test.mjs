@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { extractTsClassNames, resolveTsMethods } from "../src/ts-types.mjs";
+import { extractTsClassNames, resolveTsMethods, extractTsImplements } from "../src/ts-types.mjs";
 
 test("extractTsClassNames: class / export class / multiple", () => {
   assert.deepEqual(extractTsClassNames(`class Foo {}`), ["Foo"]);
@@ -50,4 +50,35 @@ test("resolveTsMethods: class declared in 2 files → ambiguous", () => {
 test("resolveTsMethods: no receiverType / non-method → unchanged", () => {
   assert.equal(resolveTsMethods([ambRow({ receiverType: null })], classFiles, callFiles)[0].conf, "ambiguous");
   assert.equal(resolveTsMethods([ambRow({ isMethod: false, receiverType: "Encoder" })], classFiles, callFiles)[0].conf, "ambiguous");
+});
+
+test("extractTsImplements: implements only", () => {
+  assert.deepEqual(extractTsImplements(`class A implements IFoo {}`), [{ cls: "A", bases: ["IFoo"] }]);
+});
+test("extractTsImplements: extends + implements", () => {
+  assert.deepEqual(extractTsImplements(`class A extends Base implements IFoo, IBar {}`),
+    [{ cls: "A", bases: ["Base", "IFoo", "IBar"] }]);
+});
+test("extractTsImplements: generics stripped", () => {
+  assert.deepEqual(extractTsImplements(`class A extends Base<T> implements IFoo<U> {}`),
+    [{ cls: "A", bases: ["Base", "IFoo"] }]);
+});
+test("extractTsImplements: no clause → empty", () => {
+  assert.deepEqual(extractTsImplements(`class A {}`), []);
+});
+test("extractTsImplements: two classes in one chunk", () => {
+  assert.deepEqual(
+    extractTsImplements(`class A implements IFoo {} class B extends C {}`),
+    [{ cls: "A", bases: ["IFoo"] }, { cls: "B", bases: ["C"] }]
+  );
+});
+test("extractTsImplements: JS extends only", () => {
+  assert.deepEqual(extractTsImplements(`class A extends B {}`), [{ cls: "A", bases: ["B"] }]);
+});
+test("extractTsImplements: interface extends → empty", () => {
+  assert.deepEqual(extractTsImplements(`interface X extends Y {}`), []);
+});
+test("extractTsImplements: export abstract class implements", () => {
+  assert.deepEqual(extractTsImplements(`export abstract class A implements IFoo {}`),
+    [{ cls: "A", bases: ["IFoo"] }]);
 });
