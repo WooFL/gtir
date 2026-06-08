@@ -112,7 +112,7 @@ function templateElement(typeNode, smartPtrs) {
 }
 
 // The member-access operator of a call's field_expression callee: "->" | "." | null.
-function memberOperator(callNode) {
+export function memberOperator(callNode) {
   const fe = callNode?.childForFieldName?.("function");
   if (!fe || fe.type !== "field_expression") return null;
   for (let i = 0; i < fe.childCount; i++) {
@@ -211,6 +211,16 @@ function enclosingCppClass(callNode, fn) {
     }
   }
   return null;
+}
+
+// The class owning `this` at a C++ call site: finds the enclosing function_definition, then defers
+// to enclosingCppClass (which handles both the out-of-class `Class::method` scope and an in-class
+// class_specifier). Null if neither applies.
+export function cppEnclosingClass(callNode) {
+  if (!callNode) return null;
+  let fn = callNode.parent;
+  while (fn && fn.type !== "function_definition") fn = fn.parent;
+  return enclosingCppClass(callNode, fn);
 }
 
 // Infer the C++ type of `receiverName` at a call site (`obj` or the literal "this"). Walks the call's

@@ -1,7 +1,7 @@
 import { dirname, join, basename } from "node:path";
 import { edgeTypes, targetTypes } from "./languages.mjs";
 import { inferReceiverType } from "./go-types.mjs";
-import { inferCppReceiverType, inferCppFactory, DEFAULT_SMART_PTRS } from "./cpp-types.mjs";
+import { inferCppReceiverType, inferCppFactory, DEFAULT_SMART_PTRS, cppEnclosingClass, memberOperator } from "./cpp-types.mjs";
 import { inferTsReceiverType, inferTsFieldReceiverType } from "./ts-types.mjs";
 
 // Walk every named node depth-first, calling visit(node). Iterative (no recursion depth limit),
@@ -249,7 +249,7 @@ function resolveSourceStem(fromPath, source) {
 // the basename, strip the .md/.mdx extension, lowercase.
 export const noteKey = (s) => basename(String(s).replace(/\\/g, "/")).replace(/\.(md|mdx)$/i, "").toLowerCase();
 
-function row(kind, from, to, conf, candidates, contentHash, refName, score = null, isMethod = false, receiverType = null, receiverFactory = null) {
+function row(kind, from, to, conf, candidates, contentHash, refName, score = null, isMethod = false, receiverType = null, receiverFactory = null, enclosingClass = null, memberOp = null) {
   return {
     kind, conf,
     from_path: from.path, from_lines: from.lines ?? `${from.fromLine}`, from_symbol: from.symbol ?? null,
@@ -262,6 +262,8 @@ function row(kind, from, to, conf, candidates, contentHash, refName, score = nul
     isMethod,
     receiverType,
     receiverFactory,
+    enclosingClass,
+    memberOp,
   };
 }
 
@@ -293,10 +295,10 @@ export function resolveEdges(rawEdges, symbolIndex, noteIndex, opts = {}) {
       if (cands.length === 1) {
         const only = cands[0];
         if (only.path === e.fromPath) { out.push(row("calls", from, { ...only, symbol: e.refName }, "resolved", [], contentHash, e.refName)); continue; }
-        out.push(row("calls", from, null, "ambiguous", [only.path], contentHash, e.refName, null, e.isMethod, e.receiverType, e.receiverFactory));
+        out.push(row("calls", from, null, "ambiguous", [only.path], contentHash, e.refName, null, e.isMethod, e.receiverType, e.receiverFactory, e.enclosingClass, e.memberOp));
         continue;
       }
-      out.push(row("calls", from, null, "ambiguous", cands.map((c) => c.path), contentHash, e.refName, null, e.isMethod, e.receiverType, e.receiverFactory));
+      out.push(row("calls", from, null, "ambiguous", cands.map((c) => c.path), contentHash, e.refName, null, e.isMethod, e.receiverType, e.receiverFactory, e.enclosingClass, e.memberOp));
     } else if (e.kind === "imports") {
       const stem = resolveSourceStem(e.fromPath, e.source);
       const from = { path: e.fromPath, fromLine: e.fromLine };
@@ -392,7 +394,9 @@ export function extractCodeEdges(tree, langId, relPath, opts = {}) {
             : isTs ? inferTsReceiverType(n, receiver)
             : null;
           const receiverFactory = (receiver && !receiverType && langId === "cpp") ? inferCppFactory(n, receiver) : null;
-          edges.push({ kind: "calls", refName: name, fromPath: relPath, fromLine: n.startPosition.row + 1, fromSymbol, isMethod, receiver, receiverType, receiverFactory });
+          const enclosingClass = (langId === "cpp" && isMethod) ? cppEnclosingClass(n) : null;
+          const memberOp = (langId === "cpp" && isMethod) ? memberOperator(n) : null;
+          edges.push({ kind: "calls", refName: name, fromPath: relPath, fromLine: n.startPosition.row + 1, fromSymbol, isMethod, receiver, receiverType, receiverFactory, enclosingClass, memberOp });
         }
       }
     } else if (importSet.has(n.type)) {

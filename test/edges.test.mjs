@@ -580,3 +580,41 @@ test("extractCodeEdges (ts): this.field where field has no known type → null",
   const call = edges.find((e) => e.kind === "calls" && e.refName === "do");
   assert.equal(call.receiverType, null);
 });
+
+// enclosingClass + memberOp on C++ member-call edges (Task 3)
+test("extractCodeEdges (cpp): out-of-class def → enclosingClass + memberOp, no same-file type", async () => {
+  // `void C::run() { m_w->go(); }` — out-of-class def, no field decl in same snippet, so
+  // receiverType stays null (cross-file; resolver handles it). enclosingClass must be "C".
+  const edges = await edgesFor("cpp", `void C::run() { m_w->go(); }`, "a.cpp");
+  const call = edges.find((e) => e.kind === "calls" && e.refName === "go");
+  assert.ok(call, "expected a go() call edge");
+  assert.equal(call.enclosingClass, "C");
+  assert.equal(call.receiver, "m_w");
+  assert.equal(call.memberOp, "->");
+  assert.equal(call.receiverType, null);
+});
+
+test("extractCodeEdges (cpp): in-class inline method → enclosingClass + memberOp", async () => {
+  // Field is in the same class body → receiverType may be resolved by same-file inference.
+  // We only assert on enclosingClass and memberOp.
+  const edges = await edgesFor("cpp", `class C { Widget* w; void run(){ w->go(); } };`, "a.cpp");
+  const call = edges.find((e) => e.kind === "calls" && e.refName === "go");
+  assert.ok(call, "expected a go() call edge");
+  assert.equal(call.enclosingClass, "C");
+  assert.equal(call.memberOp, "->");
+});
+
+test("extractCodeEdges (cpp): dot operator → memberOp '.'", async () => {
+  const edges = await edgesFor("cpp", `void use(Foo obj) { obj.go(); }`, "a.cpp");
+  const call = edges.find((e) => e.kind === "calls" && e.refName === "go");
+  assert.ok(call, "expected a go() call edge");
+  assert.equal(call.memberOp, ".");
+});
+
+test("extractCodeEdges (ts): non-cpp member call → enclosingClass null + memberOp null", async () => {
+  const edges = await edgesFor("typescript", `function run(obj: Foo) { obj.go(); }`, "a.ts");
+  const call = edges.find((e) => e.kind === "calls" && e.refName === "go");
+  assert.ok(call, "expected a go() call edge");
+  assert.equal(call.enclosingClass, null);
+  assert.equal(call.memberOp, null);
+});
