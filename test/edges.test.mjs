@@ -427,3 +427,16 @@ test("extractCodeEdges (cpp): multi-arg unique_ptr<Foo,Del> → first arg Foo on
   const edges = await edgesFor("cpp", `void use(std::unique_ptr<Foo, Del> p) { p->bar(); }`, "a.cpp");
   assert.equal(edges.find((e) => e.refName === "bar").receiverType, "Foo");
 });
+
+test("extractCodeEdges (cpp): custom wrapper in cppSmartPointers unwraps on ->", async () => {
+  const parser = await getParser("cpp");
+  const tree = parser.parse(`void use(MyScoper<Foo> h) { h->bar(); }`);
+  const edges = extractCodeEdges(tree, "cpp", "a.cpp", { cppSmartPointers: ["MyScoper"] });
+  assert.equal(edges.find((e) => e.kind === "calls" && e.refName === "bar").receiverType, "Foo");
+});
+test("extractCodeEdges (cpp): a wrapper NOT in the allowlist → null", async () => {
+  const parser = await getParser("cpp");
+  const tree = parser.parse(`void use(MyScoper<Foo> h) { h->bar(); }`);
+  const edges = extractCodeEdges(tree, "cpp", "a.cpp", {}); // default allowlist; MyScoper not in it
+  assert.equal(edges.find((e) => e.kind === "calls" && e.refName === "bar").receiverType, null);
+});

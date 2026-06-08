@@ -42,6 +42,7 @@ export const DEFAULTS = {
   disambiguate: true,        // promote ambiguous call edges to conf:"inferred" via embedding similarity
   disambigThreshold: 0.55,   // min cosine(call-site, candidate def) to promote (precision-first)
   disambigMargin: 0.05,      // min lead of the best candidate over the runner-up to promote
+  cppSmartPointers: ["unique_ptr", "shared_ptr", "weak_ptr"],  // wrapper templates whose ptr->m() unwraps to the element type (add custom forwarders, e.g. "AEFX_SuiteScoper")
 
   // Query-adaptive RRF fusion weights for the BM25 branch (relative to the vector branch = 1).
   // Conceptual/natural-language queries let the embedder lead (ftsWeight, low); single bare-identifier

@@ -114,7 +114,7 @@ async function indexEdges(cfg, store, toIndex, { rebuild, deleted = [] }) {
       const parser = await getParser(langId).catch(() => null);
       if (parser) {
         let tree; try { tree = parser.parse(text); } catch { tree = null; }
-        if (tree) raw = extractCodeEdges(tree, langId, f.relPath);
+        if (tree) raw = extractCodeEdges(tree, langId, f.relPath, { cppSmartPointers: cfg.cppSmartPointers });
       }
     }
     if (raw.length) all.push(...resolveEdges(raw, symbolIndex, noteIndex));
