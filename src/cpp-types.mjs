@@ -143,7 +143,7 @@ export function inferCppReceiverType(callNode, receiverName, smartPtrs = DEFAULT
 }
 
 // C++ source-file extensions — used to gate resolveCppMethods to C++ callers only.
-const CPP_EXTS = /\.(cpp|cc|cxx|c|h|hpp|hh|hxx)$/i;
+const CPP_EXTS = /\.(cpp|cc|cxx|c|h|hpp|hh|hxx|metal)$/i;
 
 // Upgrade ambiguous C++ member-call rows to resolved when the receiver type pins a single target FILE.
 // Pure — new array; only touches kind:"calls" conf:"ambiguous" isMethod rows with a receiverType.

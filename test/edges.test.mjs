@@ -469,6 +469,14 @@ test("extractCodeEdges (ts): generic-typed receiver → null", async () => {
   const edges = await edgesFor("typescript", `function run(x: Foo<T>) { x.bar(); }`, "a.ts");
   assert.equal(edges.find((e) => e.refName === "bar").receiverType, null);
 });
+test("extractCodeEdges (ts): union-typed receiver → null", async () => {
+  const edges = await edgesFor("typescript", `function run(x: A | B) { x.m(); }`, "a.ts");
+  assert.equal(edges.find((e) => e.refName === "m").receiverType, null);
+});
+test("extractCodeEdges (ts): predefined-typed receiver → null", async () => {
+  const edges = await edgesFor("typescript", `function run(x: string) { x.trim(); }`, "a.ts");
+  assert.equal(edges.find((e) => e.refName === "trim").receiverType, null);
+});
 test("extractCodeEdges (ts): new ns.X() member constructor → null", async () => {
   const edges = await edgesFor("typescript", `function run() { const x = new ns.Foo(); x.bar(); }`, "a.ts");
   assert.equal(edges.find((e) => e.refName === "bar").receiverType, null);

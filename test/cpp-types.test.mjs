@@ -51,6 +51,18 @@ test("resolveCppMethods: upgrades a type-pinned ambiguous member call to resolve
   assert.equal(r.to_lines, "1-5");
   assert.deepEqual(r.candidates, []);
 });
+test("resolveCppMethods: a .metal caller is gated in (regression)", () => {
+  const metalIdx = new Map([["Shader#run", [{ path: "shader.metal", line_start: 1, line_end: 5 }]]]);
+  const [r] = resolveCppMethods(
+    [ambRow({ from_path: "shader.metal", ref_name: "run", receiverType: "Shader",
+      candidates: ["shader.metal"] })],
+    metalIdx);
+  assert.equal(r.conf, "resolved");
+  assert.equal(r.to_path, "shader.metal");
+  assert.equal(r.to_symbol, "run");
+  assert.equal(r.to_lines, "1-5");
+  assert.deepEqual(r.candidates, []);
+});
 test("resolveCppMethods: overloads (several defs, one file) still resolve", () => {
   const over = new Map([["Encoder#flush", [
     { path: "encoder.cpp", line_start: 1, line_end: 5 },
