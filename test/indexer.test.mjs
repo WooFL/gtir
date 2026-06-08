@@ -559,6 +559,23 @@ test("indexEdges resolves a Go interface call to its implementers (dispatch)", a
   } finally { rmSync(repo, { recursive: true, force: true }); }
 });
 
+test("indexEdges resolves a C++ virtual call to its overriding implementers (dispatch)", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-cppdisp-"));
+  try {
+    writeFileSync(join(repo, "shape.h"), `class Shape { public: virtual double area() = 0; };\n`);
+    writeFileSync(join(repo, "circle.cpp"), `#include "shape.h"\nclass Circle : public Shape { public: double area() override; };\ndouble Circle::area() { return 3.14; }\n`);
+    writeFileSync(join(repo, "rect.cpp"), `#include "shape.h"\nclass Rect : public Shape { public: double area() override; };\ndouble Rect::area() { return 4.0; }\n`);
+    writeFileSync(join(repo, "use.cpp"), `#include "shape.h"\ndouble total(Shape* s) { return s->area(); }\n`);
+    const cfg = loadConfig(repo); cfg.embedImpl = (t) => Promise.resolve(t.map(() => [1,0,0])); cfg.minChars = 1;
+    await buildIndex(cfg, { rebuild: true });
+    const edges = await (await openStore(cfg)).loadEdges();
+    const call = edges.find((e) => e.kind === "calls" && e.from_path === "use.cpp" && e.ref_name === "area");
+    assert.ok(call, "expected an area call edge from use.cpp");
+    assert.equal(call.conf, "dispatch");
+    assert.deepEqual([...call.candidates].sort(), ["circle.cpp", "rect.cpp"]);
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
 test("buildIndex: a markdown-only repo auto-selects the nomic model and persists it", async () => {
   const repo = mkdtempSync(join(tmpdir(), "gtir-automd-"));
   try {

@@ -12,7 +12,7 @@ import { extractCodeEdges, extractNotesEdges, resolveEdges, noteKey } from "./ed
 import { disambiguateEdges } from "./disambiguate.mjs";
 import { declaredSymbols, declaredCallables } from "./symbols.mjs";
 import { extractGoMethodDefs, resolveGoMethods, extractGoInterfaces, resolveGoDispatch } from "./go-types.mjs";
-import { extractCppMethodDefs, resolveCppMethods, extractCppReturnTypes } from "./cpp-types.mjs";
+import { extractCppMethodDefs, resolveCppMethods, extractCppReturnTypes, extractCppBases, extractCppVirtuals, extractCppOverrides, resolveCppDispatch } from "./cpp-types.mjs";
 import { extractTsClassNames, resolveTsMethods } from "./ts-types.mjs";
 
 // Columns the current row shape ALWAYS writes. content_hash is deliberately excluded — it's
@@ -43,6 +43,9 @@ async function indexEdges(cfg, store, toIndex, { rebuild, deleted = [] }) {
   const goInterfaceIndex = new Map();
   const cppMethodIndex = new Map();
   const cppReturnIndex = new Map();
+  const cppBaseIndex = new Map();  // class -> Set(direct bases)
+  const cppVirtualMethods = new Map();
+  const cppOverrideMethods = new Map();
   const tsClassFiles = new Map();
   const tsCallableFiles = new Map();
   // Symbols declared by the changed files (drives the "a new def appeared" caller re-resolution).
@@ -96,6 +99,18 @@ async function indexEdges(cfg, store, toIndex, { rebuild, deleted = [] }) {
       for (const { name, returnType } of extractCppReturnTypes(r.text)) {
         if (!cppReturnIndex.has(name)) cppReturnIndex.set(name, new Set());
         cppReturnIndex.get(name).add(returnType);
+      }
+      for (const { cls, bases } of extractCppBases(r.text)) {
+        if (!cppBaseIndex.has(cls)) cppBaseIndex.set(cls, new Set());
+        for (const b of bases) cppBaseIndex.get(cls).add(b);
+      }
+      for (const { cls, method } of extractCppVirtuals(r.text, scopeClass)) {
+        if (!cppVirtualMethods.has(cls)) cppVirtualMethods.set(cls, new Set());
+        cppVirtualMethods.get(cls).add(method);
+      }
+      for (const { cls, method } of extractCppOverrides(r.text, scopeClass)) {
+        if (!cppOverrideMethods.has(cls)) cppOverrideMethods.set(cls, new Set());
+        cppOverrideMethods.get(cls).add(method);
       }
     }
     if (r.language === "typescript" || r.language === "tsx" || r.language === "javascript") {
@@ -173,6 +188,22 @@ async function indexEdges(cfg, store, toIndex, { rebuild, deleted = [] }) {
   }
   all = resolveGoMethods(all, goMethodIndex);
   all = resolveGoDispatch(all, goMethodIndex, goInterfaceIndex, goTypeMethodSets);
+  // base -> Set(all transitively-derived classes). Invert cppBaseIndex (child->bases) and close over
+  // the chain, cycle-guarded, so a call on a base resolves to derived overrides at any depth.
+  const cppDerivedIndex = new Map();
+  for (const child of cppBaseIndex.keys()) {
+    const seen = new Set();
+    const stack = [...(cppBaseIndex.get(child) || [])];
+    while (stack.length) {
+      const base = stack.pop();
+      if (seen.has(base)) continue;
+      seen.add(base);
+      if (!cppDerivedIndex.has(base)) cppDerivedIndex.set(base, new Set());
+      cppDerivedIndex.get(base).add(child);
+      for (const grand of (cppBaseIndex.get(base) || [])) stack.push(grand);
+    }
+  }
+  all = resolveCppDispatch(all, cppMethodIndex, cppDerivedIndex, cppVirtualMethods, cppOverrideMethods);
   all = resolveCppMethods(all, cppMethodIndex, cppReturnIndex);
   all = resolveTsMethods(all, tsClassFiles, tsCallableFiles);
   if (chunkByPath.size) {
