@@ -321,3 +321,28 @@ test("extractCppFields: no header, scopeClass fallback", () => {
 test("extractCppFields: no header, no scopeClass → empty", () => {
   assert.deepEqual(extractCppFields(`Widget* m_w;`), []);
 });
+
+// Fix 1: leading cv-qualifiers are stripped before type classification (mirror normalizeReturnType)
+test("extractCppFields: leading const stripped on bare pointer field", () => {
+  const r = extractCppFields(`class C { const Widget* m_w; };`);
+  assert.deepEqual(r, [{ cls: "C", field: "m_w", type: "Widget", smartPtr: false }]);
+});
+test("extractCppFields: leading const stripped on smart-pointer field", () => {
+  const r = extractCppFields(`class C { const std::shared_ptr<Foo> p; };`);
+  assert.deepEqual(r, [{ cls: "C", field: "p", type: "Foo", smartPtr: true }]);
+});
+test("extractCppFields: a primitive stays rejected (no methods to resolve)", () => {
+  // long long / unsigned long are primitives — correctly yield no field.
+  assert.deepEqual(extractCppFields(`class C { long long n; };`), []);
+  assert.deepEqual(extractCppFields(`class C { unsigned long u; };`), []);
+});
+
+// Fix 2 (precision): scopeClass-only mode must brace-track so method-body locals are not phantom fields
+test("extractCppFields: scopeClass out-of-class method body → no phantom fields", () => {
+  // A header-less chunk is a split-out method body; its locals must NOT be emitted as fields on C.
+  assert.deepEqual(extractCppFields(`void C::run(){ A* a; B* b; }`, "C"), []);
+});
+test("extractCppFields: scopeClass field before method body → only the real field", () => {
+  const r = extractCppFields(`Widget* m_w; void run(){ Gadget* g; }`, "C");
+  assert.deepEqual(r, [{ cls: "C", field: "m_w", type: "Widget", smartPtr: false }]);
+});

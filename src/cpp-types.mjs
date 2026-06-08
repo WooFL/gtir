@@ -359,22 +359,73 @@ function parseCppFieldStmt(raw) {
   const lastIdx = s.lastIndexOf(field);
   const typeRaw = s.slice(0, lastIdx).replace(/[\s*&,]+$/, "").trim();
   if (!typeRaw) return null;
+  // strip a leading cv-qualifier so `const Widget*`/`volatile T`/`mutable Foo` classify on the bare
+  // type (mirrors normalizeReturnType's `.replace(/^const\s+/, "")`). Both bare and smart-ptr forms.
+  const type = typeRaw.replace(/^(?:const|volatile|mutable)\s+/, "");
+  if (!type) return null;
   // qualified type (contains `::`) or non-allowlisted generic (`<`) → deferred, skip
-  if (typeRaw.includes("::") || typeRaw.includes("<")) {
-    const sp = typeRaw.match(CPP_SMART_PTR_FIELD);
+  if (type.includes("::") || type.includes("<")) {
+    const sp = type.match(CPP_SMART_PTR_FIELD);
     if (sp) return { field, type: sp[2], smartPtr: true };
     return null;
   }
-  if (!CPP_BARE_TYPE.test(typeRaw)) return null;
-  return { field, type: typeRaw, smartPtr: false };
+  if (!CPP_BARE_TYPE.test(type)) return null;
+  return { field, type, smartPtr: false };
+}
+
+// Brace-tracked scan of a class-body interior for field declarations. Starts at `start`, where the
+// surrounding brace `depth` is the INTERIOR level (1 just inside a body's `{` in header mode; 0 for a
+// header-less chunk whose whole text IS the interior in scopeClass mode). A `;` flushes a candidate
+// only at the interior depth; any `{` raises depth and its contents (a method/ctor body) are skipped,
+// so method-body locals are never emitted as phantom fields. Pushes {cls, …} rows into `out`.
+function scanCppFieldBody(s, start, depth, cls, out) {
+  const interior = depth;        // the level at which a `;` ends a real field statement
+  let buf = "";                  // accumulates characters at the interior level
+  for (let i = start; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === "{") {
+      if (depth === interior) {
+        // opening an inline method/ctor body — discard the pending buffer and skip to its matching `}`
+        buf = "";
+        let inner = 1;
+        i++;
+        while (i < s.length && inner > 0) {
+          if (s[i] === "{") inner++;
+          else if (s[i] === "}") inner--;
+          i++;
+        }
+        i--;                     // loop will increment again; depth stays at interior
+      } else {
+        depth++;
+      }
+    } else if (ch === "}") {
+      depth--;
+      if (depth < interior) break;   // end of the class body (header mode: interior 1 → break at 0)
+    } else if (ch === ";" && depth === interior) {
+      const trimmed = buf.trim();
+      if (trimmed) {
+        const r = parseCppFieldStmt(trimmed);
+        if (r) out.push({ cls, ...r });
+      }
+      buf = "";
+    } else if (ch === ":" && depth === interior) {
+      // access specifier `public:` / `private:` / `protected:` → clear buffer; else keep `:` (e.g. `::`)
+      const kw = buf.trim();
+      if (CPP_ACCESS_KW.has(kw)) buf = "";
+      else buf += ch;
+    } else if (depth === interior) {
+      buf += ch;
+    }
+  }
 }
 
 // Extract member-field declarations from a class body in `text`. Returns [{cls, field, type, smartPtr}].
-// Brace-depth tracking starting at depth 1 (just inside the class body's opening `{`) ensures that
-// declarations inside inline method/ctor bodies (depth ≥ 2) are never emitted as fields.
+// Brace-depth tracking ensures declarations inside inline method/ctor bodies are never emitted as fields.
+// Both modes share scanCppFieldBody: header mode scans from just after the body's opening `{` at interior
+// depth 1; scopeClass mode scans the whole text at interior depth 0 (a header-less chunk is typically an
+// out-of-class method body, so its `{ … }` locals must be skipped — not flushed as phantom fields).
 // scopeClass: fallback class name when the chunk has no `class/struct Name` header (chunk-robustness,
-// same rule as extractCppMethodDefs). When scopeClass is used there are no body braces to scan, so the
-// entire text is treated as the class-body interior (each `;`-terminated statement is a candidate).
+// same rule as extractCppMethodDefs).
 export function extractCppFields(text, scopeClass = null, smartPtrs = DEFAULT_SMART_PTRS) {
   const s = String(text || "");
   const cm = s.match(CPP_CLASS);
@@ -383,65 +434,16 @@ export function extractCppFields(text, scopeClass = null, smartPtrs = DEFAULT_SM
 
   const out = [];
 
-  // scopeClass-only mode: no class header → treat entire text as class interior
+  // scopeClass-only mode: no class header → whole text is the class interior, scanned at depth 0.
   if (!cm) {
-    for (const raw of s.split(";")) {
-      const r = parseCppFieldStmt(raw);
-      if (r) out.push({ cls, ...r });
-    }
+    scanCppFieldBody(s, 0, 0, cls, out);
     return out;
   }
 
-  // Find the opening `{` of the class body (after the header match)
+  // Header mode: find the opening `{` of the class body, scan its interior starting at depth 1.
   const bodyStart = s.indexOf("{", cm.index + cm[0].length - 1);
   if (bodyStart === -1) return [];
-
-  let depth = 1;                 // we start just inside the opening `{`
-  let buf = "";                  // accumulates characters at depth 1
-
-  for (let i = bodyStart + 1; i < s.length; i++) {
-    const ch = s[i];
-    if (ch === "{") {
-      if (depth === 1) {
-        // opening an inline body — discard the pending statement buffer and skip until matching `}`
-        buf = "";
-        depth++;
-        // skip to the matching closing `}` for this inner body
-        let inner = 1;
-        i++;
-        while (i < s.length && inner > 0) {
-          if (s[i] === "{") inner++;
-          else if (s[i] === "}") inner--;
-          i++;
-        }
-        i--;                     // loop will increment again
-        depth--;                 // back to depth 1 after skip
-      } else {
-        depth++;
-      }
-    } else if (ch === "}") {
-      depth--;
-      if (depth === 0) break;    // end of class body
-    } else if (ch === ";" && depth === 1) {
-      // flush candidate statement
-      const trimmed = buf.trim();
-      // access specifier `public:` / `private:` / `protected:` — already cleared by `:` handler,
-      // but guard anyway
-      if (trimmed) {
-        const r = parseCppFieldStmt(trimmed);
-        if (r) out.push({ cls, ...r });
-      }
-      buf = "";
-    } else if (ch === ":" && depth === 1) {
-      // access specifier `public:` / `private:` / `protected:` → clear buffer; else keep `:` (e.g. `::`)
-      const kw = buf.trim();
-      if (CPP_ACCESS_KW.has(kw)) buf = "";
-      else buf += ch;
-    } else if (depth === 1) {
-      buf += ch;
-    }
-  }
-
+  scanCppFieldBody(s, bodyStart + 1, 1, cls, out);
   return out;
 }
 
