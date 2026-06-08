@@ -1,16 +1,16 @@
 {
-  "n": 35,
+  "n": 36,
   "tally": {
-    "correct": 35,
+    "correct": 36,
     "wrong": 0,
     "missing": 0
   },
   "byLang": {
     "ts": {
-      "correct": 13,
+      "correct": 14,
       "wrong": 0,
       "missing": 0,
-      "n": 13
+      "n": 14
     },
     "py": {
       "correct": 4,
@@ -38,9 +38,9 @@
     }
   },
   "split": {
-    "resolved": 68,
+    "resolved": 71,
     "inferred": 2,
-    "dispatch": 2,
+    "dispatch": 3,
     "ambiguous": 57,
     "external": 276
   },
