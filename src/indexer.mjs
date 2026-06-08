@@ -12,7 +12,7 @@ import { extractCodeEdges, extractNotesEdges, resolveEdges, noteKey } from "./ed
 import { disambiguateEdges } from "./disambiguate.mjs";
 import { declaredSymbols, declaredCallables } from "./symbols.mjs";
 import { extractGoMethodDefs, resolveGoMethods, extractGoInterfaces, resolveGoDispatch } from "./go-types.mjs";
-import { extractCppMethodDefs, resolveCppMethods, extractCppReturnTypes, extractCppBases, extractCppVirtuals, extractCppOverrides, resolveCppDispatch } from "./cpp-types.mjs";
+import { extractCppMethodDefs, resolveCppMethods, extractCppReturnTypes, extractCppBases, extractCppVirtuals, extractCppOverrides, resolveCppDispatch, extractCppFields, resolveCppFieldReceivers } from "./cpp-types.mjs";
 import { extractTsClassNames, resolveTsMethods } from "./ts-types.mjs";
 
 // Columns the current row shape ALWAYS writes. content_hash is deliberately excluded — it's
@@ -38,12 +38,16 @@ async function indexEdges(cfg, store, toIndex, { rebuild, deleted = [] }) {
 
   const changedSet = new Set(toIndex.map((f) => f.relPath));
   const deletedSet = new Set(deleted);
+  // Custom smart-pointer wrappers (cfg.cppSmartPointers) override extractCppFields' DEFAULT_SMART_PTRS;
+  // undefined lets the extractor use its std unique/shared/weak_ptr default.
+  const cppSmartPtrs = cfg.cppSmartPointers ? new Set(cfg.cppSmartPointers) : undefined;
   const symbolIndex = new Map(), noteIndex = new Map(), callSiteVec = new Map(), chunkByPath = new Map();
   const goMethodIndex = new Map();
   const goInterfaceIndex = new Map();
   const cppMethodIndex = new Map();
   const cppReturnIndex = new Map();
   const cppBaseIndex = new Map();  // class -> Set(direct bases)
+  const cppFieldIndex = new Map(); // class -> Map(field -> {type, smartPtr})
   const cppVirtualMethods = new Map();
   const cppOverrideMethods = new Map();
   const tsClassFiles = new Map();
@@ -111,6 +115,11 @@ async function indexEdges(cfg, store, toIndex, { rebuild, deleted = [] }) {
       for (const { cls, method } of extractCppOverrides(r.text, scopeClass)) {
         if (!cppOverrideMethods.has(cls)) cppOverrideMethods.set(cls, new Set());
         cppOverrideMethods.get(cls).add(method);
+      }
+      for (const { cls, field, type, smartPtr } of extractCppFields(r.text, scopeClass, cppSmartPtrs)) {
+        if (!cppFieldIndex.has(cls)) cppFieldIndex.set(cls, new Map());
+        const fields = cppFieldIndex.get(cls);
+        if (!fields.has(field)) fields.set(field, { type, smartPtr });   // first-write-wins per (cls, field)
       }
     }
     if (r.language === "typescript" || r.language === "tsx" || r.language === "javascript") {
@@ -203,6 +212,7 @@ async function indexEdges(cfg, store, toIndex, { rebuild, deleted = [] }) {
       for (const grand of (cppBaseIndex.get(base) || [])) stack.push(grand);
     }
   }
+  all = resolveCppFieldReceivers(all, cppFieldIndex, cppBaseIndex);
   all = resolveCppDispatch(all, cppMethodIndex, cppDerivedIndex, cppVirtualMethods, cppOverrideMethods);
   all = resolveCppMethods(all, cppMethodIndex, cppReturnIndex);
   all = resolveTsMethods(all, tsClassFiles, tsCallableFiles);

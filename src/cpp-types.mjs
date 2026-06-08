@@ -112,7 +112,7 @@ function templateElement(typeNode, smartPtrs) {
 }
 
 // The member-access operator of a call's field_expression callee: "->" | "." | null.
-function memberOperator(callNode) {
+export function memberOperator(callNode) {
   const fe = callNode?.childForFieldName?.("function");
   if (!fe || fe.type !== "field_expression") return null;
   for (let i = 0; i < fe.childCount; i++) {
@@ -211,6 +211,16 @@ function enclosingCppClass(callNode, fn) {
     }
   }
   return null;
+}
+
+// The class owning `this` at a C++ call site: finds the enclosing function_definition, then defers
+// to enclosingCppClass (which handles both the out-of-class `Class::method` scope and an in-class
+// class_specifier). Null if neither applies.
+export function cppEnclosingClass(callNode) {
+  if (!callNode) return null;
+  let fn = callNode.parent;
+  while (fn && fn.type !== "function_definition") fn = fn.parent;
+  return enclosingCppClass(callNode, fn);
 }
 
 // Infer the C++ type of `receiverName` at a call site (`obj` or the literal "this"). Walks the call's
@@ -327,6 +337,133 @@ export function extractCppBases(text) {
   return out;
 }
 
+// Regex for a simple (non-qualified, non-template) type identifier — bare identifier only.
+const CPP_BARE_TYPE = /^[A-Za-z_]\w*$/;
+// Generic single-arg template field wrapper: `[std::]Wrapper<Foo>` → capture (wrapper, element). The
+// wrapper is only treated as a smart pointer when it is in the smartPtrs allowlist (cfg.cppSmartPointers),
+// mirroring the same-file path's templateElement(type, smartPtrs); otherwise it's a deferred generic.
+const CPP_SMART_PTR_FIELD = /^(?:std\s*::\s*)?([A-Za-z_]\w*)\s*<\s*([A-Za-z_]\w*)\s*>$/;
+// Leading keywords that mean the statement is NOT an instance field.
+const CPP_FIELD_REJECT = new Set(["using", "typedef", "friend", "static", "enum", "struct", "class",
+  "constexpr", "inline", "virtual", "mutable"]);
+// Access specifier keywords that precede `:` (not a field statement).
+const CPP_ACCESS_KW = new Set(["public", "private", "protected"]);
+
+// Parse one candidate field statement (text of the declaration up to `;`, initializer truncated).
+// Returns {field, type, smartPtr} or null when the statement is not a simple instance field.
+// smartPtrs: allowlist of wrapper template names to unwrap (default: std unique/shared/weak_ptr).
+function parseCppFieldStmt(raw, smartPtrs = DEFAULT_SMART_PTRS) {
+  // truncate at first `=` so `Widget* m_w = nullptr` → `Widget* m_w`
+  const stmt = raw.includes("=") ? raw.slice(0, raw.indexOf("=")) : raw;
+  const s = stmt.trim();
+  if (!s) return null;
+  if (s.includes("(")) return null;                       // method decl / fn-pointer — skip
+  const tokens = s.match(/[A-Za-z_]\w*|[*&<>,:]/g) || []; // grab identifiers + punctuation tokens
+  if (!tokens.length) return null;
+  const first = tokens[0];
+  if (CPP_FIELD_REJECT.has(first)) return null;           // storage/decl keyword → not an instance field
+  // collect identifier tokens only (the structural punctuation tokens are for qualified-type detection)
+  const ids = tokens.filter((t) => /^[A-Za-z_]/.test(t));
+  if (ids.length < 2) return null;                        // need at least type + name
+  const field = ids[ids.length - 1];                     // last identifier is the field name
+  // rebuild the type expression: everything in `s` before the last occurrence of the field name,
+  // with trailing punctuation/whitespace stripped; this handles `Widget*`, `Widget &`, bare `Widget`
+  const lastIdx = s.lastIndexOf(field);
+  const typeRaw = s.slice(0, lastIdx).replace(/[\s*&,]+$/, "").trim();
+  if (!typeRaw) return null;
+  // strip a leading cv-qualifier so `const Widget*`/`volatile T`/`mutable Foo` classify on the bare
+  // type (mirrors normalizeReturnType's `.replace(/^const\s+/, "")`). Both bare and smart-ptr forms.
+  const type = typeRaw.replace(/^(?:const|volatile|mutable)\s+/, "");
+  if (!type) return null;
+  // qualified type (contains `::`) or non-allowlisted generic (`<`) → deferred, skip
+  if (type.includes("::") || type.includes("<")) {
+    const sp = type.match(CPP_SMART_PTR_FIELD);
+    // only an allowlisted wrapper (sp[1]) unwraps to its element (sp[2]); other generics are deferred.
+    if (sp && smartPtrs.has(sp[1])) return { field, type: sp[2], smartPtr: true };
+    return null;
+  }
+  if (!CPP_BARE_TYPE.test(type)) return null;
+  return { field, type, smartPtr: false };
+}
+
+// Brace-tracked scan of a class-body interior for field declarations. Starts at `start`, where the
+// surrounding brace `depth` is the INTERIOR level (1 just inside a body's `{` in header mode; 0 for a
+// header-less chunk whose whole text IS the interior in scopeClass mode). A `;` flushes a candidate
+// only at the interior depth; any `{` raises depth and its contents (a method/ctor body) are skipped,
+// so method-body locals are never emitted as phantom fields. Pushes {cls, …} rows into `out`.
+function scanCppFieldBody(s, start, depth, cls, out, smartPtrs) {
+  const interior = depth;        // the level at which a `;` ends a real field statement
+  let buf = "";                  // accumulates characters at the interior level
+  for (let i = start; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === "{") {
+      if (depth === interior) {
+        // opening an inline method/ctor body — discard the pending buffer and skip to its matching `}`
+        buf = "";
+        let inner = 1;
+        i++;
+        while (i < s.length && inner > 0) {
+          if (s[i] === "{") inner++;
+          else if (s[i] === "}") inner--;
+          i++;
+        }
+        i--;                     // loop will increment again; depth stays at interior
+      } else {
+        depth++;
+      }
+    } else if (ch === "}") {
+      depth--;
+      if (depth < interior) break;   // end of the class body (header mode: interior 1 → break at 0)
+    } else if (ch === ";" && depth === interior) {
+      const trimmed = buf.trim();
+      if (trimmed) {
+        const r = parseCppFieldStmt(trimmed, smartPtrs);
+        if (r) out.push({ cls, ...r });
+      }
+      buf = "";
+    } else if (ch === ":" && depth === interior) {
+      // access specifier `public:` / `private:` / `protected:` → clear buffer; else keep `:` (e.g. `::`)
+      const kw = buf.trim();
+      if (CPP_ACCESS_KW.has(kw)) buf = "";
+      else buf += ch;
+    } else if (depth === interior) {
+      buf += ch;
+    }
+  }
+}
+
+// Extract member-field declarations from class bodies in `text`. Returns [{cls, field, type, smartPtr}].
+// Brace-depth tracking ensures declarations inside inline method/ctor bodies are never emitted as fields.
+// Multi-class: a chunk may hold several `class|struct Name { … }` headers (common in C++ headers); EVERY
+// one is indexed via a global-flag scan, not just the first (mirrors extractCppBases). For each header,
+// header mode scans from just after the body's opening `{` at interior depth 1; scanCppFieldBody stops at
+// that class's closing brace, so class A's fields never bleed into B. A forward decl (`class Encoder;`)
+// has no `{`/`:` so CPP_CLASS does not match it — it is never treated as a class with a body.
+// scopeClass mode (NO header anywhere): the whole text is treated as the class interior, scanned at depth
+// 0 (a header-less chunk is typically an out-of-class method body, so its `{ … }` locals must be skipped —
+// not flushed as phantom fields). scopeClass: fallback class name (chunk-robustness, same rule as
+// extractCppMethodDefs).
+export function extractCppFields(text, scopeClass = null, smartPtrs = DEFAULT_SMART_PTRS) {
+  const s = String(text || "");
+  const out = [];
+
+  // Header mode: scan every `class|struct Name {` header in the text, accumulating all classes' fields.
+  const headerRe = new RegExp(CPP_CLASS.source, "g");
+  let m, matched = false;
+  while ((m = headerRe.exec(s))) {
+    matched = true;
+    // find this class's body opening `{` (the match ends on `{` or `:`; search from there)
+    const bodyStart = s.indexOf("{", m.index + m[0].length - 1);
+    if (bodyStart === -1) continue;
+    scanCppFieldBody(s, bodyStart + 1, 1, m[1], out, smartPtrs);
+  }
+  if (matched) return out;
+
+  // scopeClass-only mode: no class header anywhere → whole text is the class interior, scanned at depth 0.
+  if (scopeClass) scanCppFieldBody(s, 0, 0, scopeClass, out, smartPtrs);
+  return out;
+}
+
 // C++ source-file extensions — used to gate resolveCppMethods to C++ callers only.
 const CPP_EXTS = /\.(cpp|cc|cxx|c|h|hpp|hh|hxx|metal)$/i;
 
@@ -354,6 +491,41 @@ export function resolveCppDispatch(rows, cppMethodIndex, cppDerivedIndex, cppVir
     if (paths.size === 0) return r;                                  // no real override → not a dispatch
     if (baseVirtual) for (const d of (cppMethodIndex.get(`${B}#${m}`) || [])) paths.add(d.path);  // concrete base
     return { ...r, conf: "dispatch", to_path: null, to_symbol: m, to_lines: null, candidates: [...paths] };
+  });
+}
+
+// The {type, smartPtr} of member field `field` on class `cls` — its own field, else the first
+// base in the (transitive, cycle-guarded) base chain that declares it. Null if none.
+export function lookupCppField(cls, field, cppFieldIndex, cppBaseIndex) {
+  const own = cppFieldIndex.get(cls)?.get(field);
+  if (own) return own;
+  // BFS over base chain; seen guards against cycles (a class appearing as its own ancestor)
+  const seen = new Set([cls]);
+  const queue = [...(cppBaseIndex.get(cls) ?? [])];
+  while (queue.length) {
+    const base = queue.shift();
+    if (seen.has(base)) continue;
+    seen.add(base);
+    const fb = cppFieldIndex.get(base)?.get(field);
+    if (fb) return fb;
+    for (const b of (cppBaseIndex.get(base) ?? [])) if (!seen.has(b)) queue.push(b);
+  }
+  return null;
+}
+
+// Upgrade an ambiguous C++ member call whose receiver is an (own or inherited) member field of the
+// enclosing class by setting receiverType from the field index. Runs BEFORE resolveCppDispatch /
+// resolveCppMethods (so the now-typed receiver feeds both). Pure — returns a new array.
+export function resolveCppFieldReceivers(rows, cppFieldIndex, cppBaseIndex) {
+  return rows.map((r) => {
+    if (r.kind !== "calls" || r.conf !== "ambiguous" || !r.isMethod) return r;
+    if (r.receiverType) return r;                                    // same-file inference wins
+    if (!CPP_EXTS.test(r.from_path ?? "")) return r;
+    if (!r.enclosingClass || !r.receiver) return r;
+    const fb = lookupCppField(r.enclosingClass, r.receiver, cppFieldIndex, cppBaseIndex);
+    if (!fb) return r;
+    if (fb.smartPtr && r.memberOp !== "->") return r;               // `.method()` is the wrapper's own
+    return { ...r, receiverType: fb.type };
   });
 }
 

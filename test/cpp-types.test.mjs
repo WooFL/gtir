@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { extractCppMethodDefs, resolveCppMethods, extractCppReturnTypes, extractCppBases, extractCppVirtuals, extractCppOverrides, resolveCppDispatch } from "../src/cpp-types.mjs";
+import { extractCppMethodDefs, resolveCppMethods, extractCppReturnTypes, extractCppBases, extractCppVirtuals, extractCppOverrides, resolveCppDispatch, extractCppFields, lookupCppField, resolveCppFieldReceivers } from "../src/cpp-types.mjs";
 
 test("extractCppMethodDefs: out-of-class definition", () => {
   assert.deepEqual(extractCppMethodDefs(`int Foo::bar(int x) { return x; }`), [{ cls: "Foo", method: "bar" }]);
@@ -269,4 +269,236 @@ test("resolveCppDispatch: receiver type has no derived → unchanged", () => {
 test("resolveCppDispatch: non-.cpp caller gated out", () => {
   const [r] = resolveCppDispatch([cRow({ from_path: "use.ts" })], dMethodIdx, dDerived, dVirtual, dOverride);
   assert.equal(r.conf, "ambiguous");
+});
+
+// extractCppFields: member-field extractor tests
+test("extractCppFields: bare pointer field; method decl excluded", () => {
+  const r = extractCppFields(`class C { Widget* m_w; void run(); };`);
+  assert.deepEqual(r, [{ cls: "C", field: "m_w", type: "Widget", smartPtr: false }]);
+});
+test("extractCppFields: std::shared_ptr field", () => {
+  const r = extractCppFields(`class C { std::shared_ptr<Sink> s; };`);
+  assert.deepEqual(r, [{ cls: "C", field: "s", type: "Sink", smartPtr: true }]);
+});
+test("extractCppFields: reference field", () => {
+  const [r] = extractCppFields(`class C { Widget& ref; };`);
+  assert.equal(r.type, "Widget");
+  assert.equal(r.smartPtr, false);
+});
+test("extractCppFields: inline-body local NOT indexed", () => {
+  const r = extractCppFields(`class C { void run(){ Gadget* g; g->go(); } };`);
+  assert.deepEqual(r, []);
+});
+test("extractCppFields: field + inline method — only field returned", () => {
+  const r = extractCppFields(`class C { Widget* m_w; void run(){ Gadget* g; } };`);
+  assert.deepEqual(r, [{ cls: "C", field: "m_w", type: "Widget", smartPtr: false }]);
+});
+test("extractCppFields: access specifier ignored, field extracted", () => {
+  const r = extractCppFields(`class C { public: Widget* m_w; };`);
+  assert.deepEqual(r, [{ cls: "C", field: "m_w", type: "Widget", smartPtr: false }]);
+});
+test("extractCppFields: using declaration not a field", () => {
+  const r = extractCppFields(`class C { using X = int; Widget* m_w; };`);
+  assert.deepEqual(r, [{ cls: "C", field: "m_w", type: "Widget", smartPtr: false }]);
+});
+test("extractCppFields: static member not a field", () => {
+  const r = extractCppFields(`class C { static int n; Widget* m_w; };`);
+  assert.deepEqual(r, [{ cls: "C", field: "m_w", type: "Widget", smartPtr: false }]);
+});
+test("extractCppFields: qualified type skipped", () => {
+  const r = extractCppFields(`class C { Ns::Foo f; };`);
+  assert.deepEqual(r, []);
+});
+test("extractCppFields: initializer stripped before parsing", () => {
+  const r = extractCppFields(`class C { Widget* m_w = nullptr; };`);
+  assert.deepEqual(r, [{ cls: "C", field: "m_w", type: "Widget", smartPtr: false }]);
+});
+test("extractCppFields: no header, scopeClass fallback", () => {
+  // scopeClass mode: whole text treated as class-body interior
+  const r = extractCppFields(`Widget* m_w;`, "C");
+  assert.deepEqual(r, [{ cls: "C", field: "m_w", type: "Widget", smartPtr: false }]);
+});
+test("extractCppFields: no header, no scopeClass → empty", () => {
+  assert.deepEqual(extractCppFields(`Widget* m_w;`), []);
+});
+
+// Fix 1: leading cv-qualifiers are stripped before type classification (mirror normalizeReturnType)
+test("extractCppFields: leading const stripped on bare pointer field", () => {
+  const r = extractCppFields(`class C { const Widget* m_w; };`);
+  assert.deepEqual(r, [{ cls: "C", field: "m_w", type: "Widget", smartPtr: false }]);
+});
+test("extractCppFields: leading const stripped on smart-pointer field", () => {
+  const r = extractCppFields(`class C { const std::shared_ptr<Foo> p; };`);
+  assert.deepEqual(r, [{ cls: "C", field: "p", type: "Foo", smartPtr: true }]);
+});
+test("extractCppFields: a primitive stays rejected (no methods to resolve)", () => {
+  // long long / unsigned long are primitives — correctly yield no field.
+  assert.deepEqual(extractCppFields(`class C { long long n; };`), []);
+  assert.deepEqual(extractCppFields(`class C { unsigned long u; };`), []);
+});
+
+// Fix 2 (precision): scopeClass-only mode must brace-track so method-body locals are not phantom fields
+test("extractCppFields: scopeClass out-of-class method body → no phantom fields", () => {
+  // A header-less chunk is a split-out method body; its locals must NOT be emitted as fields on C.
+  assert.deepEqual(extractCppFields(`void C::run(){ A* a; B* b; }`, "C"), []);
+});
+test("extractCppFields: scopeClass field before method body → only the real field", () => {
+  const r = extractCppFields(`Widget* m_w; void run(){ Gadget* g; }`, "C");
+  assert.deepEqual(r, [{ cls: "C", field: "m_w", type: "Widget", smartPtr: false }]);
+});
+
+// Fix 3: field smart-pointer match honors the smartPtrs Set (cfg.cppSmartPointers), like the same-file path
+test("extractCppFields: default std smart-pointer field still works", () => {
+  const r = extractCppFields(`class C { std::shared_ptr<Foo> p; };`);
+  assert.deepEqual(r, [{ cls: "C", field: "p", type: "Foo", smartPtr: true }]);
+});
+test("extractCppFields: custom wrapper in smartPtrs honored as smart pointer", () => {
+  const r = extractCppFields(`class C { Scoper<Bar> b; };`, null, new Set(["Scoper"]));
+  assert.deepEqual(r, [{ cls: "C", field: "b", type: "Bar", smartPtr: true }]);
+});
+test("extractCppFields: non-allowlisted generic skipped", () => {
+  // vector is not in the default smart-pointer set → deferred, no field row.
+  assert.deepEqual(extractCppFields(`class C { vector<Foo> v; };`), []);
+});
+
+// Multi-class: a chunk holding several class/struct headers must index EVERY class, not just the first
+// (matches extractCppBases, which already loops). Single-match would silently drop B, C, ….
+test("extractCppFields: two sibling classes — fields from BOTH", () => {
+  const r = extractCppFields(`class A { Widget* a_; }; class B { Gadget* b_; };`);
+  assert.deepEqual(r, [
+    { cls: "A", field: "a_", type: "Widget", smartPtr: false },
+    { cls: "B", field: "b_", type: "Gadget", smartPtr: false },
+  ]);
+});
+test("extractCppFields: forward decl before a class → only the real class's field", () => {
+  // `class Encoder;` is a forward decl (no `{`/`:`) so CPP_CLASS does NOT match it; Pipeline's body
+  // must NOT be mis-attributed to Encoder, and there is no phantom Encoder entry.
+  const r = extractCppFields(`class Encoder;\nclass Pipeline { Encoder* enc_; };`);
+  assert.deepEqual(r, [{ cls: "Pipeline", field: "enc_", type: "Encoder", smartPtr: false }]);
+});
+test("extractCppFields: base-clause class among siblings → fields for both", () => {
+  // A has a base clause (`: public X`); B does not. Both bodies must be scanned (int is bare → emitted).
+  const r = extractCppFields(`class A : public X { int a_; }; class B { int b_; };`);
+  assert.deepEqual(r, [
+    { cls: "A", field: "a_", type: "int", smartPtr: false },
+    { cls: "B", field: "b_", type: "int", smartPtr: false },
+  ]);
+});
+test("extractCppFields: inline-method local does not leak across sibling classes", () => {
+  // depth discipline: A's inline run() local `g` is skipped; only the real fields of A and B remain.
+  const r = extractCppFields(`class A { Widget* a_; void run(){ Gadget* g; } }; class B { Sink* b_; };`);
+  assert.deepEqual(r, [
+    { cls: "A", field: "a_", type: "Widget", smartPtr: false },
+    { cls: "B", field: "b_", type: "Sink", smartPtr: false },
+  ]);
+});
+
+// ── lookupCppField ────────────────────────────────────────────────────────────
+
+test("lookupCppField: own field resolves directly", () => {
+  const fi = new Map([["C", new Map([["m_w", { type: "Widget", smartPtr: false }]])]]);
+  assert.deepEqual(lookupCppField("C", "m_w", fi, new Map()), { type: "Widget", smartPtr: false });
+});
+test("lookupCppField: unknown class returns null", () => {
+  assert.equal(lookupCppField("Unknown", "m_w", new Map(), new Map()), null);
+});
+test("lookupCppField: unknown field on known class returns null", () => {
+  const fi = new Map([["C", new Map([["m_w", { type: "Widget", smartPtr: false }]])]]);
+  assert.equal(lookupCppField("C", "missing", fi, new Map()), null);
+});
+test("lookupCppField: inherited field resolved via direct base", () => {
+  const fi = new Map([["B", new Map([["m_w", { type: "Widget", smartPtr: false }]])]]);
+  const bi = new Map([["C", new Set(["B"])]]);
+  assert.deepEqual(lookupCppField("C", "m_w", fi, bi), { type: "Widget", smartPtr: false });
+});
+test("lookupCppField: transitive inherited field (C→B→A) resolves", () => {
+  const fi = new Map([["A", new Map([["f", { type: "X", smartPtr: false }]])]]);
+  const bi = new Map([["C", new Set(["B"])], ["B", new Set(["A"])]]);
+  assert.deepEqual(lookupCppField("C", "f", fi, bi), { type: "X", smartPtr: false });
+});
+test("lookupCppField: cycle guard prevents infinite loop, still resolves", () => {
+  const fi = new Map([["A", new Map([["f", { type: "X", smartPtr: false }]])]]);
+  const bi = new Map([["C", new Set(["B"])], ["B", new Set(["A"])], ["A", new Set(["C"])]]);
+  assert.deepEqual(lookupCppField("C", "f", fi, bi), { type: "X", smartPtr: false });
+});
+
+// ── resolveCppFieldReceivers ──────────────────────────────────────────────────
+
+// Helper: build a minimal ambiguous method call row
+const fieldRow = (over = {}) => ({
+  kind: "calls", conf: "ambiguous", isMethod: true,
+  from_path: "a.cpp", receiverType: null,
+  enclosingClass: "C", receiver: "m_w", memberOp: "->",
+  ref_name: "run", ...over,
+});
+
+test("resolveCppFieldReceivers: own field — sets receiverType", () => {
+  const fi = new Map([["C", new Map([["m_w", { type: "Widget", smartPtr: false }]])]]);
+  const [r] = resolveCppFieldReceivers([fieldRow()], fi, new Map());
+  assert.equal(r.receiverType, "Widget");
+  assert.equal(r.conf, "ambiguous");  // conf not changed here — that's resolveCppMethods' job
+});
+test("resolveCppFieldReceivers: inherited field — sets receiverType", () => {
+  const fi = new Map([["B", new Map([["m_w", { type: "Widget", smartPtr: false }]])]]);
+  const bi = new Map([["C", new Set(["B"])]]);
+  const [r] = resolveCppFieldReceivers([fieldRow()], fi, bi);
+  assert.equal(r.receiverType, "Widget");
+});
+test("resolveCppFieldReceivers: transitive inherited + cycle guard — resolves without hanging", () => {
+  const fi = new Map([["A", new Map([["f", { type: "X", smartPtr: false }]])]]);
+  const bi = new Map([["C", new Set(["B"])], ["B", new Set(["A"])], ["A", new Set(["C"])]]);
+  const [r] = resolveCppFieldReceivers([fieldRow({ receiver: "f" })], fi, bi);
+  assert.equal(r.receiverType, "X");
+});
+test("resolveCppFieldReceivers: smart-ptr field with memberOp '.' → skip (wrapper's own method)", () => {
+  const fi = new Map([["C", new Map([["m_w", { type: "Widget", smartPtr: true }]])]]);
+  const [r] = resolveCppFieldReceivers([fieldRow({ memberOp: "." })], fi, new Map());
+  assert.equal(r.receiverType, null);
+});
+test("resolveCppFieldReceivers: smart-ptr field with memberOp '->' → resolves to element type", () => {
+  const fi = new Map([["C", new Map([["m_w", { type: "Widget", smartPtr: true }]])]]);
+  const [r] = resolveCppFieldReceivers([fieldRow({ memberOp: "->" })], fi, new Map());
+  assert.equal(r.receiverType, "Widget");
+});
+test("resolveCppFieldReceivers: row already has receiverType → unchanged (no override)", () => {
+  const fi = new Map([["C", new Map([["m_w", { type: "Widget", smartPtr: false }]])]]);
+  const [r] = resolveCppFieldReceivers([fieldRow({ receiverType: "OtherType" })], fi, new Map());
+  assert.equal(r.receiverType, "OtherType");
+});
+test("resolveCppFieldReceivers: unknown field → unchanged", () => {
+  const fi = new Map([["C", new Map([["other", { type: "Widget", smartPtr: false }]])]]);
+  const [r] = resolveCppFieldReceivers([fieldRow()], fi, new Map());
+  assert.equal(r.receiverType, null);
+});
+test("resolveCppFieldReceivers: non-cpp from_path → unchanged", () => {
+  const fi = new Map([["C", new Map([["m_w", { type: "Widget", smartPtr: false }]])]]);
+  const [r] = resolveCppFieldReceivers([fieldRow({ from_path: "a.ts" })], fi, new Map());
+  assert.equal(r.receiverType, null);
+});
+test("resolveCppFieldReceivers: missing enclosingClass → unchanged", () => {
+  const fi = new Map([["C", new Map([["m_w", { type: "Widget", smartPtr: false }]])]]);
+  const [r] = resolveCppFieldReceivers([fieldRow({ enclosingClass: null })], fi, new Map());
+  assert.equal(r.receiverType, null);
+});
+test("resolveCppFieldReceivers: missing receiver → unchanged", () => {
+  const fi = new Map([["C", new Map([["m_w", { type: "Widget", smartPtr: false }]])]]);
+  const [r] = resolveCppFieldReceivers([fieldRow({ receiver: null })], fi, new Map());
+  assert.equal(r.receiverType, null);
+});
+test("resolveCppFieldReceivers: non-method row → unchanged", () => {
+  const fi = new Map([["C", new Map([["m_w", { type: "Widget", smartPtr: false }]])]]);
+  const [r] = resolveCppFieldReceivers([fieldRow({ isMethod: false })], fi, new Map());
+  assert.equal(r.receiverType, null);
+});
+test("resolveCppFieldReceivers: non-ambiguous row → unchanged", () => {
+  const fi = new Map([["C", new Map([["m_w", { type: "Widget", smartPtr: false }]])]]);
+  const [r] = resolveCppFieldReceivers([fieldRow({ conf: "resolved" })], fi, new Map());
+  assert.equal(r.receiverType, null);
+});
+test("resolveCppFieldReceivers: returns a new array (pure)", () => {
+  const fi = new Map([["C", new Map([["m_w", { type: "Widget", smartPtr: false }]])]]);
+  const input = [fieldRow()];
+  const output = resolveCppFieldReceivers(input, fi, new Map());
+  assert.notEqual(output, input);
+  assert.notEqual(output[0], input[0]);  // new object for the modified row
 });
