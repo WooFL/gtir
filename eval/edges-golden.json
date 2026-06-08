@@ -28,6 +28,7 @@
   { "from": "cpp/use_smartptr.cpp", "symbol": "get", "to": null, "kind": "calls" },
   { "from": "ts/use_typed.ts", "symbol": "flush", "to": "ts/encoder.ts", "kind": "calls" },
   { "from": "ts/use_new.ts", "symbol": "flush", "to": "ts/sink.ts", "kind": "calls" },
+  { "from": "ts/use_sender.ts", "symbol": "send", "to": "ts/email_sender.ts", "kind": "calls" },
   { "from": "ts/encoder.ts", "symbol": "flush", "to": "ts/encoder.ts", "kind": "calls" },
   { "from": "ts/use_external.ts", "symbol": "stringify", "to": null, "kind": "calls" },
   { "from": "cpp/use_make_widget.cpp", "symbol": "run", "to": "cpp/widget.cpp", "kind": "calls" },
