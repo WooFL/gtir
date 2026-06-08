@@ -179,6 +179,7 @@ export function orphans(inventory, graph, { includeAmbiguous = false } = {}) {
     const base = { path: def.path, symbol: def.name, ...(lines ? { lines } : {}) };
     const cls = classifyEntrypoint(def.name, def.path, def.text);
     if (cls.entrypoint) possible_entrypoint.push({ ...base, reason: cls.reason });
+    else if (graph.externalOut?.has(key)) possible_entrypoint.push({ ...base, reason: "external-facing" });
     else likely_dead.push(base);
   }
   likely_dead.sort((a, b) => a.path.localeCompare(b.path) || (a.lines || "").localeCompare(b.lines || ""));
