@@ -373,3 +373,19 @@ test("refresh: deleting an isolated file with no callers is a clean no-op", asyn
     assert.ok(!edges.some((e) => e.from_path === "a.ts"));
   } finally { rmSync(repo, { recursive: true, force: true }); }
 });
+
+test("indexEdges resolves a Go method call by receiver type (cross-file)", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-go-"));
+  writeFileSync(join(repo, "batcher.go"), `package p\ntype Batcher struct{}\nfunc (b *Batcher) Flush() {}\n`);
+  writeFileSync(join(repo, "logger.go"), `package p\ntype Logger struct{}\nfunc (l *Logger) Flush() {}\n`);
+  writeFileSync(join(repo, "use.go"), `package p\nfunc run(b *Batcher) { b.Flush() }\n`);
+  const cfg = loadConfig(repo);
+  cfg.embedImpl = (texts) => Promise.resolve(texts.map(() => [1, 0, 0]));
+  cfg.minChars = 1;
+  await buildIndex(cfg, { rebuild: true });
+  const edges = await (await openStore(cfg)).loadEdges();
+  const flush = edges.find((e) => e.kind === "calls" && e.from_path === "use.go" && e.ref_name === "Flush");
+  assert.ok(flush, "expected a Flush call edge from use.go");
+  assert.equal(flush.conf, "resolved");        // type-pinned, not ambiguous
+  assert.equal(flush.to_path, "batcher.go");     // resolved to Batcher, not Logger
+});

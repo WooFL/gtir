@@ -10,6 +10,7 @@ import { openStore } from "./store.mjs";
 import { extractCodeEdges, extractNotesEdges, resolveEdges } from "./edges.mjs";
 import { disambiguateEdges } from "./disambiguate.mjs";
 import { declaredSymbols } from "./symbols.mjs";
+import { extractGoMethodDefs, resolveGoMethods } from "./go-types.mjs";
 
 // Columns the current row shape ALWAYS writes. content_hash is deliberately excluded — it's
 // optional: a pre-cache table runs in legacy (no-reuse) mode rather than being force-rebuilt.
@@ -27,6 +28,7 @@ async function indexEdges(cfg, store, toIndex, { rebuild, deleted = [] }) {
   const changedSet = new Set(toIndex.map((f) => f.relPath));
   const deletedSet = new Set(deleted);
   const symbolIndex = new Map(), noteIndex = new Map(), callSiteVec = new Map(), chunkByPath = new Map();
+  const goMethodIndex = new Map();
   // Symbols declared by the changed files (drives the "a new def appeared" caller re-resolution).
   // Relies on buildIndex having already upsertRows'd the changed files BEFORE calling indexEdges —
   // so the chunks table here reflects the new state. Keep that ordering.
@@ -43,6 +45,19 @@ async function indexEdges(cfg, store, toIndex, { rebuild, deleted = [] }) {
       symbolIndex.get(name).push({ path: r.path, line_start: Number(r.line_start), line_end: Number(r.line_end),
         embedding: r.embedding ? Array.from(r.embedding) : null, content_hash: r.content_hash || null });
       if (changedSet.has(r.path)) changedSymbols.add(name);
+    }
+    if (r.language === "go") {
+      for (const { type, method } of extractGoMethodDefs(r.text)) {
+        const k = `${type}#${method}`;
+        if (!goMethodIndex.has(k)) goMethodIndex.set(k, []);
+        goMethodIndex.get(k).push({ path: r.path, line_start: Number(r.line_start), line_end: Number(r.line_end) });
+        // Also register Go method names in symbolIndex so resolveEdges can produce "ambiguous"
+        // edges (Go methods with receivers are not matched by the keyword regex in declaredSymbols).
+        if (!symbolIndex.has(method)) symbolIndex.set(method, []);
+        symbolIndex.get(method).push({ path: r.path, line_start: Number(r.line_start), line_end: Number(r.line_end),
+          embedding: r.embedding ? Array.from(r.embedding) : null, content_hash: r.content_hash || null });
+        if (changedSet.has(r.path)) changedSymbols.add(method);
+      }
     }
   }
   for (const r of rows) {
@@ -90,6 +105,7 @@ async function indexEdges(cfg, store, toIndex, { rebuild, deleted = [] }) {
     }
     if (raw.length) all.push(...resolveEdges(raw, symbolIndex, noteIndex));
   }
+  all = resolveGoMethods(all, goMethodIndex);
   if (chunkByPath.size) {
     all = all.map((e) => {
       if (e.kind !== "calls" || e.conf !== "ambiguous" || e.content_hash) return e;
