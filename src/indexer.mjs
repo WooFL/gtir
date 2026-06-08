@@ -13,7 +13,7 @@ import { disambiguateEdges } from "./disambiguate.mjs";
 import { declaredSymbols, declaredCallables } from "./symbols.mjs";
 import { extractGoMethodDefs, resolveGoMethods, extractGoInterfaces, resolveGoDispatch } from "./go-types.mjs";
 import { extractCppMethodDefs, resolveCppMethods, extractCppReturnTypes, extractCppBases, extractCppVirtuals, extractCppOverrides, resolveCppDispatch } from "./cpp-types.mjs";
-import { extractTsClassNames, resolveTsMethods } from "./ts-types.mjs";
+import { extractTsClassNames, resolveTsMethods, extractTsImplements, resolveTsDispatch } from "./ts-types.mjs";
 
 // Columns the current row shape ALWAYS writes. content_hash is deliberately excluded — it's
 // optional: a pre-cache table runs in legacy (no-reuse) mode rather than being force-rebuilt.
@@ -48,6 +48,7 @@ async function indexEdges(cfg, store, toIndex, { rebuild, deleted = [] }) {
   const cppOverrideMethods = new Map();
   const tsClassFiles = new Map();
   const tsCallableFiles = new Map();
+  const tsImplementers = new Map();  // interface/base name -> Set(implementing/extending class names)
   // Symbols declared by the changed files (drives the "a new def appeared" caller re-resolution).
   // Relies on buildIndex having already upsertRows'd the changed files BEFORE calling indexEdges —
   // so the chunks table here reflects the new state. Keep that ordering.
@@ -122,6 +123,11 @@ async function indexEdges(cfg, store, toIndex, { rebuild, deleted = [] }) {
         if (!tsCallableFiles.has(name)) tsCallableFiles.set(name, []);
         tsCallableFiles.get(name).push({ path: r.path, line_start: Number(r.line_start), line_end: Number(r.line_end) });
       }
+      for (const { cls, bases } of extractTsImplements(r.text))
+        for (const b of bases) {
+          if (!tsImplementers.has(b)) tsImplementers.set(b, new Set());
+          tsImplementers.get(b).add(cls);
+        }
     }
   }
   for (const r of rows) {
@@ -205,6 +211,7 @@ async function indexEdges(cfg, store, toIndex, { rebuild, deleted = [] }) {
   }
   all = resolveCppDispatch(all, cppMethodIndex, cppDerivedIndex, cppVirtualMethods, cppOverrideMethods);
   all = resolveCppMethods(all, cppMethodIndex, cppReturnIndex);
+  all = resolveTsDispatch(all, tsImplementers, tsClassFiles, tsCallableFiles);
   all = resolveTsMethods(all, tsClassFiles, tsCallableFiles);
   if (chunkByPath.size) {
     all = all.map((e) => {
