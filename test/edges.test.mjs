@@ -411,6 +411,10 @@ test("extractCodeEdges (cpp): shared_ptr local → element type on ->", async ()
   const edges = await edgesFor("cpp", `void use() { std::shared_ptr<Foo> p; p->bar(); }`, "a.cpp");
   assert.equal(edges.find((e) => e.refName === "bar").receiverType, "Foo");
 });
+test("extractCodeEdges (cpp): weak_ptr is in the default allowlist (third std smart pointer)", async () => {
+  const edges = await edgesFor("cpp", `void use(std::weak_ptr<Foo> p) { p->bar(); }`, "a.cpp");
+  assert.equal(edges.find((e) => e.refName === "bar").receiverType, "Foo");
+});
 test("extractCodeEdges (cpp): smart-ptr .method() is NOT unwrapped (wrapper's own)", async () => {
   const edges = await edgesFor("cpp", `void use(std::unique_ptr<Foo> p) { p.reset(); }`, "a.cpp");
   assert.equal(edges.find((e) => e.refName === "reset").receiverType, null);
