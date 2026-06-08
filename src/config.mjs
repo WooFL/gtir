@@ -1,5 +1,6 @@
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { resolve, join } from "node:path";
+import { langFor } from "./languages.mjs";
 
 // `model` is the Ollama tag served via /api/embed; pull it with `ollama pull <model>`
 // (or `gtir doctor`). Default is qwen3-embedding:0.6b — an embedding-native model Ollama
@@ -75,4 +76,35 @@ export function loadConfig(repoPath) {
   merged.gtirDir = join(repo, ".gtir");
   merged.indexDir = join(repo, ".gtir", "index.lance");
   return merged;
+}
+
+// Real programming-language grammar ids (excludes markdown + data/markup like json/yaml/css/html).
+// A repo with ANY of these is "a codebase" → keep the default (code) model.
+const CODE_LANGS = new Set(["typescript", "tsx", "javascript", "python", "rust", "go", "cpp", "c", "objc", "hlsl", "glsl", "bash"]);
+
+// Pick the embedding model from the indexable file mix: nomic-embed-text when the set is a notes
+// vault (>=1 markdown file and ZERO code-language files), else null (caller keeps its default/qwen).
+export function pickEmbedModel(relPaths) {
+  let md = 0, code = 0;
+  for (const p of relPaths || []) {
+    const ext = (String(p).match(/\.[^.\\/]+$/) || [""])[0].toLowerCase();
+    if (ext === ".md" || ext === ".mdx") { md++; continue; }
+    if (CODE_LANGS.has(langFor(ext))) code++;
+  }
+  return md > 0 && code === 0 ? "nomic-embed-text" : null;
+}
+
+// Resolve the embedding model for a repo, auto-detecting + persisting a notes vault's nomic model.
+// Respects an explicit `model` in .gtir/config.json (returns cfg.model unchanged). On a notes vault
+// with no pin, writes { ...existing, model } back to .gtir/config.json so index+search stay consistent.
+export function resolveAutoModel(cfg, relPaths) {
+  const file = join(cfg.repo, ".gtir", "config.json");
+  let raw = {};
+  if (existsSync(file)) { try { raw = JSON.parse(readFileSync(file, "utf8")); } catch { raw = {}; } }
+  if (raw.model) return cfg.model;                 // explicit pin — never override
+  const detected = pickEmbedModel(relPaths);
+  if (!detected) return cfg.model;                 // codebase — keep the default, write nothing
+  mkdirSync(join(cfg.repo, ".gtir"), { recursive: true });
+  writeFileSync(file, JSON.stringify({ ...raw, model: detected }, null, 2) + "\n");
+  return detected;
 }
