@@ -135,9 +135,91 @@ export function inferTsReceiverType(callNode, receiverName) {
   return collectTsBindings(scope).get(receiverName) ?? null;
 }
 
+// [{cls, bases}] for each class head in `text`. `bases` = extends base (≤1) then implements interfaces,
+// in order. Classes with neither clause are omitted. `interface X extends Y` yields no entry.
+// Generic args are stripped: `Base<T>` → `Base`. Multi-class per chunk is fully supported.
+const TS_CLASS_HEAD = /(?<![A-Za-z_$\w])class\s+([A-Za-z_$][\w$]*)(?:\s*<[^{]*?>)?\s*((?:extends|implements)\s[^{]*?)\s*\{/g;
+function stripTsGenerics(s) {
+  let prev;
+  do { prev = s; s = s.replace(/<[^<>]*>/g, ""); } while (s !== prev);
+  return s;
+}
+export function extractTsImplements(text) {
+  const s = String(text || "");
+  // Reject if preceded by "interface " — check by scanning the full string with a negative lookbehind
+  // that is position-aware. We use a fresh regex to locate each class head, then pre-scan for
+  // "interface ... class" patterns to skip. Simplest: reject any match where the preceding non-ws token
+  // is "interface". We do this by checking the substring before the match start.
+  const out = [];
+  // Reset state-carrying regex
+  TS_CLASS_HEAD.lastIndex = 0;
+  let m;
+  while ((m = TS_CLASS_HEAD.exec(s))) {
+    // Ensure this `class` is not inside an interface declaration:
+    // look back at text before match and check the immediately preceding keyword token isn't "interface"
+    const before = s.slice(0, m.index);
+    const prevToken = before.match(/([A-Za-z_$][\w$]*)[\s]*$/);
+    if (prevToken && prevToken[1] === "interface") continue;
+
+    const cls = m[1];
+    const clauseRaw = m[2];
+    const clause = stripTsGenerics(clauseRaw);
+
+    // Parse extends and implements from the clause text
+    const bases = [];
+
+    // extends: optional single base
+    const extendsMatch = clause.match(/\bextends\s+([A-Za-z_$][\w$]*)/);
+    if (extendsMatch) bases.push(extendsMatch[1]);
+
+    // implements: comma-separated list
+    const implMatch = clause.match(/\bimplements\s+([\s\S]+)/);
+    if (implMatch) {
+      for (const part of implMatch[1].split(",")) {
+        const id = part.trim().match(/^([A-Za-z_$][\w$]*)/);
+        if (id) bases.push(id[1]);
+      }
+    }
+
+    if (bases.length > 0) out.push({ cls, bases });
+  }
+  return out;
+}
+
 // TS/JS source-file extensions — used to gate resolveTsMethods to TS/JS callers only.
 // Matches .ts/.tsx/.js/.jsx plus the .mjs/.cjs/.mts/.cts module variants (.d.ts via its .ts suffix).
 const TS_EXTS = /\.[cm]?[jt]sx?$/i;
+
+// Upgrade an ambiguous TS/JS member call on an interface/abstract-base-typed receiver to
+// conf:"dispatch" — the set of in-repo implementers (and the base itself, if it defines the method)
+// that define the called method. Requires >=1 IMPLEMENTER def (real polymorphism): if only the base
+// defines the method (no implementer override), the row is left unchanged for resolveTsMethods to
+// handle concretely. For an interface receiver, tsClassFiles.get(interfaceName) is undefined — the
+// base contributes nothing, only implementers. Runs BEFORE resolveTsMethods. Pure.
+export function resolveTsDispatch(rows, tsImplementers, tsClassFiles, tsCallableFiles) {
+  // Returns the files where `cls` is declared AND `method` is defined (intersection by path).
+  const filesDefiningMethodInClass = (cls, method) => {
+    const classFiles = tsClassFiles.get(cls);
+    const defs = tsCallableFiles.get(method);
+    if (!classFiles || !defs) return [];
+    return defs.filter((d) => classFiles.has(d.path)).map((d) => d.path);
+  };
+  return rows.map((r) => {
+    if (r.kind !== "calls" || r.conf !== "ambiguous" || !r.isMethod || !r.receiverType) return r;
+    if (!TS_EXTS.test(r.from_path ?? "")) return r;
+    const implementers = tsImplementers.get(r.receiverType);
+    if (!implementers || !implementers.size) return r;
+    // Collect files from implementers that define the method (polymorphism signal).
+    const implPaths = new Set();
+    for (const cls of implementers)
+      for (const p of filesDefiningMethodInClass(cls, r.ref_name)) implPaths.add(p);
+    if (implPaths.size === 0) return r;                 // no implementer defines it → not a dispatch
+    // Also include the base's own def, if any (the call may bind to the base for abstract/virtual impls).
+    const paths = new Set(implPaths);
+    for (const p of filesDefiningMethodInClass(r.receiverType, r.ref_name)) paths.add(p);
+    return { ...r, conf: "dispatch", to_path: null, to_symbol: r.ref_name, to_lines: null, candidates: [...paths] };
+  });
+}
 
 // Upgrade an ambiguous TS/JS member-call row to resolved when the receiver type pins a unique file.
 // Chunk-robust: TS/JS methods are in-class only, so instead of a `class#method` key (which breaks when

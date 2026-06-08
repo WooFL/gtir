@@ -607,6 +607,23 @@ test("indexEdges resolves a C++ virtual call to its overriding implementers (dis
   } finally { rmSync(repo, { recursive: true, force: true }); }
 });
 
+test("indexEdges resolves a TS interface call to its implementers (dispatch)", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-tsdisp-"));
+  try {
+    writeFileSync(join(repo, "sender.ts"), `export interface Sender { send(): number; }\n`);
+    writeFileSync(join(repo, "email_sender.ts"), `import { Sender } from "./sender";\nexport class EmailSender implements Sender { send(): number { return 1; } }\n`);
+    writeFileSync(join(repo, "sms_sender.ts"), `import { Sender } from "./sender";\nexport class SmsSender implements Sender { send(): number { return 2; } }\n`);
+    writeFileSync(join(repo, "use_sender.ts"), `import { Sender } from "./sender";\nexport function dispatchSend(s: Sender): number { return s.send(); }\n`);
+    const cfg = loadConfig(repo); cfg.embedImpl = (t) => Promise.resolve(t.map(() => [1,0,0])); cfg.minChars = 1;
+    await buildIndex(cfg, { rebuild: true });
+    const edges = await (await openStore(cfg)).loadEdges();
+    const call = edges.find((e) => e.kind === "calls" && e.from_path === "use_sender.ts" && e.ref_name === "send");
+    assert.ok(call, "expected a send call edge from use_sender.ts");
+    assert.equal(call.conf, "dispatch");
+    assert.deepEqual([...call.candidates].sort(), ["email_sender.ts", "sms_sender.ts"]);
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
 test("buildIndex: a markdown-only repo auto-selects the nomic model and persists it", async () => {
   const repo = mkdtempSync(join(tmpdir(), "gtir-automd-"));
   try {
