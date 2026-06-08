@@ -558,3 +558,25 @@ test("extractCodeEdges (cpp): a non-field bare receiver stays unresolved", async
   const call = edges.find((e) => e.kind === "calls" && e.refName === "go");
   assert.equal(call.receiverType, null);
 });
+
+test("extractCodeEdges (ts): this.field.method() resolves the field's declared type", async () => {
+  const edges = await edgesFor("typescript", `class A { svc: Svc; m(){ this.svc.do(); } }`, "a.ts");
+  const call = edges.find((e) => e.kind === "calls" && e.refName === "do");
+  assert.ok(call, "expected a do() call edge");
+  assert.equal(call.receiverType, "Svc");
+});
+test("extractCodeEdges (ts): a new-initialized field infers its constructor type", async () => {
+  const edges = await edgesFor("typescript", `class A { svc = new Svc(); m(){ this.svc.do(); } }`, "a.ts");
+  const call = edges.find((e) => e.kind === "calls" && e.refName === "do");
+  assert.equal(call.receiverType, "Svc");
+});
+test("extractCodeEdges (ts): this.method() (not a field chain) is unaffected", async () => {
+  const edges = await edgesFor("typescript", `class A { m(){ this.helper(); } helper(){} }`, "a.ts");
+  const call = edges.find((e) => e.kind === "calls" && e.refName === "helper");
+  assert.equal(call.receiverType, "A");   // existing `this` path → enclosing class
+});
+test("extractCodeEdges (ts): this.field where field has no known type → null", async () => {
+  const edges = await edgesFor("typescript", `class A { svc; m(){ this.svc.do(); } }`, "a.ts");
+  const call = edges.find((e) => e.kind === "calls" && e.refName === "do");
+  assert.equal(call.receiverType, null);
+});
