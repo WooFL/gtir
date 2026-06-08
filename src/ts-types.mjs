@@ -14,6 +14,73 @@ export function extractTsClassNames(text) {
   return out;
 }
 
+// Function-scope node types: the boundary for collecting local var/param bindings.
+const TS_FN_SCOPES = new Set(["function_declaration", "method_definition", "arrow_function",
+  "function_expression", "generator_function_declaration", "generator_function"]);
+
+// The bare type name a `type_annotation` denotes, or null (generic/union/predefined → null, deferred).
+function tsTypeName(typeAnnotation) {
+  if (!typeAnnotation || typeAnnotation.type !== "type_annotation") return null;
+  const t = typeAnnotation.namedChild(0);
+  return t && t.type === "type_identifier" ? t.text : null;
+}
+
+// Add a (name → typeName) binding from a parameter or a variable_declarator. A typed param/var uses its
+// `type_annotation`; an untyped `const x = new Bar()` uses the new_expression's constructor identifier.
+function addTsBinding(node, bindings) {
+  if (node.type === "required_parameter" || node.type === "optional_parameter") {
+    const name = node.childForFieldName?.("pattern");
+    const ty = tsTypeName(node.childForFieldName?.("type"));
+    if (name && name.type === "identifier" && ty) bindings.set(name.text, ty);
+    return;
+  }
+  const nm = node.childForFieldName?.("name");
+  if (!nm || nm.type !== "identifier") return;
+  const ty = tsTypeName(node.childForFieldName?.("type"));
+  if (ty) { bindings.set(nm.text, ty); return; }
+  const val = node.childForFieldName?.("value");
+  if (val && val.type === "new_expression") {
+    const ctor = val.childForFieldName?.("constructor");
+    if (ctor && ctor.type === "identifier") bindings.set(nm.text, ctor.text);
+  }
+}
+
+// Collect param + local bindings in a scope, NOT descending into nested function scopes (so a nested
+// closure's params don't shadow an outer binding — same guard as the Go/C++ resolvers).
+function collectTsBindings(scope) {
+  const bindings = new Map();
+  const stack = [scope];
+  while (stack.length) {
+    const n = stack.pop();
+    if (n !== scope && TS_FN_SCOPES.has(n.type)) continue;
+    if (n.type === "required_parameter" || n.type === "optional_parameter" || n.type === "variable_declarator") addTsBinding(n, bindings);
+    for (let i = 0; i < n.namedChildCount; i++) stack.push(n.namedChild(i));
+  }
+  return bindings;
+}
+
+// The class name enclosing a call site (for `this`), or null.
+function enclosingTsClass(callNode) {
+  for (let p = callNode.parent; p; p = p.parent) {
+    if (p.type === "class_declaration" || p.type === "class") {
+      const nm = p.childForFieldName?.("name");
+      if (nm) return nm.text;
+    }
+  }
+  return null;
+}
+
+// Infer the type of `receiverName` at a call site. "this" → enclosing class; else the receiver's
+// binding in the nearest enclosing function scope (or the program root for a module-level call).
+export function inferTsReceiverType(callNode, receiverName) {
+  if (!callNode || !receiverName) return null;
+  if (receiverName === "this") return enclosingTsClass(callNode);
+  let scope = callNode.parent;
+  while (scope && !TS_FN_SCOPES.has(scope.type) && scope.parent) scope = scope.parent;
+  if (!scope) return null;
+  return collectTsBindings(scope).get(receiverName) ?? null;
+}
+
 // Upgrade an ambiguous TS/JS member-call row to resolved when the receiver type pins a unique file.
 // Chunk-robust: TS/JS methods are in-class only, so instead of a `class#method` key (which breaks when
 // the chunker splits a method out of its class), intersect the file(s) declaring class T with the
