@@ -418,7 +418,10 @@ export async function runDisambigEval({ repo, golden: goldenArg = null, baseline
     process.stderr.write("eval --disambig: baseline missing numeric precision — re-save it with --save; skipping gate\n");
     return 0;
   }
-  // Gate: promotion precision must not drop beyond tol (mis-promotion is the costly error).
+  // Gate on PRECISION only (precision-first by design): mis-promotion is the costly error. recall and
+  // abstain_rate are reported meters, deliberately not gated — recall on a small golden flakes, and a
+  // legitimately conservative model can sit at 0 promotions (precision vacuously 1.0). Use --tune to
+  // explore the recall/precision tradeoff.
   const tol = 0.02;
   if (metrics.precision < base.precision - tol) {
     process.stderr.write(`eval --disambig: REGRESSION precision ${base.precision} → ${metrics.precision}\n`);
@@ -436,7 +439,7 @@ function printDisambigEval(m) {
 }
 
 // TEMPORARY stub — replaced by the real sweep in Task 5.
-async function runDisambigTune() { process.stderr.write("eval --disambig --tune: not yet implemented\n"); return 0; }
+async function runDisambigTune({ cfg, golden, inputs, spec } = {}) { process.stderr.write("eval --disambig --tune: not yet implemented\n"); return 0; }
 
 // Memoizing embed wrapper: the golden query set is fixed across combos, so embed each unique
 // text once and replay from cache. Turns an N-combo sweep from N×(embed all queries) into
@@ -718,6 +721,7 @@ async function main() {
           "  gtir mcp     --repo <project> [--label name:<repo>] [--watch [--debounce 1500]] [--print-config]",
           "  gtir eval    --repo <project> [--golden <f>] [-k 10] [--save] [--no-build] [--json]",
           "  gtir eval    --repo <project> --tune [\"ftsWeight=0,0.2;ftsWeightMixed=0,0.3\"]   # sweep fusion weights on the golden set",
+          "  gtir eval    --repo <project> --disambig [--tune] [--save] [--no-build]   # score ambiguous→inferred promotion",
           "  gtir graph   --repo <project> [--out FILE] [--focus SYM [--depth 2]] [--rollup] [--max-nodes 400] [--kind calls,imports] [--conf ambiguous] [--path-prefix P]",
         ].join("\n") + "\n");
         process.exit(cmd ? 1 : 0);
