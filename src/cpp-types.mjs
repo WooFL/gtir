@@ -329,9 +329,10 @@ export function extractCppBases(text) {
 
 // Regex for a simple (non-qualified, non-template) type identifier — bare identifier only.
 const CPP_BARE_TYPE = /^[A-Za-z_]\w*$/;
-// std smart-pointer field wrapper: `[std::]unique_ptr<Foo>` / `shared_ptr<Foo>` / `weak_ptr<Foo>`.
-// Mirrors CPP_SMART_PTR_RET but for field declarations rather than return types.
-const CPP_SMART_PTR_FIELD = /^(?:std\s*::\s*)?(unique_ptr|shared_ptr|weak_ptr)\s*<\s*([A-Za-z_]\w*)\s*>$/;
+// Generic single-arg template field wrapper: `[std::]Wrapper<Foo>` → capture (wrapper, element). The
+// wrapper is only treated as a smart pointer when it is in the smartPtrs allowlist (cfg.cppSmartPointers),
+// mirroring the same-file path's templateElement(type, smartPtrs); otherwise it's a deferred generic.
+const CPP_SMART_PTR_FIELD = /^(?:std\s*::\s*)?([A-Za-z_]\w*)\s*<\s*([A-Za-z_]\w*)\s*>$/;
 // Leading keywords that mean the statement is NOT an instance field.
 const CPP_FIELD_REJECT = new Set(["using", "typedef", "friend", "static", "enum", "struct", "class",
   "constexpr", "inline", "virtual", "mutable"]);
@@ -340,7 +341,8 @@ const CPP_ACCESS_KW = new Set(["public", "private", "protected"]);
 
 // Parse one candidate field statement (text of the declaration up to `;`, initializer truncated).
 // Returns {field, type, smartPtr} or null when the statement is not a simple instance field.
-function parseCppFieldStmt(raw) {
+// smartPtrs: allowlist of wrapper template names to unwrap (default: std unique/shared/weak_ptr).
+function parseCppFieldStmt(raw, smartPtrs = DEFAULT_SMART_PTRS) {
   // truncate at first `=` so `Widget* m_w = nullptr` → `Widget* m_w`
   const stmt = raw.includes("=") ? raw.slice(0, raw.indexOf("=")) : raw;
   const s = stmt.trim();
@@ -366,7 +368,8 @@ function parseCppFieldStmt(raw) {
   // qualified type (contains `::`) or non-allowlisted generic (`<`) → deferred, skip
   if (type.includes("::") || type.includes("<")) {
     const sp = type.match(CPP_SMART_PTR_FIELD);
-    if (sp) return { field, type: sp[2], smartPtr: true };
+    // only an allowlisted wrapper (sp[1]) unwraps to its element (sp[2]); other generics are deferred.
+    if (sp && smartPtrs.has(sp[1])) return { field, type: sp[2], smartPtr: true };
     return null;
   }
   if (!CPP_BARE_TYPE.test(type)) return null;
@@ -378,7 +381,7 @@ function parseCppFieldStmt(raw) {
 // header-less chunk whose whole text IS the interior in scopeClass mode). A `;` flushes a candidate
 // only at the interior depth; any `{` raises depth and its contents (a method/ctor body) are skipped,
 // so method-body locals are never emitted as phantom fields. Pushes {cls, …} rows into `out`.
-function scanCppFieldBody(s, start, depth, cls, out) {
+function scanCppFieldBody(s, start, depth, cls, out, smartPtrs) {
   const interior = depth;        // the level at which a `;` ends a real field statement
   let buf = "";                  // accumulates characters at the interior level
   for (let i = start; i < s.length; i++) {
@@ -404,7 +407,7 @@ function scanCppFieldBody(s, start, depth, cls, out) {
     } else if (ch === ";" && depth === interior) {
       const trimmed = buf.trim();
       if (trimmed) {
-        const r = parseCppFieldStmt(trimmed);
+        const r = parseCppFieldStmt(trimmed, smartPtrs);
         if (r) out.push({ cls, ...r });
       }
       buf = "";
@@ -436,14 +439,14 @@ export function extractCppFields(text, scopeClass = null, smartPtrs = DEFAULT_SM
 
   // scopeClass-only mode: no class header → whole text is the class interior, scanned at depth 0.
   if (!cm) {
-    scanCppFieldBody(s, 0, 0, cls, out);
+    scanCppFieldBody(s, 0, 0, cls, out, smartPtrs);
     return out;
   }
 
   // Header mode: find the opening `{` of the class body, scan its interior starting at depth 1.
   const bodyStart = s.indexOf("{", cm.index + cm[0].length - 1);
   if (bodyStart === -1) return [];
-  scanCppFieldBody(s, bodyStart + 1, 1, cls, out);
+  scanCppFieldBody(s, bodyStart + 1, 1, cls, out, smartPtrs);
   return out;
 }
 

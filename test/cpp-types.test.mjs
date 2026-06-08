@@ -346,3 +346,17 @@ test("extractCppFields: scopeClass field before method body → only the real fi
   const r = extractCppFields(`Widget* m_w; void run(){ Gadget* g; }`, "C");
   assert.deepEqual(r, [{ cls: "C", field: "m_w", type: "Widget", smartPtr: false }]);
 });
+
+// Fix 3: field smart-pointer match honors the smartPtrs Set (cfg.cppSmartPointers), like the same-file path
+test("extractCppFields: default std smart-pointer field still works", () => {
+  const r = extractCppFields(`class C { std::shared_ptr<Foo> p; };`);
+  assert.deepEqual(r, [{ cls: "C", field: "p", type: "Foo", smartPtr: true }]);
+});
+test("extractCppFields: custom wrapper in smartPtrs honored as smart pointer", () => {
+  const r = extractCppFields(`class C { Scoper<Bar> b; };`, null, new Set(["Scoper"]));
+  assert.deepEqual(r, [{ cls: "C", field: "b", type: "Bar", smartPtr: true }]);
+});
+test("extractCppFields: non-allowlisted generic skipped", () => {
+  // vector is not in the default smart-pointer set → deferred, no field row.
+  assert.deepEqual(extractCppFields(`class C { vector<Foo> v; };`), []);
+});
