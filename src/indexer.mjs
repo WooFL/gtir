@@ -47,12 +47,17 @@ async function indexEdges(cfg, store, toIndex, { rebuild, deleted = [] }) {
       if (changedSet.has(r.path)) changedSymbols.add(name);
     }
     if (r.language === "go") {
+      const seenMethods = new Set();
       for (const { type, method } of extractGoMethodDefs(r.text)) {
         const k = `${type}#${method}`;
         if (!goMethodIndex.has(k)) goMethodIndex.set(k, []);
         goMethodIndex.get(k).push({ path: r.path, line_start: Number(r.line_start), line_end: Number(r.line_end) });
         // Also register Go method names in symbolIndex so resolveEdges can produce "ambiguous"
         // edges (Go methods with receivers are not matched by the keyword regex in declaredSymbols).
+        // Dedup per chunk: one symbolIndex entry per method name even if the chunk holds two
+        // same-named methods on different types.
+        if (seenMethods.has(method)) continue;
+        seenMethods.add(method);
         if (!symbolIndex.has(method)) symbolIndex.set(method, []);
         symbolIndex.get(method).push({ path: r.path, line_start: Number(r.line_start), line_end: Number(r.line_end),
           embedding: r.embedding ? Array.from(r.embedding) : null, content_hash: r.content_hash || null });
