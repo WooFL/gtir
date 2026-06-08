@@ -402,3 +402,45 @@ test("extractCodeEdges (cpp): nested lambda param does not shadow the outer rece
   const outer = edges.find((e) => e.kind === "calls" && e.refName === "bar");
   assert.equal(outer.receiverType, "Foo"); // outer f (Foo*), not shadowed by the lambda's Bar* f
 });
+
+test("extractCodeEdges (cpp): unique_ptr param → element type on ->", async () => {
+  const edges = await edgesFor("cpp", `void use(std::unique_ptr<Foo> p) { p->bar(); }`, "a.cpp");
+  assert.equal(edges.find((e) => e.refName === "bar").receiverType, "Foo");
+});
+test("extractCodeEdges (cpp): shared_ptr local → element type on ->", async () => {
+  const edges = await edgesFor("cpp", `void use() { std::shared_ptr<Foo> p; p->bar(); }`, "a.cpp");
+  assert.equal(edges.find((e) => e.refName === "bar").receiverType, "Foo");
+});
+test("extractCodeEdges (cpp): weak_ptr is in the default allowlist (third std smart pointer)", async () => {
+  const edges = await edgesFor("cpp", `void use(std::weak_ptr<Foo> p) { p->bar(); }`, "a.cpp");
+  assert.equal(edges.find((e) => e.refName === "bar").receiverType, "Foo");
+});
+test("extractCodeEdges (cpp): smart-ptr .method() is NOT unwrapped (wrapper's own)", async () => {
+  const edges = await edgesFor("cpp", `void use(std::unique_ptr<Foo> p) { p.reset(); }`, "a.cpp");
+  assert.equal(edges.find((e) => e.refName === "reset").receiverType, null);
+});
+test("extractCodeEdges (cpp): non-allowlisted template (vector) → null", async () => {
+  const edges = await edgesFor("cpp", `void use(std::vector<Foo> v) { v.push(); }`, "a.cpp");
+  assert.equal(edges.find((e) => e.refName === "push").receiverType, null);
+});
+test("extractCodeEdges (cpp): unique_ptr with namespaced element → null", async () => {
+  const edges = await edgesFor("cpp", `void use(std::unique_ptr<ns::Foo> p) { p->bar(); }`, "a.cpp");
+  assert.equal(edges.find((e) => e.refName === "bar").receiverType, null);
+});
+test("extractCodeEdges (cpp): multi-arg unique_ptr<Foo,Del> → first arg Foo on ->", async () => {
+  const edges = await edgesFor("cpp", `void use(std::unique_ptr<Foo, Del> p) { p->bar(); }`, "a.cpp");
+  assert.equal(edges.find((e) => e.refName === "bar").receiverType, "Foo");
+});
+
+test("extractCodeEdges (cpp): custom wrapper in cppSmartPointers unwraps on ->", async () => {
+  const parser = await getParser("cpp");
+  const tree = parser.parse(`void use(MyScoper<Foo> h) { h->bar(); }`);
+  const edges = extractCodeEdges(tree, "cpp", "a.cpp", { cppSmartPointers: ["MyScoper"] });
+  assert.equal(edges.find((e) => e.kind === "calls" && e.refName === "bar").receiverType, "Foo");
+});
+test("extractCodeEdges (cpp): a wrapper NOT in the allowlist → null", async () => {
+  const parser = await getParser("cpp");
+  const tree = parser.parse(`void use(MyScoper<Foo> h) { h->bar(); }`);
+  const edges = extractCodeEdges(tree, "cpp", "a.cpp", {}); // default allowlist; MyScoper not in it
+  assert.equal(edges.find((e) => e.kind === "calls" && e.refName === "bar").receiverType, null);
+});

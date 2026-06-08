@@ -1,7 +1,7 @@
 import { dirname, join, basename } from "node:path";
 import { edgeTypes, targetTypes } from "./languages.mjs";
 import { inferReceiverType } from "./go-types.mjs";
-import { inferCppReceiverType } from "./cpp-types.mjs";
+import { inferCppReceiverType, DEFAULT_SMART_PTRS } from "./cpp-types.mjs";
 
 // Walk every named node depth-first, calling visit(node). Iterative (no recursion depth limit),
 // mirrors chunker.collectNodes' traversal.
@@ -342,9 +342,10 @@ export function neighborsOf(adj, { symbol, path, lines, siblings = [] }) {
   };
 }
 
-export function extractCodeEdges(tree, langId, relPath) {
+export function extractCodeEdges(tree, langId, relPath, opts = {}) {
   const types = edgeTypes(langId);
   if (!tree?.rootNode) return [];
+  const cppSmartPtrs = opts.cppSmartPointers ? new Set(opts.cppSmartPointers) : DEFAULT_SMART_PTRS;
   const callSet = new Set(types.call);
   const importSet = new Set(types.import);
   // Enclosing-scope detection: walk to the nearest ancestor whose type is a target declaration type.
@@ -365,7 +366,7 @@ export function extractCodeEdges(tree, langId, relPath) {
           const receiver = isMethod ? memberReceiver(callee) : null;
           const receiverType = !receiver ? null
             : langId === "go" ? inferReceiverType(n, receiver)
-            : langId === "cpp" ? inferCppReceiverType(n, receiver)
+            : langId === "cpp" ? inferCppReceiverType(n, receiver, cppSmartPtrs)
             : null;
           edges.push({ kind: "calls", refName: name, fromPath: relPath, fromLine: n.startPosition.row + 1, fromSymbol, isMethod, receiver, receiverType });
         }
