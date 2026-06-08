@@ -50,23 +50,32 @@ export function gtirClaudeMdBody() {
   ].join("\n");
 }
 
+// Treat a value as a reusable container ONLY when it's a real plain object. A config
+// file is hand-edited JSON, so a key we expect to be an object can legally be the wrong
+// type (e.g. `{"mcpServers":"x"}` or `{"hooks":[...]}`). Spreading a string would smear
+// its characters into numeric `"0"`,`"1"`… keys; spreading an array would do likewise.
+// Normalizing such a malformed value back to `{}` is safe here: we're about to (re)write
+// the file anyway, and the happy path (already an object) is returned untouched.
+const asObject = (v) => (v && typeof v === "object" && !Array.isArray(v)) ? v : {};
+
 // --- mcpServers merge --------------------------------------------------------
 
 // Add (or overwrite) `mcpServers[name]`, preserving every other server. Idempotent:
 // re-adding the same entry yields a deep-equal object.
 export function addMcpServer(json, name, entry) {
-  const out = { ...(json ?? {}) };
-  out.mcpServers = { ...(out.mcpServers ?? {}) };
+  const out = { ...asObject(json) };
+  out.mcpServers = { ...asObject(out.mcpServers) };
   out.mcpServers[name] = entry;
   return out;
 }
 
 // Remove `mcpServers[name]`. Leaves `mcpServers` present (possibly empty) and every
-// other server intact. Idempotent; never throws on a missing key.
+// other server intact. Idempotent; never throws on a missing key. Normalizes a malformed
+// non-object `mcpServers` to `{}` rather than passing it through.
 export function removeMcpServer(json, name) {
-  const out = { ...(json ?? {}) };
-  if (!out.mcpServers) return out;
-  const servers = { ...out.mcpServers };
+  const out = { ...asObject(json) };
+  if (out.mcpServers === undefined || out.mcpServers === null) return out;
+  const servers = { ...asObject(out.mcpServers) };
   delete servers[name];
   out.mcpServers = servers;
   return out;
@@ -84,8 +93,8 @@ function isGtirHookEntry(entry, matchKey) {
 // gtir hook (identified by matchKey) is already present, replace it in place rather
 // than appending a duplicate — so add-twice == add-once.
 export function addPreToolUseHook(json, hookEntry, matchKey) {
-  const out = { ...(json ?? {}) };
-  out.hooks = { ...(out.hooks ?? {}) };
+  const out = { ...asObject(json) };
+  out.hooks = { ...asObject(out.hooks) };
   const existing = Array.isArray(out.hooks.PreToolUse) ? out.hooks.PreToolUse : [];
   const others = existing.filter((e) => !isGtirHookEntry(e, matchKey));
   out.hooks.PreToolUse = [...others, hookEntry];
@@ -93,12 +102,16 @@ export function addPreToolUseHook(json, hookEntry, matchKey) {
 }
 
 // Remove gtir's PreToolUse hook (entries whose command contains matchKey), keeping all
-// others. Leaves `hooks.PreToolUse` present (possibly empty). Idempotent.
+// others. Leaves `hooks.PreToolUse` present (possibly empty). Idempotent. Normalizes a
+// malformed non-object `hooks` / non-array `hooks.PreToolUse` rather than passing it through.
 export function removePreToolUseHook(json, matchKey) {
-  const out = { ...(json ?? {}) };
-  if (!out.hooks || !Array.isArray(out.hooks.PreToolUse)) return out;
-  out.hooks = { ...out.hooks };
-  out.hooks.PreToolUse = out.hooks.PreToolUse.filter((e) => !isGtirHookEntry(e, matchKey));
+  const out = { ...asObject(json) };
+  if (out.hooks === undefined || out.hooks === null) return out;
+  const hooks = { ...asObject(out.hooks) };
+  if (hooks.PreToolUse === undefined || hooks.PreToolUse === null) { out.hooks = hooks; return out; }
+  const existing = Array.isArray(hooks.PreToolUse) ? hooks.PreToolUse : [];
+  hooks.PreToolUse = existing.filter((e) => !isGtirHookEntry(e, matchKey));
+  out.hooks = hooks;
   return out;
 }
 

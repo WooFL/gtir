@@ -131,6 +131,57 @@ test("removePreToolUseHook: removing the only hook leaves PreToolUse empty (file
   assert.deepEqual(empty.hooks.PreToolUse, []);
 });
 
+// --- type guards: malformed (wrong-type but valid JSON) pre-existing values -----
+// A hand-edited config can have the right key with the WRONG type. Spreading a string
+// would smear it into numeric "0","1"… keys; we must normalize, never corrupt.
+
+test("addMcpServer: mcpServers is a string => normalized to an object with only gtir (no numeric keys)", () => {
+  const out = addMcpServer({ mcpServers: "x" }, "gtir", gtirMcpEntry(BIN));
+  assert.equal(typeof out.mcpServers, "object");
+  assert.ok(!Array.isArray(out.mcpServers));
+  assert.deepEqual(out.mcpServers.gtir, gtirMcpEntry(BIN));
+  assert.deepEqual(Object.keys(out.mcpServers), ["gtir"], "no smeared numeric keys");
+  assert.ok(!("0" in out.mcpServers), "string was not spread into index keys");
+});
+
+test("addMcpServer: top-level json is an array => normalized, gtir present", () => {
+  const out = addMcpServer(["nope"], "gtir", gtirMcpEntry(BIN));
+  assert.ok(!Array.isArray(out));
+  assert.deepEqual(out.mcpServers.gtir, gtirMcpEntry(BIN));
+});
+
+test("removeMcpServer: mcpServers is a string => normalized to {} (not smeared)", () => {
+  const out = removeMcpServer({ mcpServers: "x" }, "gtir");
+  assert.deepEqual(out.mcpServers, {});
+});
+
+test("addPreToolUseHook: hooks is a string => normalized to an object with a valid PreToolUse array", () => {
+  const out = addPreToolUseHook({ hooks: "y" }, gtirHookEntry(BIN), HOOK_MATCH_KEY);
+  assert.equal(typeof out.hooks, "object");
+  assert.ok(!Array.isArray(out.hooks));
+  assert.ok(Array.isArray(out.hooks.PreToolUse));
+  assert.equal(out.hooks.PreToolUse.length, 1);
+  assert.match(out.hooks.PreToolUse[0].hooks[0].command, /hooknudge/);
+  assert.ok(!("0" in out.hooks), "string was not spread into index keys");
+});
+
+test("addPreToolUseHook: hooks.PreToolUse is a string => coerced to [] then gtir appended", () => {
+  const out = addPreToolUseHook({ hooks: { PreToolUse: "z" } }, gtirHookEntry(BIN), HOOK_MATCH_KEY);
+  assert.ok(Array.isArray(out.hooks.PreToolUse));
+  assert.equal(out.hooks.PreToolUse.length, 1, "non-array PreToolUse coerced to [] before append");
+  assert.match(out.hooks.PreToolUse[0].hooks[0].command, /hooknudge/);
+});
+
+test("removePreToolUseHook: hooks is a string => normalized to {} (no PreToolUse fabricated)", () => {
+  const out = removePreToolUseHook({ hooks: "y" }, HOOK_MATCH_KEY);
+  assert.deepEqual(out.hooks, {});
+});
+
+test("removePreToolUseHook: hooks.PreToolUse is a string => coerced to []", () => {
+  const out = removePreToolUseHook({ hooks: { PreToolUse: "z" } }, HOOK_MATCH_KEY);
+  assert.deepEqual(out.hooks.PreToolUse, []);
+});
+
 // --- upsertMarkedSection / removeMarkedSection -----------------------------
 
 test("upsertMarkedSection: absent => appends a marked block", () => {
@@ -324,6 +375,28 @@ test("runInstall on a bare repo creates the 3 files (.claude/ dir created)", () 
   // valid JSON
   JSON.parse(readFileSync(join(repo, ".mcp.json"), "utf8"));
   JSON.parse(readFileSync(join(repo, ".claude", "settings.json"), "utf8"));
+});
+
+test("runInstall --uninstall on a bare repo (no pre-existing config) creates NO files", () => {
+  const repo = tmp();
+  runInstall({ repo, uninstall: true });
+  // Nothing of ours existed to remove, so uninstall must not litter the repo.
+  assert.ok(!existsSync(join(repo, ".mcp.json")), ".mcp.json must not be created on bare uninstall");
+  assert.ok(!existsSync(join(repo, ".claude", "settings.json")), "settings.json must not be created on bare uninstall");
+  assert.ok(!existsSync(join(repo, ".claude")), ".claude/ dir must not be created on bare uninstall");
+  assert.ok(!existsSync(join(repo, "CLAUDE.md")), "CLAUDE.md must not be created on bare uninstall");
+});
+
+test("runInstall --uninstall only writes the target files that already existed", () => {
+  const repo = tmp();
+  // Only CLAUDE.md pre-exists (with unrelated prose, no gtir block).
+  writeFileSync(join(repo, "CLAUDE.md"), "# Project\n\nUnrelated existing guidance.\n");
+  runInstall({ repo, uninstall: true });
+  // The pre-existing file is written (cleaned), the absent ones are left absent.
+  assert.ok(existsSync(join(repo, "CLAUDE.md")), "pre-existing CLAUDE.md is still present");
+  assert.match(readFileSync(join(repo, "CLAUDE.md"), "utf8"), /Unrelated existing guidance/);
+  assert.ok(!existsSync(join(repo, ".mcp.json")), "absent .mcp.json not created");
+  assert.ok(!existsSync(join(repo, ".claude")), "absent .claude/ not created");
 });
 
 test("runInstall: written hook command path exists on disk and parses inside JSON", () => {

@@ -170,27 +170,41 @@ export function runInstall({ repo = process.cwd(), uninstall = false, log = (m) 
   const settingsFile = path.join(claudeDir, "settings.json");
   const claudeMdFile = path.join(repo, "CLAUDE.md");
 
+  // On uninstall we must not litter: if a target file was absent there is nothing of ours
+  // to remove, so don't create an empty `{}`/empty file (or the `.claude/` dir) for it. If
+  // it existed, write the cleaned result as before (even an empty `{}`/"" — never delete it).
+  // Install (non-uninstall) always creates the files.
+  const mcpExisted = existsSync(mcpFile);
+  const settingsExisted = existsSync(settingsFile);
+  const claudeMdExisted = existsSync(claudeMdFile);
+
   // .mcp.json
-  const mcp0 = readJson(mcpFile);
-  const mcp1 = uninstall
-    ? removeMcpServer(mcp0, "gtir")
-    : addMcpServer(mcp0, "gtir", gtirMcpEntry(absBin));
-  writeJson(mcpFile, mcp1);
+  if (!uninstall || mcpExisted) {
+    const mcp0 = readJson(mcpFile);
+    const mcp1 = uninstall
+      ? removeMcpServer(mcp0, "gtir")
+      : addMcpServer(mcp0, "gtir", gtirMcpEntry(absBin));
+    writeJson(mcpFile, mcp1);
+  }
 
   // .claude/settings.json
-  mkdirSync(claudeDir, { recursive: true });
-  const settings0 = readJson(settingsFile);
-  const settings1 = uninstall
-    ? removePreToolUseHook(settings0, HOOK_MATCH_KEY)
-    : addPreToolUseHook(settings0, gtirHookEntry(absBin), HOOK_MATCH_KEY);
-  writeJson(settingsFile, settings1);
+  if (!uninstall || settingsExisted) {
+    mkdirSync(claudeDir, { recursive: true }); // only create .claude/ when we're actually writing settings
+    const settings0 = readJson(settingsFile);
+    const settings1 = uninstall
+      ? removePreToolUseHook(settings0, HOOK_MATCH_KEY)
+      : addPreToolUseHook(settings0, gtirHookEntry(absBin), HOOK_MATCH_KEY);
+    writeJson(settingsFile, settings1);
+  }
 
   // CLAUDE.md
-  const md0 = readText(claudeMdFile);
-  const md1 = uninstall
-    ? removeMarkedSection(md0, GTIR_START, GTIR_END)
-    : upsertMarkedSection(md0, GTIR_START, GTIR_END, gtirClaudeMdBody());
-  writeFileSync(claudeMdFile, md1);
+  if (!uninstall || claudeMdExisted) {
+    const md0 = readText(claudeMdFile);
+    const md1 = uninstall
+      ? removeMarkedSection(md0, GTIR_START, GTIR_END)
+      : upsertMarkedSection(md0, GTIR_START, GTIR_END, gtirClaudeMdBody());
+    writeFileSync(claudeMdFile, md1);
+  }
 
   const verb = uninstall ? "removed" : "wired";
   log(`gtir install: ${verb} gtir for Claude Code in ${repo}`);
