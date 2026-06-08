@@ -27,7 +27,7 @@ function fromNode(e) {
 // TO-side node descriptor. Resolved/inferred → real target; non-resolved → named synthetic node
 // keyed by ref_name (degrading to a shared "" sink when ref_name is null, i.e. a stale index).
 function toNode(e) {
-  if (e.conf === "resolved" || e.conf === "inferred" || e.conf === "dispatch") {
+  if (e.conf === "resolved" || e.conf === "inferred") {
     if (NOTE_KINDS.has(e.kind)) {
       const name = e.ref_name || e.to_symbol || base(e.to_path);
       return { id: `note:${name}`, label: `[[${name}]]`, cls: "note", ref: { path: e.to_path, line: 0 } };
@@ -41,6 +41,11 @@ function toNode(e) {
   if (e.conf === "external") {
     return { id: `ext:${name}`, label: name || "(external)", cls: "external", ref: null, candidates: e.candidates };
   }
+  // dispatch: a confirmed multi-implementer set (to_path is null) — render like ambiguous, as a named
+  // synthetic node carrying its candidate implementer paths, but with its own class/color.
+  if (e.conf === "dispatch") {
+    return { id: `disp:${name}`, label: name || "(dispatch)", cls: "dispatch", ref: null, candidates: e.candidates };
+  }
   return { id: `amb:${name}`, label: name || "(ambiguous)", cls: "ambiguous", ref: null, candidates: e.candidates };
 }
 
@@ -51,6 +56,7 @@ function symbolOf(node) {
   if (id.includes("\x00")) return id.split("\x00")[0];
   if (id.startsWith("ext:")) return id.slice(4);
   if (id.startsWith("amb:")) return id.slice(4);
+  if (id.startsWith("disp:")) return id.slice(5);
   if (id.startsWith("note:")) return id.slice(5);
   return base(id); // bare file node
 }
@@ -168,6 +174,7 @@ export function clusterOf(node) {
   const id = node.id;
   if (id.startsWith("ext:")) return "external";
   if (id.startsWith("amb:")) return "ambiguous";
+  if (id.startsWith("disp:")) return "dispatch";
   if (id.startsWith("note:")) {
     const ref = node.refs && node.refs[0] && node.refs[0].path;
     return ref ? clusterFromPath(ref) : "notes";
