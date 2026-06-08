@@ -17,15 +17,22 @@ const CPP_IN_DEF = /(?:^|[\s;{}*&])([A-Za-z_]\w*)\s*\([^;{}()]*\)\s*(?:const|noe
 const CPP_CLASS = /\b(?:class|struct)\s+([A-Za-z_]\w*)\s*(?:final\b\s*)?(?:\{|:)/;
 const CPP_CTRL = new Set(["if", "for", "while", "switch", "catch", "return", "sizeof", "do"]);
 
-export function extractCppMethodDefs(text) {
+// scopeClass: the chunker's enclosing-class breadcrumb (innermost container name), used as the class
+// for in-class inline defs ONLY when this chunk has no `class X {` header of its own. The chunker drops
+// an oversize class_specifier and surfaces each inline method as its own chunk — that chunk's text
+// loses the header, so without the breadcrumb the method would not be keyed (chunk-robustness, #8).
+// A header present in the text always wins; scopeClass=null reproduces the original single-chunk
+// behavior exactly. A breadcrumb that is actually a namespace/method name yields only dead keys
+// (no receiver is ever typed with it) — never a wrong resolution.
+export function extractCppMethodDefs(text, scopeClass = null) {
   const s = String(text || "");
   const out = [];
   CPP_OUT_DEF.lastIndex = 0;
   let m;
   while ((m = CPP_OUT_DEF.exec(s))) out.push({ cls: m[1], method: m[2] });
   const cm = s.match(CPP_CLASS);
-  if (cm) {
-    const cls = cm[1];
+  const cls = cm ? cm[1] : scopeClass;
+  if (cls) {
     CPP_IN_DEF.lastIndex = 0;
     let im;
     while ((im = CPP_IN_DEF.exec(s))) {

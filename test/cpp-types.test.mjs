@@ -47,6 +47,20 @@ test("extractCppMethodDefs: a template type parameter is not the enclosing class
   assert.deepEqual(defs, [{ cls: "Gadget", method: "run" }]);
 });
 
+test("extractCppMethodDefs: scopeClass keys a headerless in-class method (chunk-split robustness)", () => {
+  // The chunk lost its `class Encoder {` header to a split; the breadcrumb supplies the class.
+  assert.deepEqual(extractCppMethodDefs(`int flush() { return 1; }`, "Encoder"), [{ cls: "Encoder", method: "flush" }]);
+});
+test("extractCppMethodDefs: an in-text class header overrides scopeClass", () => {
+  assert.deepEqual(extractCppMethodDefs(`struct Gadget { void run(){} };`, "Encoder"), [{ cls: "Gadget", method: "run" }]);
+});
+test("extractCppMethodDefs: scopeClass skips a constructor-named def (method == class)", () => {
+  assert.deepEqual(extractCppMethodDefs(`Encoder() { init(); }`, "Encoder"), []);
+});
+test("extractCppMethodDefs: null scopeClass is the original single-chunk behavior", () => {
+  assert.deepEqual(extractCppMethodDefs(`int flush() { return 1; }`), []);   // no header, no breadcrumb → no key
+});
+
 const idx = new Map([
   ["Encoder#flush", [{ path: "encoder.cpp", line_start: 1, line_end: 5 }]],
   ["Sink#flush", [{ path: "sink.cpp", line_start: 1, line_end: 5 }]],
