@@ -193,6 +193,7 @@ gtir mcp     --repo <project> [--label name:<repo>] [--watch] [--print-config]  
 gtir eval    --repo <corpus> --golden <f> [--save] [--json]            # score retrieval quality
 gtir eval    --repo <corpus> --tune ["ftsWeight=0,0.2;ftsWeightMixed=0,1"]   # sweep fusion weights
 gtir eval    --repo <corpus> --edges [--save]                         # score call-edge extraction quality
+gtir eval    --repo <corpus> --disambig [--tune] [--save]             # score ambiguous→inferred promotion
 gtir graph   --repo <project> [--focus <symbol>] [--rollup] [--out FILE]    # render edge graph as HTML
 gtir impact  <symbol> --repo <project> [--downstream] [--depth N] [--path F]  # transitive blast radius
 gtir orphans --repo <project>                                               # likely-dead symbols
@@ -332,6 +333,21 @@ split and gates on a recall floor + wrong-rate ceiling vs. `eval/edges-baseline.
 ```bash
 npm run eval:edges            # score call-edge extraction, compare to baseline
 npm run eval:edges -- --save  # set the current metrics as the new baseline
+```
+
+**Disambiguation quality — `gtir eval --disambig`.** The third harness scores the embedding
+*disambiguator* — the step that promotes an `ambiguous` call (a name defined in several files) to
+`inferred` by picking one target. It runs `eval/disambig-golden.json` (ambiguous calls labeled with the
+correct target, or `null` for "should stay ambiguous") against a replay of `disambiguateEdges` over
+`eval/corpus/`, and reports **precision** (of promotions, the fraction hitting the right file — a
+confident wrong promotion is the costly error), **recall**, and **abstain-rate**. It gates on a
+precision floor vs. `eval/disambig-baseline.json`. `--tune` sweeps `threshold × margin` and recommends
+the operating point that maximizes recall at full precision:
+
+```bash
+npm run eval:disambig            # score promotion precision/recall, compare to baseline
+npm run eval:disambig -- --save  # set the current metrics as the new baseline
+npm run eval:disambig -- --tune  # sweep disambigThreshold × disambigMargin
 ```
 
 ## 🥇 Reranking (optional)

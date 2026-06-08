@@ -13,7 +13,9 @@ import { watchRepo, watcherLive } from "../src/watch.mjs";
 import { probeDim } from "../src/embed.mjs";
 import { runInit, ensureGitignore } from "../src/init.mjs";
 import { resolveIndexes, serveStdio, printConfig, startWatchers, preflightIndexes } from "../src/mcp.mjs";
-import { evalGolden, flattenMetrics, compareBaseline, compareTiers, evalEdgeExtraction } from "../src/eval.mjs";
+import { evalGolden, flattenMetrics, compareBaseline, compareTiers, evalEdgeExtraction, evalDisambiguation, rankDisambigOperatingPoint } from "../src/eval.mjs";
+import { disambiguateEdges } from "../src/disambiguate.mjs";
+import { declaredSymbols } from "../src/symbols.mjs";
 import { runDemo, formatDemo } from "../src/demo.mjs";
 import { runDoctor, preflight } from "../src/doctor.mjs";
 import { fetchGrammars } from "../src/fetch-grammars.mjs";
@@ -153,6 +155,7 @@ function parseArgs(argv) {
     else if (a === "--limit") { const v = Number(argv[++i]); if (Number.isFinite(v)) args.limit = v; }
     else if (a === "--centrality") args.centrality = true;
     else if (a === "--edges") args.edges = true;
+    else if (a === "--disambig") args.disambig = true;
     else args._.push(a);
   }
   return args;
@@ -323,6 +326,152 @@ function printEdgeEval(m) {
   }
   out.push(`  conf split: resolved=${m.split.resolved} inferred=${m.split.inferred} ambiguous=${m.split.ambiguous} external=${m.split.external}`);
   process.stderr.write(out.join("\n") + "\n");
+}
+
+// Read the disambiguator's inputs from a store built with cfg.disambiguate=false (raw ambiguous
+// edges persisted). Mirrors indexEdges' input-building (symbolIndex/callSiteVec from chunks,
+// importMap from import edges) but read-only over the full stored set.
+async function gatherDisambigInputs(store) {
+  const symbolIndex = new Map(), callSiteVec = new Map();
+  const tbl = await store.chunksTable();
+  if (tbl) {
+    const rows = await tbl.query().select(["path", "line_start", "line_end", "text", "embedding", "content_hash"]).toArray();
+    for (const r of rows) {
+      if (r.content_hash && r.embedding) callSiteVec.set(r.content_hash, Array.from(r.embedding));
+      for (const name of declaredSymbols(r.text)) {
+        if (!symbolIndex.has(name)) symbolIndex.set(name, []);
+        symbolIndex.get(name).push({ path: r.path, line_start: Number(r.line_start), line_end: Number(r.line_end),
+          embedding: r.embedding ? Array.from(r.embedding) : null, content_hash: r.content_hash || null });
+      }
+    }
+  }
+  const edges = await store.loadEdges();
+  const importMap = new Map();
+  for (const e of edges) {
+    if (e.kind === "imports" && e.to_path) {
+      let s = importMap.get(e.from_path);
+      if (!s) { s = new Set(); importMap.set(e.from_path, s); }
+      s.add(e.to_path);
+    }
+  }
+  const ambiguousRows = edges.filter((e) => e.kind === "calls" && e.conf === "ambiguous");
+  return { symbolIndex, callSiteVec, importMap, ambiguousRows };
+}
+
+// `gtir eval --disambig`: score the ambiguous→inferred promotion against a precision-first golden.
+// Builds the corpus index with disambiguation OFF so raw ambiguous rows persist, then replays the
+// real disambiguateEdges and scores. --tune sweeps threshold × margin. Returns an exit code.
+export async function runDisambigEval({ repo, golden: goldenArg = null, baseline: baselineArg = null, noBuild = false, save = false, json = false, tune = false, tuneSpec = null } = {}) {
+  const root = repo || process.cwd();
+  const cfg = loadConfig(root);
+  cfg.disambiguate = false; // persist RAW ambiguous edges (full candidate sets) for the replay
+  if (!repo && !noBuild) {
+    process.stderr.write("eval --disambig: WARNING no --repo given — building the current directory with "
+      + "disambiguation OFF (downgrades stored inferred edges). Pass --repo <corpus> (or --no-build) to avoid this.\n");
+  }
+  const goldenPath = goldenArg || path.join(root, "eval", "disambig-golden.json");
+  if (!existsSync(goldenPath)) {
+    process.stderr.write(`eval --disambig: no golden file at ${goldenPath} — pass --golden <file>\n`);
+    return 2;
+  }
+  let golden;
+  try { golden = JSON.parse(readFileSync(goldenPath, "utf8")); }
+  catch (e) { process.stderr.write(`eval --disambig: cannot parse ${goldenPath}: ${e.message}\n`); return 2; }
+  if (!Array.isArray(golden) || golden.length === 0) {
+    process.stderr.write("eval --disambig: golden set is empty\n"); return 2;
+  }
+
+  if (!noBuild) await buildIndex(cfg, { rebuild: false });
+
+  const store = await openStore(cfg);
+  const inputs = await gatherDisambigInputs(store);
+  if (tune) return runDisambigTune({ cfg, golden, inputs, spec: tuneSpec });
+
+  if (inputs.ambiguousRows.length === 0) {
+    process.stderr.write(`eval --disambig: WARNING no ambiguous edges in index at ${cfg.indexDir} — the corpus produced nothing to disambiguate\n`);
+  }
+  const replayed = disambiguateEdges(inputs.ambiguousRows, {
+    symbolIndex: inputs.symbolIndex, callSiteVec: inputs.callSiteVec, importMap: inputs.importMap,
+    threshold: cfg.disambigThreshold, margin: cfg.disambigMargin,
+  });
+  const metrics = evalDisambiguation(replayed, golden);
+  metrics.model = ((await store.readMeta()) || {}).model || cfg.model;
+
+  printDisambigEval(metrics);
+  if (json) process.stdout.write(JSON.stringify(metrics) + "\n");
+
+  const baselinePath = baselineArg || path.join(root, "eval", "disambig-baseline.json");
+  if (save) {
+    writeFileSync(baselinePath, JSON.stringify(metrics, null, 2) + "\n");
+    process.stderr.write(`eval --disambig: saved baseline → ${baselinePath} (n=${metrics.n}, model=${metrics.model})\n`);
+    return 0;
+  }
+
+  let base = null;
+  if (existsSync(baselinePath)) {
+    try { base = JSON.parse(readFileSync(baselinePath, "utf8")); } catch { /* treat as none */ }
+  }
+  if (!base) {
+    process.stderr.write("eval --disambig: no baseline to compare (run with --save to set one)\n");
+    return 0;
+  }
+  if (base.model && base.model !== metrics.model) {
+    process.stderr.write(`eval --disambig: WARNING baseline model (${base.model}) != current (${metrics.model}) — cross-model comparison\n`);
+  }
+  if (typeof base.precision !== "number") {
+    process.stderr.write("eval --disambig: baseline missing numeric precision — re-save it with --save; skipping gate\n");
+    return 0;
+  }
+  // Gate on PRECISION only (precision-first by design): mis-promotion is the costly error. recall and
+  // abstain_rate are reported meters, deliberately not gated — recall on a small golden flakes, and a
+  // legitimately conservative model can sit at 0 promotions (precision vacuously 1.0). Use --tune to
+  // explore the recall/precision tradeoff.
+  const tol = 0.02;
+  if (metrics.precision < base.precision - tol) {
+    process.stderr.write(`eval --disambig: REGRESSION precision ${base.precision} → ${metrics.precision}\n`);
+    return 1;
+  }
+  process.stderr.write("eval --disambig: no regressions\n");
+  return 0;
+}
+
+function printDisambigEval(m) {
+  const c = m.cells;
+  process.stderr.write(
+    `disambig eval: n=${m.n} precision=${m.precision} recall=${m.recall} abstain=${m.abstain_rate} promotions=${m.promotions} model=${m.model}\n`
+    + `  confusion: tp=${c.tp} fp=${c.fp} fn=${c.fn} tn=${c.tn}\n`);
+}
+
+// `gtir eval --disambig --tune [spec]`: replay disambiguateEdges over a threshold × margin grid
+// against the already-gathered inputs (one embed pass, many combos — like fusion --tune), score
+// precision/recall per cell, and recommend the precision-first operating point.
+function runDisambigTune({ cfg, golden, inputs, spec } = {}) {
+  // Default grid centered on the config defaults (threshold 0.55, margin 0.05).
+  const axes = spec ? parseGridSpec(spec) : { disambigThreshold: [0.45, 0.5, 0.55, 0.6, 0.65], disambigMargin: [0.03, 0.05, 0.08] };
+  const combos = gridCombos(axes);
+  const rows = combos.map((w) => {
+    const replayed = disambiguateEdges(inputs.ambiguousRows, {
+      symbolIndex: inputs.symbolIndex, callSiteVec: inputs.callSiteVec, importMap: inputs.importMap,
+      threshold: w.disambigThreshold ?? cfg.disambigThreshold, margin: w.disambigMargin ?? cfg.disambigMargin,
+    });
+    const m = evalDisambiguation(replayed, golden);
+    return { threshold: w.disambigThreshold ?? cfg.disambigThreshold, margin: w.disambigMargin ?? cfg.disambigMargin,
+      precision: m.precision, recall: m.recall, promotions: m.promotions };
+  });
+  const ranked = rankDisambigOperatingPoint(rows);
+  const best = ranked[0];
+  const cur = (t, mg) => t === cfg.disambigThreshold && mg === cfg.disambigMargin;
+  const cell = (s) => String(s).padStart(8);
+  const out = [`eval --disambig --tune: ${combos.length} combo(s), n=${golden.length}`,
+    `  ${"thr".padStart(6)}${"margin".padStart(8)}${"prec".padStart(8)}${"recall".padStart(8)}${"promo".padStart(8)}`];
+  for (const r of rows) {
+    const mark = (r === best) ? "→" : (cur(r.threshold, r.margin) ? "*" : " ");
+    out.push(`${mark} ${String(r.threshold).padStart(6)}${cell(r.margin)}${cell(r.precision)}${cell(r.recall)}${cell(r.promotions)}`);
+  }
+  out.push("  legend: → best (precision-first: max recall at precision 1)   * current config");
+  out.push(`  → set in .gtir/config.json: "disambigThreshold": ${best.threshold}, "disambigMargin": ${best.margin}`);
+  process.stderr.write(out.join("\n") + "\n");
+  return 0;
 }
 
 // Memoizing embed wrapper: the golden query set is fixed across combos, so embed each unique
@@ -539,6 +688,7 @@ async function main() {
         return; // keep the process alive on stdin; do not fall through to exit
       }
       case "eval": {
+        if (args.disambig) process.exit(await runDisambigEval(args));
         process.exit(await (args.edges ? runEdgeEval(args) : runEval(args)));
       }
       case "init": {
@@ -604,6 +754,7 @@ async function main() {
           "  gtir mcp     --repo <project> [--label name:<repo>] [--watch [--debounce 1500]] [--print-config]",
           "  gtir eval    --repo <project> [--golden <f>] [-k 10] [--save] [--no-build] [--json]",
           "  gtir eval    --repo <project> --tune [\"ftsWeight=0,0.2;ftsWeightMixed=0,0.3\"]   # sweep fusion weights on the golden set",
+          "  gtir eval    --repo <project> --disambig [--tune] [--save] [--no-build]   # score ambiguous→inferred promotion",
           "  gtir graph   --repo <project> [--out FILE] [--focus SYM [--depth 2]] [--rollup] [--max-nodes 400] [--kind calls,imports] [--conf ambiguous] [--path-prefix P]",
         ].join("\n") + "\n");
         process.exit(cmd ? 1 : 0);

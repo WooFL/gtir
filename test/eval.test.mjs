@@ -318,3 +318,96 @@ test("evalEdgeExtraction: empty golden → zeros, no divide-by-zero", () => {
   assert.equal(m.recall, 0);
   assert.deepEqual(m.tally, { correct: 0, wrong: 0, missing: 0 });
 });
+
+import { scoreDisambig } from "../src/eval.mjs";
+
+// Replayed edge set: each is a calls row, some promoted (inferred), some left ambiguous.
+const dEdges = [
+  { kind: "calls", conf: "inferred", from_path: "use_json.py", ref_name: "encode", to_path: "json_codec.py" }, // promoted right
+  { kind: "calls", conf: "inferred", from_path: "use_csv.py",  ref_name: "encode", to_path: "json_codec.py" }, // promoted WRONG (wanted csv)
+  { kind: "calls", conf: "ambiguous", from_path: "use_tie.py", ref_name: "normalize", to_path: null },          // abstained
+  { kind: "calls", conf: "inferred", from_path: "noisy.py",   ref_name: "flatten", to_path: "x.py" },          // promoted a negative
+];
+
+test("scoreDisambig: positive promoted to expected target → tp", () => {
+  assert.equal(scoreDisambig(dEdges, { from: "use_json.py", symbol: "encode", expect: "json_codec.py" }), "tp");
+});
+test("scoreDisambig: positive promoted to a different target → fp", () => {
+  assert.equal(scoreDisambig(dEdges, { from: "use_csv.py", symbol: "encode", expect: "csv_codec.py" }), "fp");
+});
+test("scoreDisambig: positive left ambiguous → fn", () => {
+  assert.equal(scoreDisambig(dEdges, { from: "use_tie.py", symbol: "normalize", expect: "tie_alpha.py" }), "fn");
+});
+test("scoreDisambig: negative left ambiguous → tn", () => {
+  assert.equal(scoreDisambig(dEdges, { from: "use_tie.py", symbol: "normalize", expect: null }), "tn");
+});
+test("scoreDisambig: negative that got promoted → fp", () => {
+  assert.equal(scoreDisambig(dEdges, { from: "noisy.py", symbol: "flatten", expect: null }), "fp");
+});
+test("scoreDisambig: positive with no matching edge → fn", () => {
+  assert.equal(scoreDisambig(dEdges, { from: "absent.py", symbol: "gone", expect: "x.py" }), "fn");
+});
+
+import { evalDisambiguation, rankDisambigOperatingPoint } from "../src/eval.mjs";
+
+test("evalDisambiguation: precision-first metrics over a mixed golden", () => {
+  const edges = [
+    { kind: "calls", conf: "inferred", from_path: "p1", ref_name: "f", to_path: "right1" }, // tp
+    { kind: "calls", conf: "inferred", from_path: "p2", ref_name: "f", to_path: "wrong" },   // fp (positive, wrong target)
+    { kind: "calls", conf: "ambiguous", from_path: "p3", ref_name: "f", to_path: null },      // fn (positive, missed)
+    { kind: "calls", conf: "ambiguous", from_path: "n1", ref_name: "g", to_path: null },      // tn (negative, abstained)
+    { kind: "calls", conf: "inferred", from_path: "n2", ref_name: "g", to_path: "z" },        // fp (negative, promoted)
+  ];
+  const golden = [
+    { from: "p1", symbol: "f", expect: "right1" },
+    { from: "p2", symbol: "f", expect: "right2" },
+    { from: "p3", symbol: "f", expect: "right3" },
+    { from: "n1", symbol: "g", expect: null },
+    { from: "n2", symbol: "g", expect: null },
+  ];
+  const m = evalDisambiguation(edges, golden);
+  assert.equal(m.n, 5);
+  assert.deepEqual(m.cells, { tp: 1, fp: 2, fn: 1, tn: 1 });
+  assert.equal(m.promotions, 3);
+  assert.equal(m.precision, 0.3333); // 1/3
+  assert.equal(m.recall, 0.3333);    // 1/3 positives
+  assert.equal(m.abstain_rate, 0.5); // 1/2 negatives
+});
+
+test("evalDisambiguation: no promotions → precision 1.0 (vacuous), recall 0", () => {
+  const edges = [
+    { kind: "calls", conf: "ambiguous", from_path: "p1", ref_name: "f", to_path: null },
+    { kind: "calls", conf: "ambiguous", from_path: "n1", ref_name: "g", to_path: null },
+  ];
+  const golden = [
+    { from: "p1", symbol: "f", expect: "x" },
+    { from: "n1", symbol: "g", expect: null },
+  ];
+  const m = evalDisambiguation(edges, golden);
+  assert.equal(m.promotions, 0);
+  assert.equal(m.precision, 1);
+  assert.equal(m.recall, 0);
+  assert.equal(m.abstain_rate, 1);
+});
+
+test("rankDisambigOperatingPoint: precision-first — prefer precision 1, then higher recall, then lower threshold", () => {
+  const rows = [
+    { threshold: 0.45, margin: 0.05, precision: 0.5, recall: 1.0, promotions: 4 },
+    { threshold: 0.55, margin: 0.05, precision: 1.0, recall: 0.5, promotions: 2 },
+    { threshold: 0.50, margin: 0.05, precision: 1.0, recall: 0.5, promotions: 2 },
+    { threshold: 0.65, margin: 0.05, precision: 1.0, recall: 0.0, promotions: 0 },
+  ];
+  const best = rankDisambigOperatingPoint(rows)[0];
+  assert.equal(best.precision, 1);
+  assert.equal(best.recall, 0.5);
+  assert.equal(best.threshold, 0.50);
+});
+
+test("rankDisambigOperatingPoint: equal precision/recall/threshold → lower margin wins (deterministic)", () => {
+  const rows = [
+    { threshold: 0.5, margin: 0.08, precision: 1, recall: 1, promotions: 2 },
+    { threshold: 0.5, margin: 0.03, precision: 1, recall: 1, promotions: 2 },
+    { threshold: 0.5, margin: 0.05, precision: 1, recall: 1, promotions: 2 },
+  ];
+  assert.equal(rankDisambigOperatingPoint(rows)[0].margin, 0.03);
+});

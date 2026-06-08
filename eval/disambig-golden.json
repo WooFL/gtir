@@ -1,0 +1,6 @@
+[
+  { "from": "disambig/use_json.ts", "symbol": "encode", "expect": "disambig/json_codec.ts" },
+  { "from": "disambig/use_csv.ts", "symbol": "encode", "expect": "disambig/csv_codec.ts" },
+  { "from": "disambig/use_tie_norm.ts", "symbol": "normalize", "expect": null },
+  { "from": "disambig/use_tie_flat.ts", "symbol": "flatten", "expect": null }
+]

@@ -182,3 +182,63 @@ test("runEdgeEval skips the gate (exit 0) when the baseline lacks numeric recall
   const code = await runEdgeEval({ repo, golden: goldenPath, baseline: basePath, noBuild: true });
   assert.equal(code, 0); // gate skipped, not silently "passed"
 });
+
+import { runDisambigEval } from "../bin/gtir.mjs";
+
+test("runDisambigEval replays disambiguation over a seeded store and scores a golden", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-cli-dz-"));
+  const cfg = loadConfig(repo);
+  const store = await openStore(cfg);
+  await store.upsertRows([
+    { id: "1", path: "use.mjs", line_start: 1, line_end: 2, language: "js", text: "function caller(){ return encode(1); }", embedding: [1, 0, 0], mtime_ms: 1, content_hash: "hcall" },
+    { id: "2", path: "a.mjs",   line_start: 1, line_end: 2, language: "js", text: "function encode(x){ return x; }",        embedding: [1, 0, 0], mtime_ms: 1, content_hash: "ha" },
+    { id: "3", path: "b.mjs",   line_start: 1, line_end: 2, language: "js", text: "function encode(y){ return y; }",        embedding: [0, 1, 0], mtime_ms: 1, content_hash: "hb" },
+  ]);
+  await store.upsertEdges([
+    { kind: "imports", conf: "resolved", from_path: "use.mjs", from_lines: "1", from_symbol: "a", to_path: "a", to_lines: "0-0", to_symbol: null, ref_name: "a", candidates: [], content_hash: "hcall" },
+    { kind: "imports", conf: "resolved", from_path: "use.mjs", from_lines: "1", from_symbol: "b", to_path: "b", to_lines: "0-0", to_symbol: null, ref_name: "b", candidates: [], content_hash: "hcall" },
+    { kind: "calls", conf: "ambiguous", from_path: "use.mjs", from_lines: "1", from_symbol: "caller", to_path: null, to_lines: null, to_symbol: null, ref_name: "encode", candidates: ["a.mjs", "b.mjs"], content_hash: "hcall" },
+  ]);
+  const goldenPath = join(repo, "disambig-golden.json");
+  writeFileSync(goldenPath, JSON.stringify([{ from: "use.mjs", symbol: "encode", expect: "a.mjs" }]));
+  const basePath = join(repo, "disambig-baseline.json");
+
+  const code = await runDisambigEval({ repo, golden: goldenPath, baseline: basePath, noBuild: true, save: true });
+  assert.equal(code, 0);
+  assert.ok(existsSync(basePath));
+  const saved = JSON.parse(readFileSync(basePath, "utf8"));
+  assert.equal(saved.n, 1);
+  assert.equal(saved.cells.tp, 1);
+  assert.equal(saved.precision, 1);
+  assert.equal(saved.recall, 1);
+
+  const code2 = await runDisambigEval({ repo, golden: goldenPath, baseline: basePath, noBuild: true });
+  assert.equal(code2, 0);
+});
+
+test("runDisambigEval errors (exit 2) when the golden file is missing", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-cli-dz2-"));
+  const code = await runDisambigEval({ repo, golden: join(repo, "nope.json"), noBuild: true });
+  assert.equal(code, 2);
+});
+
+test("runDisambigEval --tune sweeps threshold/margin and returns 0", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-cli-dzt-"));
+  const cfg = loadConfig(repo);
+  const store = await openStore(cfg);
+  await store.upsertRows([
+    { id: "1", path: "use.mjs", line_start: 1, line_end: 2, language: "js", text: "function caller(){ return enc(1); }", embedding: [1, 0, 0], mtime_ms: 1, content_hash: "hcall" },
+    { id: "2", path: "a.mjs",   line_start: 1, line_end: 2, language: "js", text: "function enc(x){ return x; }",        embedding: [1, 0, 0], mtime_ms: 1, content_hash: "ha" },
+    { id: "3", path: "b.mjs",   line_start: 1, line_end: 2, language: "js", text: "function enc(y){ return y; }",        embedding: [0, 1, 0], mtime_ms: 1, content_hash: "hb" },
+  ]);
+  await store.upsertEdges([
+    { kind: "imports", conf: "resolved", from_path: "use.mjs", from_lines: "1", from_symbol: "a", to_path: "a", to_lines: "0-0", to_symbol: null, ref_name: "a", candidates: [], content_hash: "hcall" },
+    { kind: "imports", conf: "resolved", from_path: "use.mjs", from_lines: "1", from_symbol: "b", to_path: "b", to_lines: "0-0", to_symbol: null, ref_name: "b", candidates: [], content_hash: "hcall" },
+    { kind: "calls", conf: "ambiguous", from_path: "use.mjs", from_lines: "1", from_symbol: "caller", to_path: null, to_lines: null, to_symbol: null, ref_name: "enc", candidates: ["a.mjs", "b.mjs"], content_hash: "hcall" },
+  ]);
+  const goldenPath = join(repo, "disambig-golden.json");
+  writeFileSync(goldenPath, JSON.stringify([{ from: "use.mjs", symbol: "enc", expect: "a.mjs" }]));
+
+  const code = await runDisambigEval({ repo, golden: goldenPath, noBuild: true, tune: true });
+  assert.equal(code, 0);
+});
