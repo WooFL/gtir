@@ -52,7 +52,9 @@ function addCppBinding(node, bindings) {
 }
 
 // Collect explicit type bindings in a function_definition: its parameters + body declarations. Does
-// NOT descend into lambda_expression (a same-name lambda param must not shadow an outer binding).
+// NOT descend into lambda_expression, so a lambda's params never overwrite an outer binding — outer
+// calls stay correctly typed. Known limitation: a call INSIDE a lambda still sees the outer bindings
+// (the enclosing-function walk passes through the lambda); same trade-off as the Go resolver.
 function collectCppBindings(fn) {
   const bindings = new Map();
   const stack = [fn];

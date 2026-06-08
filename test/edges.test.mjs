@@ -395,3 +395,10 @@ test("extractCodeEdges (cpp): namespaced out-of-class def this-> → null (defer
   const edges = await edgesFor("cpp", `void Ns::Foo::m() { this->bar(); }`, "a.cpp");
   assert.equal(edges.find((e) => e.refName === "bar").receiverType, null);
 });
+
+test("extractCodeEdges (cpp): nested lambda param does not shadow the outer receiver", async () => {
+  const src = `void use(Foo* f) { auto g = [](Bar* f) { f->inner(); }; (void)g; f->bar(); }`;
+  const edges = await edgesFor("cpp", src, "a.cpp");
+  const outer = edges.find((e) => e.kind === "calls" && e.refName === "bar");
+  assert.equal(outer.receiverType, "Foo"); // outer f (Foo*), not shadowed by the lambda's Bar* f
+});
