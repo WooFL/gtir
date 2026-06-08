@@ -489,6 +489,64 @@ if (graph) { recompute(); setTimeout(() => fitAll(0), 100); setTimeout(() => fit
 </body></html>`;
 }
 
+// Escape a node label for use inside a Mermaid double-quoted label: replace " with #quot;,
+// strip newlines, and truncate to ~60 chars with an ellipsis.
+function escapeMermaidLabel(raw) {
+  let s = String(raw ?? "").replace(/[\r\n]+/g, " ").replace(/"/g, "#quot;");
+  if (s.length > 62) s = s.slice(0, 61) + "…";
+  return s;
+}
+
+// Pure Mermaid flowchart renderer. Takes the same { nodes, edges, meta } shape that
+// renderHtml receives (i.e. nodes from buildGraph — with .id/.label/.cls/.degree/.cluster
+// and edges with .source/.target/.kind/.conf). Returns a string.
+//
+// - IDs are always n<index> (never raw node ids) so they are Mermaid-safe identifiers.
+// - Labels are double-quoted and " is escaped as #quot;.
+// - Edges are sorted by [sourceIdx, targetIdx, kind] for deterministic output.
+// - Empty graph → valid flowchart with a %% no edges comment (does not throw).
+// - meta.truncated → prepends a %% capped to N nodes comment.
+export function renderMermaid({ nodes, edges, meta = {} } = {}) {
+  const ns = nodes ?? [];
+  const es = edges ?? [];
+
+  // Build a stable node-id → index map (insertion order = the order nodes arrive).
+  const nodeIdx = new Map(ns.map((n, i) => [n.id, i]));
+
+  const lines = ["flowchart LR"];
+
+  // Optional cap comment.
+  if (meta && meta.truncated) {
+    lines.push(`%% capped to ${ns.length} nodes (dropped ${meta.dropped ?? 0})`);
+  }
+
+  // Node declarations: n<i>["<escaped-label>"]
+  for (let i = 0; i < ns.length; i++) {
+    lines.push(`  n${i}["${escapeMermaidLabel(ns[i].label)}"]`);
+  }
+
+  // Edge declarations: sorted for determinism.
+  if (es.length === 0) {
+    lines.push("  %% no edges");
+  } else {
+    const sorted = [...es].sort((a, b) => {
+      const ai = nodeIdx.get(a.source) ?? 0, bi = nodeIdx.get(b.source) ?? 0;
+      if (ai !== bi) return ai - bi;
+      const at = nodeIdx.get(a.target) ?? 0, bt = nodeIdx.get(b.target) ?? 0;
+      if (at !== bt) return at - bt;
+      return (a.kind ?? "") < (b.kind ?? "") ? -1 : (a.kind ?? "") > (b.kind ?? "") ? 1 : 0;
+    });
+    for (const e of sorted) {
+      const si = nodeIdx.get(e.source);
+      const ti = nodeIdx.get(e.target);
+      if (si === undefined || ti === undefined) continue; // edge refers to unknown node — skip
+      lines.push(`  n${si} -->|${e.kind ?? "edge"}| n${ti}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
 // Map raw edge rows → { nodes: [...], edges: [...] }. Nodes are de-duped by id; each
 // accumulates its source refs (for tooltips) and any candidate paths (ambiguous/external).
 export function mapEdges(rows) {

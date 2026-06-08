@@ -21,7 +21,7 @@ import { runDoctor, preflight } from "../src/doctor.mjs";
 import { indexEdges } from "../src/indexer.mjs";
 import { memberCallStats } from "../src/callstats.mjs";
 import { fetchGrammars } from "../src/fetch-grammars.mjs";
-import { buildGraph, renderHtml } from "../src/graph.mjs";
+import { buildGraph, renderHtml, renderMermaid } from "../src/graph.mjs";
 import { impactQuery, orphansQuery, cyclesQuery, graphForSearch } from "../src/graph-queries.mjs";
 import {
   gtirMcpEntry, gtirHookEntry, gtirClaudeMdBody,
@@ -84,7 +84,7 @@ export async function runSetup({ repo } = {}) {
   return { model: cfg.model, ollamaUrl: cfg.ollamaUrl, dim };
 }
 
-export async function runGraph({ repo, out = "gtir-graph.html", focus = null, depth = 2, rollup = false,
+export async function runGraph({ repo, out = null, format = "html", focus = null, depth = 2, rollup = false,
   maxNodes = Infinity, kind = null, conf = null, pathPrefix = null, edgesImpl = null } = {}) {
   const cfg = loadConfig(repo);
   const edges = edgesImpl ? await edgesImpl() : await (await openStore(cfg)).loadEdges();
@@ -93,6 +93,20 @@ export async function runGraph({ repo, out = "gtir-graph.html", focus = null, de
   const graph = buildGraph(edges, { focus, depth, rollup, maxNodes, kind, conf, pathPrefix });
   if (focus && graph.nodes.length === 0) throw new Error(`no symbol matching '${focus}' in the edge graph`);
 
+  const meta = { truncated: graph.truncated, dropped: graph.dropped };
+
+  if (format === "mermaid") {
+    const mmd = renderMermaid({ nodes: graph.nodes, edges: graph.edges, meta });
+    const dest = out ?? "gtir-graph.mmd";
+    if (dest === "-") {
+      process.stdout.write(mmd + "\n");
+    } else {
+      writeFileSync(dest, mmd);
+    }
+    return { out: dest, nodes: graph.nodes.length, edges: graph.edges.length, truncated: graph.truncated, dropped: graph.dropped };
+  }
+
+  // Default: HTML format.
   const cosmosPath = fileURLToPath(new URL("../vendor/cosmos.min.js", import.meta.url));
   let cosmosSource;
   try { cosmosSource = readFileSync(cosmosPath, "utf8"); }
@@ -101,9 +115,10 @@ export async function runGraph({ repo, out = "gtir-graph.html", focus = null, de
     throw new Error(`cannot read vendored cosmos at ${cosmosPath}: ${e.message}`);
   }
 
-  const html = renderHtml({ nodes: graph.nodes, edges: graph.edges, meta: { truncated: graph.truncated, dropped: graph.dropped } }, cosmosSource);
-  writeFileSync(out, html);
-  return { out, nodes: graph.nodes.length, edges: graph.edges.length, truncated: graph.truncated, dropped: graph.dropped };
+  const dest = out ?? "gtir-graph.html";
+  const html = renderHtml({ nodes: graph.nodes, edges: graph.edges, meta }, cosmosSource);
+  writeFileSync(dest, html);
+  return { out: dest, nodes: graph.nodes.length, edges: graph.edges.length, truncated: graph.truncated, dropped: graph.dropped };
 }
 
 // `gtir callstats --repo <path> [--json] [--lang <id>]`: report member-call resolution coverage over
@@ -267,6 +282,7 @@ function parseArgs(argv) {
     else if (a === "--max-nodes") { const v = Number(argv[++i]); if (Number.isFinite(v)) args.maxNodes = v; }
     else if (a === "--kind") args.kind = argv[++i].split(",").map((s) => s.trim()).filter(Boolean);
     else if (a === "--conf") args.conf = argv[++i].split(",").map((s) => s.trim()).filter(Boolean);
+    else if (a === "--format") args.format = argv[++i];
     else if (a === "--downstream") args.downstream = true;
     else if (a === "--include-ambiguous") args.includeAmbiguous = true;
     else if (a === "--path") args.path = argv[++i];
@@ -907,7 +923,8 @@ async function main() {
       }
       case "graph": {
         const r = await runGraph({
-          repo, out: args.out, focus: args.focus ?? null, depth: args.depth ?? 2,
+          repo, out: args.out ?? null, format: args.format ?? "html",
+          focus: args.focus ?? null, depth: args.depth ?? 2,
           rollup: !!args.rollup, maxNodes: args.maxNodes ?? Infinity,
           kind: args.kind ?? null, conf: args.conf ?? null, pathPrefix: args.pathPrefix ?? null,
         });
@@ -955,7 +972,7 @@ async function main() {
           "  gtir eval    --repo <project> [--golden <f>] [-k 10] [--save] [--no-build] [--json]",
           "  gtir eval    --repo <project> --tune [\"ftsWeight=0,0.2;ftsWeightMixed=0,0.3\"]   # sweep fusion weights on the golden set",
           "  gtir eval    --repo <project> --disambig [--tune] [--save] [--no-build]   # score ambiguous→inferred promotion",
-          "  gtir graph   --repo <project> [--out FILE] [--focus SYM [--depth 2]] [--rollup] [--max-nodes 400] [--kind calls,imports] [--conf ambiguous] [--path-prefix P]",
+          "  gtir graph   --repo <project> [--out FILE] [--format <html|mermaid>] [--focus SYM [--depth 2]] [--rollup] [--max-nodes 400] [--kind calls,imports] [--conf ambiguous] [--path-prefix P]",
           "  gtir callstats --repo <project> [--json] [--lang <id>]   # member-call resolution rate + unresolved-reason breakdown (deterministic, no Ollama at resolve time)",
         ].join("\n") + "\n");
         process.exit(cmd ? 1 : 0);
