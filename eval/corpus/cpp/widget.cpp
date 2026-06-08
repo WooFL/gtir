@@ -1,3 +1,5 @@
+#include <memory>
+
 struct Widget {
   void run() {}
 };
