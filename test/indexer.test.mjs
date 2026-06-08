@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as lancedb from "@lancedb/lancedb";
 import { loadConfig } from "../src/config.mjs";
-import { buildIndex } from "../src/indexer.mjs";
+import { buildIndex, indexEdges } from "../src/indexer.mjs";
 import { openStore } from "../src/store.mjs";
 
 // Deterministic fake embedder: dim-3 vector seeded by text length.
@@ -647,6 +647,63 @@ test("buildIndex: a repo with code keeps qwen and writes no config", async () =>
     const meta = await openStore(loadConfig(repo)).then((s) => s.readMeta());
     assert.equal(meta.model, "qwen3-embedding:0.6b");
     assert.equal(existsSync(join(repo, ".gtir", "config.json")), false);
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
+test("indexEdges collect: returns in-memory rows with isMethod/receiverType, does not persist, no embed", async () => {
+  // A genuinely-ambiguous C++ member call: e->flush() with two flush() defs (Encoder, Sink), pinned
+  // to Encoder by the receiver type. The resolved row must still carry isMethod (and receiverType),
+  // which persist/toEdgeRow would strip — that's the whole point of the collect seam.
+  const repo = mkdtempSync(join(tmpdir(), "gtir-collect-"));
+  try {
+    writeFileSync(join(repo, "encoder.cpp"), `class Encoder { public: int flush(); };\nint Encoder::flush() { return 1; }\n`);
+    writeFileSync(join(repo, "sink.cpp"), `class Sink { public: int flush(); };\nint Sink::flush() { return 2; }\n`);
+    writeFileSync(join(repo, "use.cpp"), `int run(Encoder* e) { return e->flush(); }\n`);
+    const cfg = loadConfig(repo);
+    cfg.embedImpl = (texts) => Promise.resolve(texts.map(() => [1, 0, 0]));
+    cfg.minChars = 1;
+    // Build the index first (collect mode reads the persisted chunks the resolver indexes need).
+    await buildIndex(cfg, { rebuild: true });
+
+    const store = await openStore(cfg);
+    const edgesBefore = await store.loadEdges();
+    const countBefore = edgesBefore.length;
+    assert.ok(countBefore > 0, "build persisted some edges");
+
+    // A counting embedder: collect mode must never invoke the embedding backend (disambiguation skipped).
+    const embedCalls = { n: 0 };
+    cfg.embedImpl = (texts) => { embedCalls.n += texts.length; return Promise.resolve(texts.map(() => [1, 0, 0])); };
+
+    const result = await indexEdges(cfg, { rebuild: true, collect: true });
+    const rows = Array.isArray(result) ? result : result.rows;
+    assert.ok(Array.isArray(rows), "collect mode returns a rows array (or { rows })");
+
+    const flush = rows.find((e) => e.kind === "calls" && e.from_path === "use.cpp" && e.ref_name === "flush");
+    assert.ok(flush, "collect rows include the e->flush() member call");
+    assert.equal(flush.isMethod, true, "member-call rows keep isMethod (not stripped by persist)");
+    assert.equal(flush.receiverType, "Encoder", "member-call rows keep receiverType");
+    assert.equal(flush.conf, "resolved", "the full resolver chain ran (type-pinned to Encoder)");
+
+    assert.equal(embedCalls.n, 0, "collect mode must not invoke the embedding backend");
+
+    // Persist untouched: the store's edge count is exactly what the build left.
+    const edgesAfter = await store.loadEdges();
+    assert.equal(edgesAfter.length, countBefore, "collect mode did NOT persist (edge count unchanged)");
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
+test("indexEdges collect: empty repo returns [] (not undefined)", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-collect-empty-"));
+  try {
+    writeFileSync(join(repo, "readme.txt"), "no indexable code here\n");
+    const cfg = loadConfig(repo);
+    cfg.embedImpl = fakeEmbed;
+    cfg.minChars = 1;
+    await buildIndex(cfg, { rebuild: true });
+    const result = await indexEdges(cfg, { rebuild: true, collect: true });
+    const rows = Array.isArray(result) ? result : result.rows;
+    assert.ok(Array.isArray(rows), "collect returns an array even with nothing to extract");
+    assert.equal(rows.length, 0);
   } finally { rmSync(repo, { recursive: true, force: true }); }
 });
 

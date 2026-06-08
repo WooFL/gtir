@@ -55,6 +55,19 @@ test("resolveEdges: unknown call name is external", () => {
   assert.equal(e.to_path, null);
 });
 
+test("resolveEdges: an external MEMBER call carries isMethod/receiver/receiverType (for callstats)", () => {
+  // A method with no in-repo def (e.g. std::vector::push_back) → external. The member metadata must
+  // survive onto the in-memory row so the callstats benchmark counts it as a member call (these
+  // fields are in-memory only; toEdgeRow strips them before persist).
+  const raw = [{ kind: "calls", refName: "push_back", fromPath: "src/x.cpp", fromLine: 5,
+    isMethod: true, receiver: "v", receiverType: "std::vector", enclosingClass: null, memberOp: "." }];
+  const [e] = resolveEdges(raw, symIndex, new Map());
+  assert.equal(e.conf, "external");
+  assert.equal(e.isMethod, true);
+  assert.equal(e.receiver, "v");
+  assert.equal(e.receiverType, "std::vector");
+});
+
 test("resolveEdges: note link resolves via noteIndex", () => {
   const notes = new Map([["token auth", [{ path: "wiki/Token Auth.md" }]]]);
   const raw = [{ kind: "links", target: "Token Auth", fromPath: "wiki/a.md", fromLine: 2 }];
