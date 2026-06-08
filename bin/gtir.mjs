@@ -13,7 +13,9 @@ import { watchRepo, watcherLive } from "../src/watch.mjs";
 import { probeDim } from "../src/embed.mjs";
 import { runInit, ensureGitignore } from "../src/init.mjs";
 import { resolveIndexes, serveStdio, printConfig, startWatchers, preflightIndexes } from "../src/mcp.mjs";
-import { evalGolden, flattenMetrics, compareBaseline, compareTiers, evalEdgeExtraction } from "../src/eval.mjs";
+import { evalGolden, flattenMetrics, compareBaseline, compareTiers, evalEdgeExtraction, evalDisambiguation, rankDisambigOperatingPoint } from "../src/eval.mjs";
+import { disambiguateEdges } from "../src/disambiguate.mjs";
+import { declaredSymbols } from "../src/symbols.mjs";
 import { runDemo, formatDemo } from "../src/demo.mjs";
 import { runDoctor, preflight } from "../src/doctor.mjs";
 import { fetchGrammars } from "../src/fetch-grammars.mjs";
@@ -153,6 +155,7 @@ function parseArgs(argv) {
     else if (a === "--limit") { const v = Number(argv[++i]); if (Number.isFinite(v)) args.limit = v; }
     else if (a === "--centrality") args.centrality = true;
     else if (a === "--edges") args.edges = true;
+    else if (a === "--disambig") args.disambig = true;
     else args._.push(a);
   }
   return args;
@@ -324,6 +327,116 @@ function printEdgeEval(m) {
   out.push(`  conf split: resolved=${m.split.resolved} inferred=${m.split.inferred} ambiguous=${m.split.ambiguous} external=${m.split.external}`);
   process.stderr.write(out.join("\n") + "\n");
 }
+
+// Read the disambiguator's inputs from a store built with cfg.disambiguate=false (raw ambiguous
+// edges persisted). Mirrors indexEdges' input-building (symbolIndex/callSiteVec from chunks,
+// importMap from import edges) but read-only over the full stored set.
+async function gatherDisambigInputs(store) {
+  const symbolIndex = new Map(), callSiteVec = new Map();
+  const tbl = await store.chunksTable();
+  if (tbl) {
+    const rows = await tbl.query().select(["path", "line_start", "line_end", "text", "embedding", "content_hash"]).toArray();
+    for (const r of rows) {
+      if (r.content_hash && r.embedding) callSiteVec.set(r.content_hash, Array.from(r.embedding));
+      for (const name of declaredSymbols(r.text)) {
+        if (!symbolIndex.has(name)) symbolIndex.set(name, []);
+        symbolIndex.get(name).push({ path: r.path, line_start: Number(r.line_start), line_end: Number(r.line_end),
+          embedding: r.embedding ? Array.from(r.embedding) : null, content_hash: r.content_hash || null });
+      }
+    }
+  }
+  const edges = await store.loadEdges();
+  const importMap = new Map();
+  for (const e of edges) {
+    if (e.kind === "imports" && e.to_path) {
+      let s = importMap.get(e.from_path);
+      if (!s) { s = new Set(); importMap.set(e.from_path, s); }
+      s.add(e.to_path);
+    }
+  }
+  const ambiguousRows = edges.filter((e) => e.kind === "calls" && e.conf === "ambiguous");
+  return { symbolIndex, callSiteVec, importMap, ambiguousRows };
+}
+
+// `gtir eval --disambig`: score the ambiguous→inferred promotion against a precision-first golden.
+// Builds the corpus index with disambiguation OFF so raw ambiguous rows persist, then replays the
+// real disambiguateEdges and scores. --tune sweeps threshold × margin. Returns an exit code.
+export async function runDisambigEval({ repo, golden: goldenArg = null, baseline: baselineArg = null, noBuild = false, save = false, json = false, tune = false, tuneSpec = null } = {}) {
+  const root = repo || process.cwd();
+  const cfg = loadConfig(root);
+  cfg.disambiguate = false; // persist RAW ambiguous edges (full candidate sets) for the replay
+  const goldenPath = goldenArg || path.join(root, "eval", "disambig-golden.json");
+  if (!existsSync(goldenPath)) {
+    process.stderr.write(`eval --disambig: no golden file at ${goldenPath} — pass --golden <file>\n`);
+    return 2;
+  }
+  let golden;
+  try { golden = JSON.parse(readFileSync(goldenPath, "utf8")); }
+  catch (e) { process.stderr.write(`eval --disambig: cannot parse ${goldenPath}: ${e.message}\n`); return 2; }
+  if (!Array.isArray(golden) || golden.length === 0) {
+    process.stderr.write("eval --disambig: golden set is empty\n"); return 2;
+  }
+
+  if (!noBuild) await buildIndex(cfg, { rebuild: false });
+
+  const store = await openStore(cfg);
+  const inputs = await gatherDisambigInputs(store);
+  if (tune) return runDisambigTune({ cfg, golden, inputs, spec: tuneSpec });
+
+  if (inputs.ambiguousRows.length === 0) {
+    process.stderr.write(`eval --disambig: WARNING no ambiguous edges in index at ${cfg.indexDir} — the corpus produced nothing to disambiguate\n`);
+  }
+  const replayed = disambiguateEdges(inputs.ambiguousRows, {
+    symbolIndex: inputs.symbolIndex, callSiteVec: inputs.callSiteVec, importMap: inputs.importMap,
+    threshold: cfg.disambigThreshold, margin: cfg.disambigMargin,
+  });
+  const metrics = evalDisambiguation(replayed, golden);
+  metrics.model = ((await store.readMeta()) || {}).model || cfg.model;
+
+  printDisambigEval(metrics);
+  if (json) process.stdout.write(JSON.stringify(metrics) + "\n");
+
+  const baselinePath = baselineArg || path.join(root, "eval", "disambig-baseline.json");
+  if (save) {
+    writeFileSync(baselinePath, JSON.stringify(metrics, null, 2) + "\n");
+    process.stderr.write(`eval --disambig: saved baseline → ${baselinePath} (n=${metrics.n}, model=${metrics.model})\n`);
+    return 0;
+  }
+
+  let base = null;
+  if (existsSync(baselinePath)) {
+    try { base = JSON.parse(readFileSync(baselinePath, "utf8")); } catch { /* treat as none */ }
+  }
+  if (!base) {
+    process.stderr.write("eval --disambig: no baseline to compare (run with --save to set one)\n");
+    return 0;
+  }
+  if (base.model && base.model !== metrics.model) {
+    process.stderr.write(`eval --disambig: WARNING baseline model (${base.model}) != current (${metrics.model}) — cross-model comparison\n`);
+  }
+  if (typeof base.precision !== "number") {
+    process.stderr.write("eval --disambig: baseline missing numeric precision — re-save it with --save; skipping gate\n");
+    return 0;
+  }
+  // Gate: promotion precision must not drop beyond tol (mis-promotion is the costly error).
+  const tol = 0.02;
+  if (metrics.precision < base.precision - tol) {
+    process.stderr.write(`eval --disambig: REGRESSION precision ${base.precision} → ${metrics.precision}\n`);
+    return 1;
+  }
+  process.stderr.write("eval --disambig: no regressions\n");
+  return 0;
+}
+
+function printDisambigEval(m) {
+  const c = m.cells;
+  process.stderr.write(
+    `disambig eval: n=${m.n} precision=${m.precision} recall=${m.recall} abstain=${m.abstain_rate} promotions=${m.promotions} model=${m.model}\n`
+    + `  confusion: tp=${c.tp} fp=${c.fp} fn=${c.fn} tn=${c.tn}\n`);
+}
+
+// TEMPORARY stub — replaced by the real sweep in Task 5.
+async function runDisambigTune() { process.stderr.write("eval --disambig --tune: not yet implemented\n"); return 0; }
 
 // Memoizing embed wrapper: the golden query set is fixed across combos, so embed each unique
 // text once and replay from cache. Turns an N-combo sweep from N×(embed all queries) into
@@ -539,6 +652,7 @@ async function main() {
         return; // keep the process alive on stdin; do not fall through to exit
       }
       case "eval": {
+        if (args.disambig) process.exit(await runDisambigEval(args));
         process.exit(await (args.edges ? runEdgeEval(args) : runEval(args)));
       }
       case "init": {
