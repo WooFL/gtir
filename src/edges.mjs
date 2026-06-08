@@ -244,7 +244,7 @@ function resolveSourceStem(fromPath, source) {
   return stripExt(joined);
 }
 
-const noteKey = (s) => basename(String(s)).replace(/\.(md|mdx)$/i, "").toLowerCase();
+export const noteKey = (s) => basename(String(s)).replace(/\.(md|mdx)$/i, "").toLowerCase();
 
 function row(kind, from, to, conf, candidates, contentHash, refName, score = null, isMethod = false, receiverType = null, receiverFactory = null) {
   return {
