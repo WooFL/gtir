@@ -13,5 +13,9 @@
   { "from": "text/slugify.ts", "to": "text/slugify.ts", "symbol": "slugify", "kind": "calls" },
   { "from": "gpu/spatial_hash.cpp", "to": "gpu/spatial_hash.cpp", "symbol": "cellHash", "kind": "calls" },
   { "from": "graph/bfs.py", "to": null, "symbol": "deque", "kind": "calls" },
-  { "from": "http/retry.ts", "to": null, "symbol": "fetch", "kind": "calls" }
+  { "from": "http/retry.ts", "to": null, "symbol": "fetch", "kind": "calls" },
+  { "from": "go/use_batcher.go", "symbol": "Flush", "to": "go/batcher.go", "kind": "calls" },
+  { "from": "go/use_logger.go", "symbol": "Flush", "to": "go/logger.go", "kind": "calls" },
+  { "from": "go/use_batcher.go", "symbol": "Add", "to": "go/batcher.go", "kind": "calls" },
+  { "from": "go/external.go", "symbol": "WriteString", "to": null, "kind": "calls" }
 ]
