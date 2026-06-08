@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cpSync, mkdtempSync } from "node:fs";
+import { cpSync, mkdtempSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
@@ -88,4 +88,39 @@ test("runSearch --edges/--centrality plumb graph data into results", async () =>
   const hub = hits.find((h) => h.path === "hub.mjs");
   assert.ok(hub.callers.length >= 1);
   assert.ok(hub.centrality > 1);
+});
+
+import { runEdgeEval } from "../bin/gtir.mjs";
+
+test("runEdgeEval scores seeded edges, writes a baseline, then gates clean against it", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-cli-ee-"));
+  const cfg = loadConfig(repo);
+  const store = await openStore(cfg);
+  await store.upsertEdges([
+    { kind: "calls", conf: "resolved", from_path: "a.mjs", from_lines: "1", from_symbol: "f", to_path: "b.mjs", to_lines: "1", to_symbol: "g", ref_name: "g", candidates: [], content_hash: "h1" },
+    { kind: "calls", conf: "external", from_path: "x.mjs", from_lines: "1", from_symbol: "h", to_path: null, to_lines: null, to_symbol: null, ref_name: "ext", candidates: [], content_hash: "h2" },
+  ]);
+  const goldenPath = join(repo, "edges-golden.json");
+  writeFileSync(goldenPath, JSON.stringify([
+    { from: "a.mjs", to: "b.mjs", symbol: "g", kind: "calls" },
+    { from: "x.mjs", to: null, symbol: "ext", kind: "calls" },
+  ]));
+  const basePath = join(repo, "edges-baseline.json");
+
+  const code = await runEdgeEval({ repo, golden: goldenPath, baseline: basePath, noBuild: true, save: true });
+  assert.equal(code, 0);
+  assert.ok(existsSync(basePath));
+  const saved = JSON.parse(readFileSync(basePath, "utf8"));
+  assert.equal(saved.n, 2);
+  assert.equal(saved.recall, 1);
+  assert.equal(saved.wrong_rate, 0);
+
+  const code2 = await runEdgeEval({ repo, golden: goldenPath, baseline: basePath, noBuild: true });
+  assert.equal(code2, 0);
+});
+
+test("runEdgeEval errors (exit 2) when the golden file is missing", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-cli-ee2-"));
+  const code = await runEdgeEval({ repo, golden: join(repo, "nope.json"), noBuild: true });
+  assert.equal(code, 2);
 });
