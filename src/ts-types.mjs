@@ -89,7 +89,8 @@ export function inferTsReceiverType(callNode, receiverName) {
 }
 
 // TS/JS source-file extensions — used to gate resolveTsMethods to TS/JS callers only.
-const TS_EXTS = /\.(m?[jt]sx?|d\.ts)$/i;
+// Matches .ts/.tsx/.js/.jsx plus the .mjs/.cjs/.mts/.cts module variants (.d.ts via its .ts suffix).
+const TS_EXTS = /\.[cm]?[jt]sx?$/i;
 
 // Upgrade an ambiguous TS/JS member-call row to resolved when the receiver type pins a unique file.
 // Chunk-robust: TS/JS methods are in-class only, so instead of a `class#method` key (which breaks when

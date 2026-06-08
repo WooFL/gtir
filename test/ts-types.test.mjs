@@ -28,6 +28,14 @@ test("resolveTsMethods: unique class∩method file → resolved", () => {
   assert.equal(r.to_lines, "1-3");
   assert.deepEqual(r.candidates, []);
 });
+test("resolveTsMethods: .cjs CommonJS caller is gated in (not skipped) → resolved", () => {
+  const cjsClassFiles = new Map([["Encoder", new Set(["encoder.cjs"])]]);
+  const cjsCallFiles = new Map([["flush", [{ path: "encoder.cjs", line_start: 1, line_end: 3 }]]]);
+  const [r] = resolveTsMethods([ambRow({ receiverType: "Encoder", from_path: "use.cjs" })], cjsClassFiles, cjsCallFiles);
+  assert.equal(r.conf, "resolved");
+  assert.equal(r.to_path, "encoder.cjs");
+  assert.equal(r.to_symbol, "flush");
+});
 test("resolveTsMethods: method not defined in the class's file → ambiguous", () => {
   const only = new Map([["flush", [{ path: "sink.ts", line_start: 1, line_end: 3 }]]]);
   const [r] = resolveTsMethods([ambRow({ receiverType: "Encoder" })], classFiles, only);
