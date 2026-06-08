@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { extractCppMethodDefs, resolveCppMethods, extractCppReturnTypes, extractCppBases, extractCppVirtuals, extractCppOverrides, resolveCppDispatch } from "../src/cpp-types.mjs";
+import { extractCppMethodDefs, resolveCppMethods, extractCppReturnTypes, extractCppBases, extractCppVirtuals, extractCppOverrides, resolveCppDispatch, extractCppFields } from "../src/cpp-types.mjs";
 
 test("extractCppMethodDefs: out-of-class definition", () => {
   assert.deepEqual(extractCppMethodDefs(`int Foo::bar(int x) { return x; }`), [{ cls: "Foo", method: "bar" }]);
@@ -269,4 +269,55 @@ test("resolveCppDispatch: receiver type has no derived → unchanged", () => {
 test("resolveCppDispatch: non-.cpp caller gated out", () => {
   const [r] = resolveCppDispatch([cRow({ from_path: "use.ts" })], dMethodIdx, dDerived, dVirtual, dOverride);
   assert.equal(r.conf, "ambiguous");
+});
+
+// extractCppFields: member-field extractor tests
+test("extractCppFields: bare pointer field; method decl excluded", () => {
+  const r = extractCppFields(`class C { Widget* m_w; void run(); };`);
+  assert.deepEqual(r, [{ cls: "C", field: "m_w", type: "Widget", smartPtr: false }]);
+});
+test("extractCppFields: std::shared_ptr field", () => {
+  const r = extractCppFields(`class C { std::shared_ptr<Sink> s; };`);
+  assert.deepEqual(r, [{ cls: "C", field: "s", type: "Sink", smartPtr: true }]);
+});
+test("extractCppFields: reference field", () => {
+  const [r] = extractCppFields(`class C { Widget& ref; };`);
+  assert.equal(r.type, "Widget");
+  assert.equal(r.smartPtr, false);
+});
+test("extractCppFields: inline-body local NOT indexed", () => {
+  const r = extractCppFields(`class C { void run(){ Gadget* g; g->go(); } };`);
+  assert.deepEqual(r, []);
+});
+test("extractCppFields: field + inline method — only field returned", () => {
+  const r = extractCppFields(`class C { Widget* m_w; void run(){ Gadget* g; } };`);
+  assert.deepEqual(r, [{ cls: "C", field: "m_w", type: "Widget", smartPtr: false }]);
+});
+test("extractCppFields: access specifier ignored, field extracted", () => {
+  const r = extractCppFields(`class C { public: Widget* m_w; };`);
+  assert.deepEqual(r, [{ cls: "C", field: "m_w", type: "Widget", smartPtr: false }]);
+});
+test("extractCppFields: using declaration not a field", () => {
+  const r = extractCppFields(`class C { using X = int; Widget* m_w; };`);
+  assert.deepEqual(r, [{ cls: "C", field: "m_w", type: "Widget", smartPtr: false }]);
+});
+test("extractCppFields: static member not a field", () => {
+  const r = extractCppFields(`class C { static int n; Widget* m_w; };`);
+  assert.deepEqual(r, [{ cls: "C", field: "m_w", type: "Widget", smartPtr: false }]);
+});
+test("extractCppFields: qualified type skipped", () => {
+  const r = extractCppFields(`class C { Ns::Foo f; };`);
+  assert.deepEqual(r, []);
+});
+test("extractCppFields: initializer stripped before parsing", () => {
+  const r = extractCppFields(`class C { Widget* m_w = nullptr; };`);
+  assert.deepEqual(r, [{ cls: "C", field: "m_w", type: "Widget", smartPtr: false }]);
+});
+test("extractCppFields: no header, scopeClass fallback", () => {
+  // scopeClass mode: whole text treated as class-body interior
+  const r = extractCppFields(`Widget* m_w;`, "C");
+  assert.deepEqual(r, [{ cls: "C", field: "m_w", type: "Widget", smartPtr: false }]);
+});
+test("extractCppFields: no header, no scopeClass → empty", () => {
+  assert.deepEqual(extractCppFields(`Widget* m_w;`), []);
 });

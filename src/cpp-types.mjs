@@ -327,6 +327,124 @@ export function extractCppBases(text) {
   return out;
 }
 
+// Regex for a simple (non-qualified, non-template) type identifier — bare identifier only.
+const CPP_BARE_TYPE = /^[A-Za-z_]\w*$/;
+// std smart-pointer field wrapper: `[std::]unique_ptr<Foo>` / `shared_ptr<Foo>` / `weak_ptr<Foo>`.
+// Mirrors CPP_SMART_PTR_RET but for field declarations rather than return types.
+const CPP_SMART_PTR_FIELD = /^(?:std\s*::\s*)?(unique_ptr|shared_ptr|weak_ptr)\s*<\s*([A-Za-z_]\w*)\s*>$/;
+// Leading keywords that mean the statement is NOT an instance field.
+const CPP_FIELD_REJECT = new Set(["using", "typedef", "friend", "static", "enum", "struct", "class",
+  "constexpr", "inline", "virtual", "mutable"]);
+// Access specifier keywords that precede `:` (not a field statement).
+const CPP_ACCESS_KW = new Set(["public", "private", "protected"]);
+
+// Parse one candidate field statement (text of the declaration up to `;`, initializer truncated).
+// Returns {field, type, smartPtr} or null when the statement is not a simple instance field.
+function parseCppFieldStmt(raw) {
+  // truncate at first `=` so `Widget* m_w = nullptr` → `Widget* m_w`
+  const stmt = raw.includes("=") ? raw.slice(0, raw.indexOf("=")) : raw;
+  const s = stmt.trim();
+  if (!s) return null;
+  if (s.includes("(")) return null;                       // method decl / fn-pointer — skip
+  const tokens = s.match(/[A-Za-z_]\w*|[*&<>,:]/g) || []; // grab identifiers + punctuation tokens
+  if (!tokens.length) return null;
+  const first = tokens[0];
+  if (CPP_FIELD_REJECT.has(first)) return null;           // storage/decl keyword → not an instance field
+  // collect identifier tokens only (the structural punctuation tokens are for qualified-type detection)
+  const ids = tokens.filter((t) => /^[A-Za-z_]/.test(t));
+  if (ids.length < 2) return null;                        // need at least type + name
+  const field = ids[ids.length - 1];                     // last identifier is the field name
+  // rebuild the type expression: everything in `s` before the last occurrence of the field name,
+  // with trailing punctuation/whitespace stripped; this handles `Widget*`, `Widget &`, bare `Widget`
+  const lastIdx = s.lastIndexOf(field);
+  const typeRaw = s.slice(0, lastIdx).replace(/[\s*&,]+$/, "").trim();
+  if (!typeRaw) return null;
+  // qualified type (contains `::`) or non-allowlisted generic (`<`) → deferred, skip
+  if (typeRaw.includes("::") || typeRaw.includes("<")) {
+    const sp = typeRaw.match(CPP_SMART_PTR_FIELD);
+    if (sp) return { field, type: sp[2], smartPtr: true };
+    return null;
+  }
+  if (!CPP_BARE_TYPE.test(typeRaw)) return null;
+  return { field, type: typeRaw, smartPtr: false };
+}
+
+// Extract member-field declarations from a class body in `text`. Returns [{cls, field, type, smartPtr}].
+// Brace-depth tracking starting at depth 1 (just inside the class body's opening `{`) ensures that
+// declarations inside inline method/ctor bodies (depth ≥ 2) are never emitted as fields.
+// scopeClass: fallback class name when the chunk has no `class/struct Name` header (chunk-robustness,
+// same rule as extractCppMethodDefs). When scopeClass is used there are no body braces to scan, so the
+// entire text is treated as the class-body interior (each `;`-terminated statement is a candidate).
+export function extractCppFields(text, scopeClass = null, smartPtrs = DEFAULT_SMART_PTRS) {
+  const s = String(text || "");
+  const cm = s.match(CPP_CLASS);
+  const cls = cm ? cm[1] : scopeClass;
+  if (!cls) return [];
+
+  const out = [];
+
+  // scopeClass-only mode: no class header → treat entire text as class interior
+  if (!cm) {
+    for (const raw of s.split(";")) {
+      const r = parseCppFieldStmt(raw);
+      if (r) out.push({ cls, ...r });
+    }
+    return out;
+  }
+
+  // Find the opening `{` of the class body (after the header match)
+  const bodyStart = s.indexOf("{", cm.index + cm[0].length - 1);
+  if (bodyStart === -1) return [];
+
+  let depth = 1;                 // we start just inside the opening `{`
+  let buf = "";                  // accumulates characters at depth 1
+
+  for (let i = bodyStart + 1; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === "{") {
+      if (depth === 1) {
+        // opening an inline body — discard the pending statement buffer and skip until matching `}`
+        buf = "";
+        depth++;
+        // skip to the matching closing `}` for this inner body
+        let inner = 1;
+        i++;
+        while (i < s.length && inner > 0) {
+          if (s[i] === "{") inner++;
+          else if (s[i] === "}") inner--;
+          i++;
+        }
+        i--;                     // loop will increment again
+        depth--;                 // back to depth 1 after skip
+      } else {
+        depth++;
+      }
+    } else if (ch === "}") {
+      depth--;
+      if (depth === 0) break;    // end of class body
+    } else if (ch === ";" && depth === 1) {
+      // flush candidate statement
+      const trimmed = buf.trim();
+      // access specifier `public:` / `private:` / `protected:` — already cleared by `:` handler,
+      // but guard anyway
+      if (trimmed) {
+        const r = parseCppFieldStmt(trimmed);
+        if (r) out.push({ cls, ...r });
+      }
+      buf = "";
+    } else if (ch === ":" && depth === 1) {
+      // access specifier `public:` / `private:` / `protected:` → clear buffer; else keep `:` (e.g. `::`)
+      const kw = buf.trim();
+      if (CPP_ACCESS_KW.has(kw)) buf = "";
+      else buf += ch;
+    } else if (depth === 1) {
+      buf += ch;
+    }
+  }
+
+  return out;
+}
+
 // C++ source-file extensions — used to gate resolveCppMethods to C++ callers only.
 const CPP_EXTS = /\.(cpp|cc|cxx|c|h|hpp|hh|hxx|metal)$/i;
 
