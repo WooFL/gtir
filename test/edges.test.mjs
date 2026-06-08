@@ -356,3 +356,49 @@ test("extractCodeEdges (go): nested func-literal param does not shadow the outer
   const call = edges.find((e) => e.kind === "calls" && e.refName === "Send");
   assert.equal(call.receiverType, "Client"); // outer receiver, NOT the closure's *Counter
 });
+
+test("extractCodeEdges (cpp): typed pointer param → receiverType", async () => {
+  const edges = await edgesFor("cpp", `void use(Foo* f) { f->bar(); }`, "a.cpp");
+  const call = edges.find((e) => e.kind === "calls" && e.refName === "bar");
+  assert.equal(call.isMethod, true);
+  assert.equal(call.receiver, "f");
+  assert.equal(call.receiverType, "Foo");
+});
+test("extractCodeEdges (cpp): reference param → receiverType", async () => {
+  const edges = await edgesFor("cpp", `void use(Foo& g) { g.bar(); }`, "a.cpp");
+  assert.equal(edges.find((e) => e.refName === "bar").receiverType, "Foo");
+});
+test("extractCodeEdges (cpp): value local decl → receiverType", async () => {
+  const edges = await edgesFor("cpp", `void use() { Foo h; h.bar(); }`, "a.cpp");
+  assert.equal(edges.find((e) => e.refName === "bar").receiverType, "Foo");
+});
+test("extractCodeEdges (cpp): this-> → enclosing class (out-of-class def)", async () => {
+  const edges = await edgesFor("cpp", `void Foo::m() { this->bar(); }`, "a.cpp");
+  const call = edges.find((e) => e.refName === "bar");
+  assert.equal(call.receiver, "this");
+  assert.equal(call.receiverType, "Foo");
+});
+test("extractCodeEdges (cpp): auto receiver → receiverType null (deferred)", async () => {
+  const edges = await edgesFor("cpp", `void use() { auto x = mk(); x->bar(); }`, "a.cpp");
+  assert.equal(edges.find((e) => e.refName === "bar").receiverType, null);
+});
+test("extractCodeEdges (cpp): namespaced receiver type → null (deferred)", async () => {
+  const edges = await edgesFor("cpp", `void use(std::string s) { s.size(); }`, "a.cpp");
+  assert.equal(edges.find((e) => e.refName === "size").receiverType, null);
+});
+test("extractCodeEdges (cpp): pointer-init local decl → receiverType", async () => {
+  const edges = await edgesFor("cpp", `void use() { Foo* p = mk(); p->bar(); }`, "a.cpp");
+  assert.equal(edges.find((e) => e.refName === "bar").receiverType, "Foo");
+});
+
+test("extractCodeEdges (cpp): namespaced out-of-class def this-> → null (deferred non-goal)", async () => {
+  const edges = await edgesFor("cpp", `void Ns::Foo::m() { this->bar(); }`, "a.cpp");
+  assert.equal(edges.find((e) => e.refName === "bar").receiverType, null);
+});
+
+test("extractCodeEdges (cpp): nested lambda param does not shadow the outer receiver", async () => {
+  const src = `void use(Foo* f) { auto g = [](Bar* f) { f->inner(); }; (void)g; f->bar(); }`;
+  const edges = await edgesFor("cpp", src, "a.cpp");
+  const outer = edges.find((e) => e.kind === "calls" && e.refName === "bar");
+  assert.equal(outer.receiverType, "Foo"); // outer f (Foo*), not shadowed by the lambda's Bar* f
+});

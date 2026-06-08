@@ -417,9 +417,10 @@ import links the two files; otherwise a same-name coincidence (a builtin `Error`
 `ambiguous`. It is not an LSP. `find … references` prefers real call edges and falls back to the lexical
 sweep when none exist.
 
-For Go, method calls are additionally resolved by **receiver type** — `b.Flush()` where `b` is a typed
-parameter, `var`, or the enclosing method's receiver resolves to that type's method exactly (a precise
-`resolved` edge), before the embedding-disambiguation tier sees it.
+For Go and C++, method calls are additionally resolved by **receiver type** — `b.Flush()` (Go) or
+`e->flush()`/`this->flush()` (C++) where the receiver is a typed parameter, local declaration, or the
+enclosing method's receiver resolves to that type's method exactly (a precise `resolved` edge), before
+the embedding-disambiguation tier sees it.
 
 ### Inferred edges (embedding-disambiguation)
 
