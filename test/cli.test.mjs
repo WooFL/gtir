@@ -221,3 +221,24 @@ test("runDisambigEval errors (exit 2) when the golden file is missing", async ()
   const code = await runDisambigEval({ repo, golden: join(repo, "nope.json"), noBuild: true });
   assert.equal(code, 2);
 });
+
+test("runDisambigEval --tune sweeps threshold/margin and returns 0", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-cli-dzt-"));
+  const cfg = loadConfig(repo);
+  const store = await openStore(cfg);
+  await store.upsertRows([
+    { id: "1", path: "use.mjs", line_start: 1, line_end: 2, language: "js", text: "function caller(){ return enc(1); }", embedding: [1, 0, 0], mtime_ms: 1, content_hash: "hcall" },
+    { id: "2", path: "a.mjs",   line_start: 1, line_end: 2, language: "js", text: "function enc(x){ return x; }",        embedding: [1, 0, 0], mtime_ms: 1, content_hash: "ha" },
+    { id: "3", path: "b.mjs",   line_start: 1, line_end: 2, language: "js", text: "function enc(y){ return y; }",        embedding: [0, 1, 0], mtime_ms: 1, content_hash: "hb" },
+  ]);
+  await store.upsertEdges([
+    { kind: "imports", conf: "resolved", from_path: "use.mjs", from_lines: "1", from_symbol: "a", to_path: "a", to_lines: "0-0", to_symbol: null, ref_name: "a", candidates: [], content_hash: "hcall" },
+    { kind: "imports", conf: "resolved", from_path: "use.mjs", from_lines: "1", from_symbol: "b", to_path: "b", to_lines: "0-0", to_symbol: null, ref_name: "b", candidates: [], content_hash: "hcall" },
+    { kind: "calls", conf: "ambiguous", from_path: "use.mjs", from_lines: "1", from_symbol: "caller", to_path: null, to_lines: null, to_symbol: null, ref_name: "enc", candidates: ["a.mjs", "b.mjs"], content_hash: "hcall" },
+  ]);
+  const goldenPath = join(repo, "disambig-golden.json");
+  writeFileSync(goldenPath, JSON.stringify([{ from: "use.mjs", symbol: "enc", expect: "a.mjs" }]));
+
+  const code = await runDisambigEval({ repo, golden: goldenPath, noBuild: true, tune: true });
+  assert.equal(code, 0);
+});

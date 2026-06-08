@@ -438,8 +438,36 @@ function printDisambigEval(m) {
     + `  confusion: tp=${c.tp} fp=${c.fp} fn=${c.fn} tn=${c.tn}\n`);
 }
 
-// TEMPORARY stub — replaced by the real sweep in Task 5.
-async function runDisambigTune({ cfg, golden, inputs, spec } = {}) { process.stderr.write("eval --disambig --tune: not yet implemented\n"); return 0; }
+// `gtir eval --disambig --tune [spec]`: replay disambiguateEdges over a threshold × margin grid
+// against the already-gathered inputs (one embed pass, many combos — like fusion --tune), score
+// precision/recall per cell, and recommend the precision-first operating point.
+function runDisambigTune({ cfg, golden, inputs, spec } = {}) {
+  const axes = spec ? parseGridSpec(spec) : { disambigThreshold: [0.45, 0.5, 0.55, 0.6, 0.65], disambigMargin: [0.03, 0.05, 0.08] };
+  const combos = gridCombos(axes);
+  const rows = combos.map((w) => {
+    const replayed = disambiguateEdges(inputs.ambiguousRows, {
+      symbolIndex: inputs.symbolIndex, callSiteVec: inputs.callSiteVec, importMap: inputs.importMap,
+      threshold: w.disambigThreshold ?? cfg.disambigThreshold, margin: w.disambigMargin ?? cfg.disambigMargin,
+    });
+    const m = evalDisambiguation(replayed, golden);
+    return { threshold: w.disambigThreshold ?? cfg.disambigThreshold, margin: w.disambigMargin ?? cfg.disambigMargin,
+      precision: m.precision, recall: m.recall, promotions: m.promotions };
+  });
+  const ranked = rankDisambigOperatingPoint(rows);
+  const best = ranked[0];
+  const cur = (t, mg) => t === cfg.disambigThreshold && mg === cfg.disambigMargin;
+  const cell = (s) => String(s).padStart(8);
+  const out = [`eval --disambig --tune: ${combos.length} combo(s), n=${golden.length}`,
+    `  ${"thr".padStart(6)}${"margin".padStart(8)}${"prec".padStart(8)}${"recall".padStart(8)}${"promo".padStart(8)}`];
+  for (const r of rows) {
+    const mark = (r === best) ? "→" : (cur(r.threshold, r.margin) ? "*" : " ");
+    out.push(`${mark} ${String(r.threshold).padStart(5)}${cell(r.margin)}${cell(r.precision)}${cell(r.recall)}${cell(r.promotions)}`);
+  }
+  out.push("  legend: → best (precision-first: max recall at precision 1)   * current config");
+  out.push(`  → set in .gtir/config.json: "disambigThreshold": ${best.threshold}, "disambigMargin": ${best.margin}`);
+  process.stderr.write(out.join("\n") + "\n");
+  return 0;
+}
 
 // Memoizing embed wrapper: the golden query set is fixed across combos, so embed each unique
 // text once and replay from cache. Turns an N-combo sweep from N×(embed all queries) into
