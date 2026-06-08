@@ -296,6 +296,10 @@ export async function runEdgeEval({ repo, golden: goldenArg = null, baseline: ba
   if (base.model && base.model !== metrics.model) {
     process.stderr.write(`eval --edges: WARNING baseline model (${base.model}) != current (${metrics.model}) — cross-model comparison\n`);
   }
+  if (typeof base.recall !== "number" || typeof base.wrong_rate !== "number") {
+    process.stderr.write("eval --edges: baseline missing numeric recall/wrong_rate — re-save it with --save; skipping gate\n");
+    return 0;
+  }
   // Gate: recall must not drop and wrong_rate must not rise beyond tol. tol=0.02 absorbs the small
   // run-to-run wobble in `inferred` promotions (embedding-driven); real regressions move these by ≥0.05.
   const tol = 0.02;
@@ -311,7 +315,7 @@ export async function runEdgeEval({ repo, golden: goldenArg = null, baseline: ba
 }
 
 function printEdgeEval(m) {
-  const out = [`edge eval: n=${m.n} recall=${m.recall} wrong=${m.wrong_rate} missing=${m.missing_rate} model=${m.model}`];
+  const out = [`edge eval: n=${m.n} recall=${m.recall} wrong=${m.wrong_rate} missing=${m.missing_rate} model=${m.model ?? "?"}`];
   out.push("  by lang:");
   for (const lang of Object.keys(m.byLang).sort()) {
     const b = m.byLang[lang];

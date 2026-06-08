@@ -145,3 +145,40 @@ test("runEdgeEval returns exit 1 when recall regresses against the baseline", as
   const code = await runEdgeEval({ repo, golden: goldenPath, baseline: basePath, noBuild: true });
   assert.equal(code, 1);
 });
+
+test("runEdgeEval returns exit 1 when wrong_rate rises (recall flat)", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-cli-ee4-"));
+  const cfg = loadConfig(repo);
+  const store = await openStore(cfg);
+  // One correct (a→b#g) + one wrong (c resolves to wrong.mjs, golden expects d). recall stays 0.5, wrong_rate 0→0.5.
+  await store.upsertEdges([
+    { kind: "calls", conf: "resolved", from_path: "a.mjs", from_lines: "1", from_symbol: "f", to_path: "b.mjs", to_lines: "1", to_symbol: "g", ref_name: "g", candidates: [], content_hash: "h1" },
+    { kind: "calls", conf: "resolved", from_path: "c.mjs", from_lines: "1", from_symbol: "p", to_path: "wrong.mjs", to_lines: "1", to_symbol: "h", ref_name: "h", candidates: [], content_hash: "h2" },
+  ]);
+  const goldenPath = join(repo, "edges-golden.json");
+  writeFileSync(goldenPath, JSON.stringify([
+    { from: "a.mjs", to: "b.mjs", symbol: "g", kind: "calls" },
+    { from: "c.mjs", to: "d.mjs", symbol: "h", kind: "calls" },
+  ]));
+  const basePath = join(repo, "edges-baseline.json");
+  writeFileSync(basePath, JSON.stringify({ n: 2, recall: 0.5, wrong_rate: 0, missing_rate: 0.5 }));
+
+  const code = await runEdgeEval({ repo, golden: goldenPath, baseline: basePath, noBuild: true });
+  assert.equal(code, 1);
+});
+
+test("runEdgeEval skips the gate (exit 0) when the baseline lacks numeric recall/wrong_rate", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-cli-ee5-"));
+  const cfg = loadConfig(repo);
+  const store = await openStore(cfg);
+  await store.upsertEdges([
+    { kind: "calls", conf: "external", from_path: "x.mjs", from_lines: "1", from_symbol: "h", to_path: null, to_lines: null, to_symbol: null, ref_name: "ext", candidates: [], content_hash: "h2" },
+  ]);
+  const goldenPath = join(repo, "edges-golden.json");
+  writeFileSync(goldenPath, JSON.stringify([{ from: "x.mjs", to: null, symbol: "ext", kind: "calls" }]));
+  const basePath = join(repo, "edges-baseline.json");
+  writeFileSync(basePath, JSON.stringify({ n: 1, split: {} })); // malformed: no recall/wrong_rate
+
+  const code = await runEdgeEval({ repo, golden: goldenPath, baseline: basePath, noBuild: true });
+  assert.equal(code, 0); // gate skipped, not silently "passed"
+});

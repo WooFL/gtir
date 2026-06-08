@@ -124,7 +124,7 @@ export function evalEdges(edges, golden) {
 // Classify one golden call edge against the extracted edge set: correct / wrong / missing.
 // `missing` = extraction never produced the call (extraction-failure axis);
 // `wrong`   = produced but resolved to the wrong target (resolution-failure axis);
-// `correct` = a produced edge hits `g.to` (or is external when `g.to` is null). `inferred` counts.
+// `correct` = a produced edge hits `g.to` (or is external/unresolved (ambiguous) when `g.to` is null). `inferred` counts.
 export function scoreEdge(edges, g) {
   const produced = edges.filter((e) => e.kind === g.kind && e.from_path === g.from && e.ref_name === g.symbol);
   if (!produced.length) return "missing";
@@ -140,7 +140,7 @@ export function evalEdgeExtraction(edges, golden) {
   for (const g of golden) {
     const r = scoreEdge(edges, g);
     tally[r]++;
-    const lang = g.from.split(".").pop() || "?";
+    const lang = g.from.includes(".") ? g.from.split(".").pop() : "?";
     (byLang[lang] ??= { correct: 0, wrong: 0, missing: 0, n: 0 });
     byLang[lang][r]++;
     byLang[lang].n++;
