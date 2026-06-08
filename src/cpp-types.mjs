@@ -31,6 +31,68 @@ export function extractCppMethodDefs(text) {
   return out;
 }
 
+// The identifier a C++ declarator ultimately names, recursing through pointer/reference/init
+// declarators: `* f` → f, `& g` → g, `* p = …` → p, `h` → h.
+function declName(decl) {
+  if (!decl) return null;
+  if (decl.type === "identifier") return decl.text;
+  const inner = decl.childForFieldName?.("declarator") || decl.namedChild(0);
+  return inner && inner !== decl ? declName(inner) : null;
+}
+
+// Add a (name → typeName) binding from a parameter_declaration or declaration node. The type is the
+// `type` field; only a bare `type_identifier` yields a name (auto/template/qualified → null, deferred).
+function addCppBinding(node, bindings) {
+  const type = node.childForFieldName?.("type");
+  if (!type || type.type !== "type_identifier") return;
+  const name = declName(node.childForFieldName?.("declarator"));
+  if (name) bindings.set(name, type.text);
+}
+
+// Collect explicit type bindings in a function_definition: its parameters + body declarations. Does
+// NOT descend into lambda_expression (a same-name lambda param must not shadow an outer binding).
+function collectCppBindings(fn) {
+  const bindings = new Map();
+  const stack = [fn];
+  while (stack.length) {
+    const n = stack.pop();
+    if (n !== fn && n.type === "lambda_expression") continue;
+    if (n.type === "parameter_declaration" || n.type === "declaration") addCppBinding(n, bindings);
+    for (let i = 0; i < n.namedChildCount; i++) stack.push(n.namedChild(i));
+  }
+  return bindings;
+}
+
+// The class name owning `this` at a call site: the enclosing out-of-class def's `Class::method`
+// scope, else the nearest enclosing class_specifier's name. Null if neither.
+function enclosingCppClass(callNode, fn) {
+  const fdecl = fn?.childForFieldName?.("declarator");          // function_declarator
+  const qual = fdecl?.childForFieldName?.("declarator");        // qualified_identifier | identifier
+  if (qual?.type === "qualified_identifier") {
+    const scope = qual.childForFieldName?.("scope");
+    if (scope && scope.type === "namespace_identifier") return scope.text;
+  }
+  for (let p = callNode.parent; p; p = p.parent) {
+    if (p.type === "class_specifier") {
+      const nm = p.childForFieldName?.("name");
+      if (nm) return nm.text;
+      for (let i = 0; i < p.namedChildCount; i++) if (p.namedChild(i).type === "type_identifier") return p.namedChild(i).text;
+    }
+  }
+  return null;
+}
+
+// Infer the C++ type of `receiverName` at a call site (`obj` or the literal "this"). Walks the call's
+// enclosing function_definition for an explicit binding; "this" → enclosing class. Else null.
+export function inferCppReceiverType(callNode, receiverName) {
+  if (!callNode || !receiverName) return null;
+  let fn = callNode.parent;
+  while (fn && fn.type !== "function_definition") fn = fn.parent;
+  if (receiverName === "this") return enclosingCppClass(callNode, fn);
+  if (!fn) return null;
+  return collectCppBindings(fn).get(receiverName) ?? null;
+}
+
 // Upgrade ambiguous C++ member-call rows to resolved when the receiver type pins a single target FILE.
 // Pure — new array; only touches kind:"calls" conf:"ambiguous" isMethod rows with a receiverType.
 // Unique-PATH (not unique-def): overloads (several defs in one file) resolve; the same class#method

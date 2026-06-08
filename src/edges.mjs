@@ -1,6 +1,7 @@
 import { dirname, join, basename } from "node:path";
 import { edgeTypes, targetTypes } from "./languages.mjs";
 import { inferReceiverType } from "./go-types.mjs";
+import { inferCppReceiverType } from "./cpp-types.mjs";
 
 // Walk every named node depth-first, calling visit(node). Iterative (no recursion depth limit),
 // mirrors chunker.collectNodes' traversal.
@@ -54,8 +55,10 @@ function isMemberCall(callee) {
 function memberReceiver(callee) {
   const recv = callee.childForFieldName?.("operand")   // go selector_expression
     || callee.childForFieldName?.("object")            // ts/js member_expression
-    || callee.namedChild(0);
-  return recv && /^identifier$/.test(recv.type) ? recv.text : null;
+    || callee.namedChild(0);                           // cpp field_expression object
+  if (!recv) return null;
+  if (recv.type === "this") return "this";             // cpp `this->m()`
+  return /^identifier$/.test(recv.type) ? recv.text : null;
 }
 
 // Strip surrounding quotes / angle brackets from an import source literal.
@@ -360,7 +363,10 @@ export function extractCodeEdges(tree, langId, relPath) {
           const fromSymbol = declSet.size > 0 ? enclosingSymbol(n, declSet) : null;
           const isMethod = isMemberCall(callee);
           const receiver = isMethod ? memberReceiver(callee) : null;
-          const receiverType = (langId === "go" && receiver) ? inferReceiverType(n, receiver) : null;
+          const receiverType = !receiver ? null
+            : langId === "go" ? inferReceiverType(n, receiver)
+            : langId === "cpp" ? inferCppReceiverType(n, receiver)
+            : null;
           edges.push({ kind: "calls", refName: name, fromPath: relPath, fromLine: n.startPosition.row + 1, fromSymbol, isMethod, receiver, receiverType });
         }
       }
