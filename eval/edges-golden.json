@@ -18,6 +18,7 @@
   { "from": "go/use_logger.go", "symbol": "Flush", "to": "go/logger.go", "kind": "calls" },
   { "from": "go/use_batcher.go", "symbol": "Add", "to": "go/batcher.go", "kind": "calls" },
   { "from": "go/external.go", "symbol": "WriteString", "to": null, "kind": "calls" },
+  { "from": "go/use_shaper.go", "symbol": "Area", "to": "go/circle.go", "kind": "calls" },
   { "from": "cpp/use_encoder.cpp", "symbol": "flush", "to": "cpp/encoder.cpp", "kind": "calls" },
   { "from": "cpp/use_sink.cpp", "symbol": "flush", "to": "cpp/sink.cpp", "kind": "calls" },
   { "from": "cpp/encoder.cpp", "symbol": "flush", "to": "cpp/encoder.cpp", "kind": "calls" },
