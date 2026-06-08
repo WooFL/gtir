@@ -1,14 +1,14 @@
 {
   "n": 4,
   "cells": {
-    "tp": 0,
+    "tp": 2,
     "fp": 0,
-    "fn": 2,
+    "fn": 0,
     "tn": 2
   },
-  "promotions": 0,
+  "promotions": 2,
   "precision": 1,
-  "recall": 0,
+  "recall": 1,
   "abstain_rate": 1,
   "model": "qwen3-embedding:0.6b"
 }
