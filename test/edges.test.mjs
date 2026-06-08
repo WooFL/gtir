@@ -477,3 +477,13 @@ test("extractCodeEdges (ts): untyped non-new local → null", async () => {
   const edges = await edgesFor("typescript", `function run() { const x = mk(); x.bar(); }`, "a.ts");
   assert.equal(edges.find((e) => e.refName === "bar").receiverType, null);
 });
+
+test("extractCodeEdges (ts): this in a nested regular function → null (this is rebound)", async () => {
+  const edges = await edgesFor("typescript", `class C { drive() { function inner() { this.flush(); } } }`, "a.ts");
+  assert.equal(edges.find((e) => e.refName === "flush").receiverType, null);
+});
+
+test("extractCodeEdges (ts): this in a nested arrow still → enclosing class (lexical this)", async () => {
+  const edges = await edgesFor("typescript", `class C { drive() { const f = () => { this.flush(); }; f(); } flush(){} }`, "a.ts");
+  assert.equal(edges.find((e) => e.refName === "flush").receiverType, "C");
+});

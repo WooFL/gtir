@@ -59,9 +59,16 @@ function collectTsBindings(scope) {
   return bindings;
 }
 
+// Regular functions rebind `this` (its value is caller-dependent, not the class). method_definition
+// and arrow_function do NOT — a method's this is the instance, an arrow's this is lexical. So `this`
+// crossing one of these before reaching the class means it is not the class.
+const TS_THIS_REBINDERS = new Set(["function_declaration", "function_expression",
+  "generator_function_declaration", "generator_function"]);
+
 // The class name enclosing a call site (for `this`), or null.
 function enclosingTsClass(callNode) {
   for (let p = callNode.parent; p; p = p.parent) {
+    if (TS_THIS_REBINDERS.has(p.type)) return null;   // a regular function rebinds this → not the class
     if (p.type === "class_declaration" || p.type === "class") {
       const nm = p.childForFieldName?.("name");
       if (nm) return nm.text;
