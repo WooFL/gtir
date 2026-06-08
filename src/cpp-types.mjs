@@ -480,6 +480,41 @@ export function resolveCppDispatch(rows, cppMethodIndex, cppDerivedIndex, cppVir
   });
 }
 
+// The {type, smartPtr} of member field `field` on class `cls` — its own field, else the first
+// base in the (transitive, cycle-guarded) base chain that declares it. Null if none.
+export function lookupCppField(cls, field, cppFieldIndex, cppBaseIndex) {
+  const own = cppFieldIndex.get(cls)?.get(field);
+  if (own) return own;
+  // BFS over base chain; seen guards against cycles (a class appearing as its own ancestor)
+  const seen = new Set([cls]);
+  const queue = [...(cppBaseIndex.get(cls) ?? [])];
+  while (queue.length) {
+    const base = queue.shift();
+    if (seen.has(base)) continue;
+    seen.add(base);
+    const fb = cppFieldIndex.get(base)?.get(field);
+    if (fb) return fb;
+    for (const b of (cppBaseIndex.get(base) ?? [])) if (!seen.has(b)) queue.push(b);
+  }
+  return null;
+}
+
+// Upgrade an ambiguous C++ member call whose receiver is an (own or inherited) member field of the
+// enclosing class by setting receiverType from the field index. Runs BEFORE resolveCppDispatch /
+// resolveCppMethods (so the now-typed receiver feeds both). Pure — returns a new array.
+export function resolveCppFieldReceivers(rows, cppFieldIndex, cppBaseIndex) {
+  return rows.map((r) => {
+    if (r.kind !== "calls" || r.conf !== "ambiguous" || !r.isMethod) return r;
+    if (r.receiverType) return r;                                    // same-file inference wins
+    if (!CPP_EXTS.test(r.from_path ?? "")) return r;
+    if (!r.enclosingClass || !r.receiver) return r;
+    const fb = lookupCppField(r.enclosingClass, r.receiver, cppFieldIndex, cppBaseIndex);
+    if (!fb) return r;
+    if (fb.smartPtr && r.memberOp !== "->") return r;               // `.method()` is the wrapper's own
+    return { ...r, receiverType: fb.type };
+  });
+}
+
 // Upgrade ambiguous C++ member-call rows to resolved when the receiver type pins a single target FILE.
 // Pure — new array; only touches kind:"calls" conf:"ambiguous" isMethod rows with a resolved receiver type (direct r.receiverType, or via a unique cppReturnIndex factory lookup).
 // Unique-PATH (not unique-def): overloads (several defs in one file) resolve; the same class#method

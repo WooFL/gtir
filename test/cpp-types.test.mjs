@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { extractCppMethodDefs, resolveCppMethods, extractCppReturnTypes, extractCppBases, extractCppVirtuals, extractCppOverrides, resolveCppDispatch, extractCppFields } from "../src/cpp-types.mjs";
+import { extractCppMethodDefs, resolveCppMethods, extractCppReturnTypes, extractCppBases, extractCppVirtuals, extractCppOverrides, resolveCppDispatch, extractCppFields, lookupCppField, resolveCppFieldReceivers } from "../src/cpp-types.mjs";
 
 test("extractCppMethodDefs: out-of-class definition", () => {
   assert.deepEqual(extractCppMethodDefs(`int Foo::bar(int x) { return x; }`), [{ cls: "Foo", method: "bar" }]);
@@ -359,4 +359,114 @@ test("extractCppFields: custom wrapper in smartPtrs honored as smart pointer", (
 test("extractCppFields: non-allowlisted generic skipped", () => {
   // vector is not in the default smart-pointer set → deferred, no field row.
   assert.deepEqual(extractCppFields(`class C { vector<Foo> v; };`), []);
+});
+
+// ── lookupCppField ────────────────────────────────────────────────────────────
+
+test("lookupCppField: own field resolves directly", () => {
+  const fi = new Map([["C", new Map([["m_w", { type: "Widget", smartPtr: false }]])]]);
+  assert.deepEqual(lookupCppField("C", "m_w", fi, new Map()), { type: "Widget", smartPtr: false });
+});
+test("lookupCppField: unknown class returns null", () => {
+  assert.equal(lookupCppField("Unknown", "m_w", new Map(), new Map()), null);
+});
+test("lookupCppField: unknown field on known class returns null", () => {
+  const fi = new Map([["C", new Map([["m_w", { type: "Widget", smartPtr: false }]])]]);
+  assert.equal(lookupCppField("C", "missing", fi, new Map()), null);
+});
+test("lookupCppField: inherited field resolved via direct base", () => {
+  const fi = new Map([["B", new Map([["m_w", { type: "Widget", smartPtr: false }]])]]);
+  const bi = new Map([["C", new Set(["B"])]]);
+  assert.deepEqual(lookupCppField("C", "m_w", fi, bi), { type: "Widget", smartPtr: false });
+});
+test("lookupCppField: transitive inherited field (C→B→A) resolves", () => {
+  const fi = new Map([["A", new Map([["f", { type: "X", smartPtr: false }]])]]);
+  const bi = new Map([["C", new Set(["B"])], ["B", new Set(["A"])]]);
+  assert.deepEqual(lookupCppField("C", "f", fi, bi), { type: "X", smartPtr: false });
+});
+test("lookupCppField: cycle guard prevents infinite loop, still resolves", () => {
+  const fi = new Map([["A", new Map([["f", { type: "X", smartPtr: false }]])]]);
+  const bi = new Map([["C", new Set(["B"])], ["B", new Set(["A"])], ["A", new Set(["C"])]]);
+  assert.deepEqual(lookupCppField("C", "f", fi, bi), { type: "X", smartPtr: false });
+});
+
+// ── resolveCppFieldReceivers ──────────────────────────────────────────────────
+
+// Helper: build a minimal ambiguous method call row
+const fieldRow = (over = {}) => ({
+  kind: "calls", conf: "ambiguous", isMethod: true,
+  from_path: "a.cpp", receiverType: null,
+  enclosingClass: "C", receiver: "m_w", memberOp: "->",
+  ref_name: "run", ...over,
+});
+
+test("resolveCppFieldReceivers: own field — sets receiverType", () => {
+  const fi = new Map([["C", new Map([["m_w", { type: "Widget", smartPtr: false }]])]]);
+  const [r] = resolveCppFieldReceivers([fieldRow()], fi, new Map());
+  assert.equal(r.receiverType, "Widget");
+  assert.equal(r.conf, "ambiguous");  // conf not changed here — that's resolveCppMethods' job
+});
+test("resolveCppFieldReceivers: inherited field — sets receiverType", () => {
+  const fi = new Map([["B", new Map([["m_w", { type: "Widget", smartPtr: false }]])]]);
+  const bi = new Map([["C", new Set(["B"])]]);
+  const [r] = resolveCppFieldReceivers([fieldRow()], fi, bi);
+  assert.equal(r.receiverType, "Widget");
+});
+test("resolveCppFieldReceivers: transitive inherited + cycle guard — resolves without hanging", () => {
+  const fi = new Map([["A", new Map([["f", { type: "X", smartPtr: false }]])]]);
+  const bi = new Map([["C", new Set(["B"])], ["B", new Set(["A"])], ["A", new Set(["C"])]]);
+  const [r] = resolveCppFieldReceivers([fieldRow({ receiver: "f" })], fi, bi);
+  assert.equal(r.receiverType, "X");
+});
+test("resolveCppFieldReceivers: smart-ptr field with memberOp '.' → skip (wrapper's own method)", () => {
+  const fi = new Map([["C", new Map([["m_w", { type: "Widget", smartPtr: true }]])]]);
+  const [r] = resolveCppFieldReceivers([fieldRow({ memberOp: "." })], fi, new Map());
+  assert.equal(r.receiverType, null);
+});
+test("resolveCppFieldReceivers: smart-ptr field with memberOp '->' → resolves to element type", () => {
+  const fi = new Map([["C", new Map([["m_w", { type: "Widget", smartPtr: true }]])]]);
+  const [r] = resolveCppFieldReceivers([fieldRow({ memberOp: "->" })], fi, new Map());
+  assert.equal(r.receiverType, "Widget");
+});
+test("resolveCppFieldReceivers: row already has receiverType → unchanged (no override)", () => {
+  const fi = new Map([["C", new Map([["m_w", { type: "Widget", smartPtr: false }]])]]);
+  const [r] = resolveCppFieldReceivers([fieldRow({ receiverType: "OtherType" })], fi, new Map());
+  assert.equal(r.receiverType, "OtherType");
+});
+test("resolveCppFieldReceivers: unknown field → unchanged", () => {
+  const fi = new Map([["C", new Map([["other", { type: "Widget", smartPtr: false }]])]]);
+  const [r] = resolveCppFieldReceivers([fieldRow()], fi, new Map());
+  assert.equal(r.receiverType, null);
+});
+test("resolveCppFieldReceivers: non-cpp from_path → unchanged", () => {
+  const fi = new Map([["C", new Map([["m_w", { type: "Widget", smartPtr: false }]])]]);
+  const [r] = resolveCppFieldReceivers([fieldRow({ from_path: "a.ts" })], fi, new Map());
+  assert.equal(r.receiverType, null);
+});
+test("resolveCppFieldReceivers: missing enclosingClass → unchanged", () => {
+  const fi = new Map([["C", new Map([["m_w", { type: "Widget", smartPtr: false }]])]]);
+  const [r] = resolveCppFieldReceivers([fieldRow({ enclosingClass: null })], fi, new Map());
+  assert.equal(r.receiverType, null);
+});
+test("resolveCppFieldReceivers: missing receiver → unchanged", () => {
+  const fi = new Map([["C", new Map([["m_w", { type: "Widget", smartPtr: false }]])]]);
+  const [r] = resolveCppFieldReceivers([fieldRow({ receiver: null })], fi, new Map());
+  assert.equal(r.receiverType, null);
+});
+test("resolveCppFieldReceivers: non-method row → unchanged", () => {
+  const fi = new Map([["C", new Map([["m_w", { type: "Widget", smartPtr: false }]])]]);
+  const [r] = resolveCppFieldReceivers([fieldRow({ isMethod: false })], fi, new Map());
+  assert.equal(r.receiverType, null);
+});
+test("resolveCppFieldReceivers: non-ambiguous row → unchanged", () => {
+  const fi = new Map([["C", new Map([["m_w", { type: "Widget", smartPtr: false }]])]]);
+  const [r] = resolveCppFieldReceivers([fieldRow({ conf: "resolved" })], fi, new Map());
+  assert.equal(r.receiverType, null);
+});
+test("resolveCppFieldReceivers: returns a new array (pure)", () => {
+  const fi = new Map([["C", new Map([["m_w", { type: "Widget", smartPtr: false }]])]]);
+  const input = [fieldRow()];
+  const output = resolveCppFieldReceivers(input, fi, new Map());
+  assert.notEqual(output, input);
+  assert.notEqual(output[0], input[0]);  // new object for the modified row
 });
