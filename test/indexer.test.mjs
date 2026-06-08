@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as lancedb from "@lancedb/lancedb";
@@ -556,5 +556,31 @@ test("indexEdges resolves a Go interface call to its implementers (dispatch)", a
     assert.ok(call, "expected an Area call edge from use.go");
     assert.equal(call.conf, "dispatch");
     assert.deepEqual([...call.candidates].sort(), ["circle.go", "square.go"]);
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
+test("buildIndex: a markdown-only repo auto-selects the nomic model and persists it", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-automd-"));
+  try {
+    writeFileSync(join(repo, "a.md"), `# A\n\nsome notes here\n`);
+    writeFileSync(join(repo, "b.md"), `# B\n\nmore notes\n`);
+    const cfg = { ...loadConfig(repo), embedImpl: fakeEmbed, minChars: 1 };
+    await buildIndex(cfg, { rebuild: true });
+    const meta = await openStore(loadConfig(repo)).then((s) => s.readMeta());
+    assert.equal(meta.model, "nomic-embed-text");
+    const written = JSON.parse(readFileSync(join(repo, ".gtir", "config.json"), "utf8"));
+    assert.equal(written.model, "nomic-embed-text");
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+test("buildIndex: a repo with code keeps qwen and writes no config", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-autocode-"));
+  try {
+    writeFileSync(join(repo, "a.md"), `# A\n\nnotes\n`);
+    writeFileSync(join(repo, "x.ts"), `export function f(){ return 1; }\n`);
+    const cfg = { ...loadConfig(repo), embedImpl: fakeEmbed, minChars: 1 };
+    await buildIndex(cfg, { rebuild: true });
+    const meta = await openStore(loadConfig(repo)).then((s) => s.readMeta());
+    assert.equal(meta.model, "qwen3-embedding:0.6b");
+    assert.equal(existsSync(join(repo, ".gtir", "config.json")), false);
   } finally { rmSync(repo, { recursive: true, force: true }); }
 });
