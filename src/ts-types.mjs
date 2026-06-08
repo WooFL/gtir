@@ -88,6 +88,9 @@ export function inferTsReceiverType(callNode, receiverName) {
   return collectTsBindings(scope).get(receiverName) ?? null;
 }
 
+// TS/JS source-file extensions — used to gate resolveTsMethods to TS/JS callers only.
+const TS_EXTS = /\.(m?[jt]sx?|d\.ts)$/i;
+
 // Upgrade an ambiguous TS/JS member-call row to resolved when the receiver type pins a unique file.
 // Chunk-robust: TS/JS methods are in-class only, so instead of a `class#method` key (which breaks when
 // the chunker splits a method out of its class), intersect the file(s) declaring class T with the
@@ -95,6 +98,7 @@ export function inferTsReceiverType(callNode, receiverName) {
 export function resolveTsMethods(rows, tsClassFiles, tsCallableFiles) {
   return rows.map((r) => {
     if (r.kind !== "calls" || r.conf !== "ambiguous" || !r.isMethod || !r.receiverType) return r;
+    if (!TS_EXTS.test(r.from_path ?? "")) return r;
     const classFiles = tsClassFiles.get(r.receiverType);
     const defs = tsCallableFiles.get(r.ref_name);
     if (!classFiles || !defs) return r;
