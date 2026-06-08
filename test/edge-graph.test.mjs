@@ -196,6 +196,17 @@ test("degreeMap: empty graph yields empty map", () => {
   assert.equal(degreeMap(buildGraph([])).size, 0);
 });
 
+test("buildGraph: externalOut records nodes that emit an external call", () => {
+  const g = buildGraph([
+    { kind: "calls", conf: "external", from_path: "a.cpp", from_symbol: "f", to_path: null, to_symbol: null, ref_name: "SDK_Do", candidates: [] },
+    { kind: "calls", conf: "resolved", from_path: "a.cpp", from_symbol: "g", to_path: "b.cpp", to_symbol: "h", candidates: [] },
+    { kind: "calls", conf: "external", from_path: "a.cpp", from_symbol: null, to_path: null, to_symbol: null, ref_name: "topLevelExt", candidates: [] },
+  ]);
+  assert.ok(g.externalOut.has("a.cpp#f"));
+  assert.ok(!g.externalOut.has("a.cpp#g"));
+  assert.ok(g.externalOut.has("a.cpp"));
+});
+
 test("buildGraph: inferred call edge wires like resolved (one link, not fan-out)", () => {
   const g = buildGraph([{ kind: "calls", conf: "inferred", from_path: "a.mjs", from_symbol: "f",
     to_path: "b.mjs", to_symbol: "g", ref_name: "g", candidates: [], score: 0.71 }]);
