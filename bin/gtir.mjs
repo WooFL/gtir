@@ -1001,7 +1001,8 @@ async function main() {
           depth: args.depth, includeAmbiguous: !!args.includeAmbiguous });
         if (r.error) {
           process.stderr.write(`gtir path: ${r.error}\n`);
-          process.exitCode = 0; // not a crash, just not found
+          // Infrastructure error (no index) → 2, like impact/orphans/cycles; a missing symbol is 0.
+          process.exitCode = /no edge index/i.test(r.error) ? 2 : 0;
           break;
         }
         if (r.path === null) {
