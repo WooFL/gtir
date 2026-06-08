@@ -261,8 +261,18 @@ export function extractCppOverrides(text, scopeClass = null) {
 
 // A class/struct head with a base clause → { cls, bases:[...] }. Captures the base-clause text between
 // `:` and `{`, then pulls each base's trailing identifier, skipping access/virtual keywords. Qualified
-// bases (std::exception) keep the last segment; a class with no `:` clause yields no entry.
+// bases (std::exception) keep the last segment; a template base (Base<int>) keeps the bare class name
+// (the `<...>` args are stripped first, so the template comma is not mistaken for a base separator);
+// a class with no `:` clause yields no entry. Limitation (shared with extractCppMethodDefs): a chunk
+// with two class heads keys both via this pass independently — fine here since each match carries its
+// own cls; but a base clause inside a commented-out class head would still match (no comment strip).
+const CPP_ACCESS = new Set(["public", "private", "protected", "virtual"]);
 const CPP_BASE_HEAD = /\b(?:class|struct)\s+([A-Za-z_]\w*)\s*(?:final\b\s*)?:\s*([^{};]+)\{/g;
+function stripTemplateArgs(s) {
+  let prev;
+  do { prev = s; s = s.replace(/<[^<>]*>/g, ""); } while (s !== prev);   // peel nested <...> innermost-first
+  return s;
+}
 export function extractCppBases(text) {
   const s = String(text || "");
   const out = [];
@@ -270,11 +280,11 @@ export function extractCppBases(text) {
   let m;
   while ((m = CPP_BASE_HEAD.exec(s))) {
     const bases = [];
-    for (const part of m[2].split(",")) {
-      // last identifier in the part (handles `public ns::Base`, `virtual public Base`)
+    for (const part of stripTemplateArgs(m[2]).split(",")) {
+      // last identifier in the part (handles `public ns::Base`, `virtual public Base`, `public Base<T>`)
       const ids = part.match(/[A-Za-z_]\w*/g) || [];
       const last = ids[ids.length - 1];
-      if (last && !["public", "private", "protected", "virtual"].includes(last)) bases.push(last);
+      if (last && !CPP_ACCESS.has(last)) bases.push(last);
     }
     if (bases.length) out.push({ cls: m[1], bases });
   }

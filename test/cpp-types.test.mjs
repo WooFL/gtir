@@ -195,6 +195,10 @@ test("extractCppBases: qualified/external base keeps the trailing identifier", (
 test("extractCppBases: a class with no base clause yields nothing", () => {
   assert.deepEqual(extractCppBases(`class Plain { int x; };`), []);
 });
+test("extractCppBases: a template base keeps the bare class name (no template-comma split)", () => {
+  assert.deepEqual(extractCppBases(`class E : public Base<int, char> {};`), [{ cls: "E", bases: ["Base"] }]);
+  assert.deepEqual(extractCppBases(`struct D : Wrap<Foo<int>>, public B {};`), [{ cls: "D", bases: ["Wrap", "B"] }]);
+});
 
 test("extractCppVirtuals: plain virtual and pure virtual", () => {
   const defs = extractCppVirtuals(`class B { virtual void run(); virtual int size() const = 0; };`);
