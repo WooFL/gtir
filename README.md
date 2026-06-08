@@ -419,12 +419,12 @@ import links the two files; otherwise a same-name coincidence (a builtin `Error`
 `ambiguous`. It is not an LSP. `find … references` prefers real call edges and falls back to the lexical
 sweep when none exist.
 
-For Go and C++, method calls are additionally resolved by **receiver type** — `b.Flush()` (Go) or
-`e->flush()`/`this->flush()` (C++) where the receiver is a typed parameter, local declaration, or the
-enclosing method's receiver resolves to that type's method exactly (a precise `resolved` edge), before
-the embedding-disambiguation tier sees it. C++ also unwraps smart pointers on `->` calls
-(`unique_ptr`/`shared_ptr`/`weak_ptr` by default; add project wrappers via `cppSmartPointers` in
-`.gtir/config.json`).
+For Go, C++, and TS/JS, method calls are additionally resolved by **receiver type** — `b.Flush()` (Go),
+`e->flush()`/`this->flush()` (C++), or `e.flush()`/`this.flush()`/`new Sink().flush()` (TS/JS) where the
+receiver is a typed parameter, local declaration, `new` expression, or the enclosing method's receiver
+resolves to that type's method exactly (a precise `resolved` edge), before the embedding-disambiguation
+tier sees it. C++ also unwraps smart pointers on `->` calls (`unique_ptr`/`shared_ptr`/`weak_ptr` by
+default; add project wrappers via `cppSmartPointers` in `.gtir/config.json`).
 
 ### Inferred edges (embedding-disambiguation)
 

@@ -9,9 +9,10 @@ import { embedTexts, contentHash } from "./embed.mjs";
 import { openStore } from "./store.mjs";
 import { extractCodeEdges, extractNotesEdges, resolveEdges } from "./edges.mjs";
 import { disambiguateEdges } from "./disambiguate.mjs";
-import { declaredSymbols } from "./symbols.mjs";
+import { declaredSymbols, declaredCallables } from "./symbols.mjs";
 import { extractGoMethodDefs, resolveGoMethods } from "./go-types.mjs";
 import { extractCppMethodDefs, resolveCppMethods } from "./cpp-types.mjs";
+import { extractTsClassNames, resolveTsMethods } from "./ts-types.mjs";
 
 // Columns the current row shape ALWAYS writes. content_hash is deliberately excluded — it's
 // optional: a pre-cache table runs in legacy (no-reuse) mode rather than being force-rebuilt.
@@ -31,6 +32,8 @@ async function indexEdges(cfg, store, toIndex, { rebuild, deleted = [] }) {
   const symbolIndex = new Map(), noteIndex = new Map(), callSiteVec = new Map(), chunkByPath = new Map();
   const goMethodIndex = new Map();
   const cppMethodIndex = new Map();
+  const tsClassFiles = new Map();
+  const tsCallableFiles = new Map();
   // Symbols declared by the changed files (drives the "a new def appeared" caller re-resolution).
   // Relies on buildIndex having already upsertRows'd the changed files BEFORE calling indexEdges —
   // so the chunks table here reflects the new state. Keep that ordering.
@@ -71,6 +74,16 @@ async function indexEdges(cfg, store, toIndex, { rebuild, deleted = [] }) {
         const k = `${cls}#${method}`;
         if (!cppMethodIndex.has(k)) cppMethodIndex.set(k, []);
         cppMethodIndex.get(k).push({ path: r.path, line_start: Number(r.line_start), line_end: Number(r.line_end) });
+      }
+    }
+    if (r.language === "typescript" || r.language === "tsx" || r.language === "javascript") {
+      for (const cls of extractTsClassNames(r.text)) {
+        if (!tsClassFiles.has(cls)) tsClassFiles.set(cls, new Set());
+        tsClassFiles.get(cls).add(r.path);
+      }
+      for (const name of declaredCallables(r.text)) {
+        if (!tsCallableFiles.has(name)) tsCallableFiles.set(name, []);
+        tsCallableFiles.get(name).push({ path: r.path, line_start: Number(r.line_start), line_end: Number(r.line_end) });
       }
     }
   }
@@ -121,6 +134,7 @@ async function indexEdges(cfg, store, toIndex, { rebuild, deleted = [] }) {
   }
   all = resolveGoMethods(all, goMethodIndex);
   all = resolveCppMethods(all, cppMethodIndex);
+  all = resolveTsMethods(all, tsClassFiles, tsCallableFiles);
   if (chunkByPath.size) {
     all = all.map((e) => {
       if (e.kind !== "calls" || e.conf !== "ambiguous" || e.content_hash) return e;

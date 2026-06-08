@@ -71,6 +71,7 @@ export function inferReceiverType(callNode, receiverName) {
 export function resolveGoMethods(rows, goMethodIndex) {
   return rows.map((r) => {
     if (r.kind !== "calls" || r.conf !== "ambiguous" || !r.isMethod || !r.receiverType) return r;
+    if (!/\.go$/.test(r.from_path ?? "")) return r;
     const defs = goMethodIndex.get(`${r.receiverType}#${r.ref_name}`);
     if (!defs || defs.length !== 1) return r;
     const d = defs[0];

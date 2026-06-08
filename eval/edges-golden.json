@@ -23,5 +23,9 @@
   { "from": "cpp/encoder.cpp", "symbol": "flush", "to": "cpp/encoder.cpp", "kind": "calls" },
   { "from": "cpp/use_encoder.cpp", "symbol": "size", "to": null, "kind": "calls" },
   { "from": "cpp/use_smartptr.cpp", "symbol": "flush", "to": "cpp/encoder.cpp", "kind": "calls" },
-  { "from": "cpp/use_smartptr.cpp", "symbol": "get", "to": null, "kind": "calls" }
+  { "from": "cpp/use_smartptr.cpp", "symbol": "get", "to": null, "kind": "calls" },
+  { "from": "ts/use_typed.ts", "symbol": "flush", "to": "ts/encoder.ts", "kind": "calls" },
+  { "from": "ts/use_new.ts", "symbol": "flush", "to": "ts/sink.ts", "kind": "calls" },
+  { "from": "ts/encoder.ts", "symbol": "flush", "to": "ts/encoder.ts", "kind": "calls" },
+  { "from": "ts/use_external.ts", "symbol": "stringify", "to": null, "kind": "calls" }
 ]

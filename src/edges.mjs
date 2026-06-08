@@ -2,6 +2,7 @@ import { dirname, join, basename } from "node:path";
 import { edgeTypes, targetTypes } from "./languages.mjs";
 import { inferReceiverType } from "./go-types.mjs";
 import { inferCppReceiverType, DEFAULT_SMART_PTRS } from "./cpp-types.mjs";
+import { inferTsReceiverType } from "./ts-types.mjs";
 
 // Walk every named node depth-first, calling visit(node). Iterative (no recursion depth limit),
 // mirrors chunker.collectNodes' traversal.
@@ -367,6 +368,7 @@ export function extractCodeEdges(tree, langId, relPath, opts = {}) {
           const receiverType = !receiver ? null
             : langId === "go" ? inferReceiverType(n, receiver)
             : langId === "cpp" ? inferCppReceiverType(n, receiver, cppSmartPtrs)
+            : (langId === "typescript" || langId === "tsx" || langId === "javascript") ? inferTsReceiverType(n, receiver)
             : null;
           edges.push({ kind: "calls", refName: name, fromPath: relPath, fromLine: n.startPosition.row + 1, fromSymbol, isMethod, receiver, receiverType });
         }

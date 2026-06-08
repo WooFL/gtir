@@ -142,6 +142,9 @@ export function inferCppReceiverType(callNode, receiverName, smartPtrs = DEFAULT
   return b.type;
 }
 
+// C++ source-file extensions — used to gate resolveCppMethods to C++ callers only.
+const CPP_EXTS = /\.(cpp|cc|cxx|c|h|hpp|hh|hxx|metal)$/i;
+
 // Upgrade ambiguous C++ member-call rows to resolved when the receiver type pins a single target FILE.
 // Pure — new array; only touches kind:"calls" conf:"ambiguous" isMethod rows with a receiverType.
 // Unique-PATH (not unique-def): overloads (several defs in one file) resolve; the same class#method
@@ -149,6 +152,7 @@ export function inferCppReceiverType(callNode, receiverName, smartPtrs = DEFAULT
 export function resolveCppMethods(rows, cppMethodIndex) {
   return rows.map((r) => {
     if (r.kind !== "calls" || r.conf !== "ambiguous" || !r.isMethod || !r.receiverType) return r;
+    if (!CPP_EXTS.test(r.from_path ?? "")) return r;
     const defs = cppMethodIndex.get(`${r.receiverType}#${r.ref_name}`);
     if (!defs || !defs.length) return r;
     const paths = [...new Set(defs.map((d) => d.path))];

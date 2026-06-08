@@ -444,3 +444,54 @@ test("extractCodeEdges (cpp): a wrapper NOT in the allowlist → null", async ()
   const edges = extractCodeEdges(tree, "cpp", "a.cpp", {}); // default allowlist; MyScoper not in it
   assert.equal(edges.find((e) => e.kind === "calls" && e.refName === "bar").receiverType, null);
 });
+
+test("extractCodeEdges (ts): typed param → receiverType", async () => {
+  const edges = await edgesFor("typescript", `function run(e: Encoder) { e.flush(); }`, "a.ts");
+  assert.equal(edges.find((e) => e.refName === "flush").receiverType, "Encoder");
+});
+test("extractCodeEdges (ts): typed local → receiverType", async () => {
+  const edges = await edgesFor("typescript", `function run() { const x: Foo = mk(); x.bar(); }`, "a.ts");
+  assert.equal(edges.find((e) => e.refName === "bar").receiverType, "Foo");
+});
+test("extractCodeEdges (ts): new-assigned local → constructor type", async () => {
+  const edges = await edgesFor("typescript", `function run() { const s = new Sink(); s.flush(); }`, "a.ts");
+  assert.equal(edges.find((e) => e.refName === "flush").receiverType, "Sink");
+});
+test("extractCodeEdges (js): new-assigned local works without types", async () => {
+  const edges = await edgesFor("javascript", `function run() { const s = new Sink(); s.flush(); }`, "a.js");
+  assert.equal(edges.find((e) => e.refName === "flush").receiverType, "Sink");
+});
+test("extractCodeEdges (ts): this.method() → enclosing class", async () => {
+  const edges = await edgesFor("typescript", `class C { drive() { this.flush(); } flush(){} }`, "a.ts");
+  assert.equal(edges.find((e) => e.refName === "flush").receiverType, "C");
+});
+test("extractCodeEdges (ts): generic-typed receiver → null", async () => {
+  const edges = await edgesFor("typescript", `function run(x: Foo<T>) { x.bar(); }`, "a.ts");
+  assert.equal(edges.find((e) => e.refName === "bar").receiverType, null);
+});
+test("extractCodeEdges (ts): union-typed receiver → null", async () => {
+  const edges = await edgesFor("typescript", `function run(x: A | B) { x.m(); }`, "a.ts");
+  assert.equal(edges.find((e) => e.refName === "m").receiverType, null);
+});
+test("extractCodeEdges (ts): predefined-typed receiver → null", async () => {
+  const edges = await edgesFor("typescript", `function run(x: string) { x.trim(); }`, "a.ts");
+  assert.equal(edges.find((e) => e.refName === "trim").receiverType, null);
+});
+test("extractCodeEdges (ts): new ns.X() member constructor → null", async () => {
+  const edges = await edgesFor("typescript", `function run() { const x = new ns.Foo(); x.bar(); }`, "a.ts");
+  assert.equal(edges.find((e) => e.refName === "bar").receiverType, null);
+});
+test("extractCodeEdges (ts): untyped non-new local → null", async () => {
+  const edges = await edgesFor("typescript", `function run() { const x = mk(); x.bar(); }`, "a.ts");
+  assert.equal(edges.find((e) => e.refName === "bar").receiverType, null);
+});
+
+test("extractCodeEdges (ts): this in a nested regular function → null (this is rebound)", async () => {
+  const edges = await edgesFor("typescript", `class C { drive() { function inner() { this.flush(); } } }`, "a.ts");
+  assert.equal(edges.find((e) => e.refName === "flush").receiverType, null);
+});
+
+test("extractCodeEdges (ts): this in a nested arrow still → enclosing class (lexical this)", async () => {
+  const edges = await edgesFor("typescript", `class C { drive() { const f = () => { this.flush(); }; f(); } flush(){} }`, "a.ts");
+  assert.equal(edges.find((e) => e.refName === "flush").receiverType, "C");
+});

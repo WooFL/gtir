@@ -411,3 +411,23 @@ test("indexEdges resolves a C++ member call by receiver type (cross-file)", asyn
     rmSync(repo, { recursive: true, force: true });
   }
 });
+
+test("indexEdges resolves a TS member call by receiver type (cross-file)", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-ts-"));
+  try {
+    writeFileSync(join(repo, "encoder.ts"), `export class Encoder { flush(): number { return 1; } }\n`);
+    writeFileSync(join(repo, "sink.ts"), `export class Sink { flush(): number { return 2; } }\n`);
+    writeFileSync(join(repo, "use.ts"), `import { Encoder } from "./encoder";\nexport function run(e: Encoder): number { return e.flush(); }\n`);
+    const cfg = loadConfig(repo);
+    cfg.embedImpl = (texts) => Promise.resolve(texts.map(() => [1, 0, 0]));
+    cfg.minChars = 1;
+    await buildIndex(cfg, { rebuild: true });
+    const edges = await (await openStore(cfg)).loadEdges();
+    const flush = edges.find((e) => e.kind === "calls" && e.from_path === "use.ts" && e.ref_name === "flush");
+    assert.ok(flush, "expected a flush call edge from use.ts");
+    assert.equal(flush.conf, "resolved");        // type-pinned, not ambiguous
+    assert.equal(flush.to_path, "encoder.ts");     // Encoder, not Sink
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
