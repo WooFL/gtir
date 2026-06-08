@@ -240,3 +240,18 @@ test("buildGraph: inferred call edge wires like resolved (one link, not fan-out)
   assert.equal(g.edgeList[0].conf, "inferred");
   assert.equal(degreeMap(g, { kinds: ["calls"] }).get("b.mjs#g"), 1);
 });
+
+test("buildGraph: dispatch edge fans to per-candidate links (ungated by includeAmbiguous)", () => {
+  const g = buildGraph([{ kind: "calls", conf: "dispatch", from_path: "use.go", from_symbol: "run",
+    to_path: null, to_symbol: "Area", ref_name: "Area", candidates: ["circle.go", "square.go"] }]);
+  assert.ok(g.rev.get("circle.go#Area")?.has("use.go#run"));
+  assert.ok(g.rev.get("square.go#Area")?.has("use.go#run"));
+  assert.ok(g.edgeList.every((e) => e.conf === "dispatch"), "links must carry conf:dispatch, not conf:ambiguous");
+});
+
+test("orphans: an implementer reached only by a dispatch edge is not dead", () => {
+  const inv = [{ name: "Area", path: "circle.go", line_start: 2, line_end: 3, text: "func (c Circle) Area() float64 { return 1 }" }];
+  const g = buildGraph([{ kind: "calls", conf: "dispatch", from_path: "use.go", from_symbol: "run",
+    to_path: null, to_symbol: "Area", ref_name: "Area", candidates: ["circle.go"] }]);
+  assert.deepEqual(orphans(inv, g).likely_dead, []);
+});
