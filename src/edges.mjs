@@ -111,9 +111,21 @@ function importNames(node) {
 }
 
 // Mirror of chunker.mjs nodeName: prefer the `name` field, else first identifier-like named child.
+// For C-family function_definition nodes the name lives inside the `declarator` field (e.g.
+// `function_declarator` or `pointer_declarator`) rather than a direct identifier child, so we
+// do a BFS over the declarator subtree as a second-pass fallback.
 function nodeName(n) {
   const f = n.childForFieldName ? n.childForFieldName("name") : null;
   if (f && f.text) return f.text;
+  const decl = n.childForFieldName ? n.childForFieldName("declarator") : null;
+  if (decl) {
+    const q = [decl];
+    while (q.length) {
+      const x = q.shift();
+      if (/identifier/.test(x.type) && x.text) return x.text;
+      for (let i = 0; i < x.namedChildCount; i++) q.push(x.namedChild(i));
+    }
+  }
   for (let i = 0; i < n.namedChildCount; i++) {
     const c = n.namedChild(i);
     if (/identifier/.test(c.type)) return c.text;

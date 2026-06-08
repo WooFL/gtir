@@ -1,0 +1,4 @@
+[
+  { "path": "cpp/sdk_plugin.cpp", "symbol": "EffectRender", "expect": "possible_entrypoint" },
+  { "path": "cpp/sdk_plugin.cpp", "symbol": "unusedHelper", "expect": "likely_dead" }
+]
