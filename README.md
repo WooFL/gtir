@@ -321,6 +321,19 @@ gtir eval --repo eval/corpus --tune "ftsWeightMixed=0,0.3,0.5,1" --no-build   # 
 It prints the grid best-first by (MRR, R@1, R@5) with per-tier R@1, marks your current config, and
 recommends a `.gtir/config.json` line. Re-run after any embedding-model change.
 
+**Edge-extraction quality — `gtir eval --edges`.** Beyond retrieval, a second harness scores the *call
+graph*. It runs `eval/edges-golden.json` (labeled cross-file, same-file, and expected-external calls
+across ts/py/rs/cpp) against the extracted edges over `eval/corpus/`, classifying each golden call as
+**correct** (resolved to the right file — `inferred` promotions count), **wrong** (resolved to the wrong
+file), or **missing** (extraction never saw the call). `missing` isolates extraction gaps; `wrong`
+isolates resolution gaps. It reports per-language recall + the `resolved/inferred/ambiguous/external`
+split and gates on a recall floor + wrong-rate ceiling vs. `eval/edges-baseline.json`:
+
+```bash
+npm run eval:edges            # score call-edge extraction, compare to baseline
+npm run eval:edges -- --save  # set the current metrics as the new baseline
+```
+
 ## 🥇 Reranking (optional)
 
 gtir can rerank the top hybrid candidates with a cross-encoder before returning them. Off by default;
@@ -335,19 +348,6 @@ Keys (defaults): `rerankUrl` (`http://127.0.0.1:8088`), `rerankModel` (`bge-rera
 hybrid order with a stderr note — a search never fails because the reranker is down. On the bundled
 corpus reranking didn't beat the hybrid order; measure on yours with `gtir eval --rerank` before relying
 on it.
-
-**Edge-extraction quality — `gtir eval --edges`.** Beyond retrieval, a second harness scores the *call
-graph*. It runs `eval/edges-golden.json` (labeled cross-file, same-file, and expected-external calls
-across ts/py/rs/cpp) against the extracted edges over `eval/corpus/`, classifying each golden call as
-**correct** (resolved to the right file — `inferred` promotions count), **wrong** (resolved to the wrong
-file), or **missing** (extraction never saw the call). `missing` isolates extraction gaps; `wrong`
-isolates resolution gaps. It reports per-language recall + the `resolved/inferred/ambiguous/external`
-split and gates on a recall floor + wrong-rate ceiling vs. `eval/edges-baseline.json`:
-
-```bash
-npm run eval:edges            # score call-edge extraction, compare to baseline
-npm run eval:edges -- --save  # set the current metrics as the new baseline
-```
 
 ## 🔌 MCP server
 
