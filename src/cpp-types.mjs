@@ -244,6 +244,21 @@ export function extractCppVirtuals(text, scopeClass = null) {
   return out;
 }
 
+// Method names a class defines/declares with the `override` specifier (decl `;` or inline def `{`).
+// A reliable derived-side signal that the method overrides a base virtual. Keyed to in-text class / scopeClass.
+const CPP_OVERRIDE = /(?:^|[\s;{}*&])([A-Za-z_]\w*)\s*\([^;{}()]*\)\s*(?:const|noexcept|\s)*override\b/g;
+export function extractCppOverrides(text, scopeClass = null) {
+  const s = String(text || "");
+  const cm = s.match(CPP_CLASS);
+  const cls = cm ? cm[1] : scopeClass;
+  if (!cls) return [];
+  const out = [];
+  CPP_OVERRIDE.lastIndex = 0;
+  let m;
+  while ((m = CPP_OVERRIDE.exec(s))) if (!CPP_CTRL.has(m[1])) out.push({ cls, method: m[1] });
+  return out;
+}
+
 // A class/struct head with a base clause → { cls, bases:[...] }. Captures the base-clause text between
 // `:` and `{`, then pulls each base's trailing identifier, skipping access/virtual keywords. Qualified
 // bases (std::exception) keep the last segment; a class with no `:` clause yields no entry.

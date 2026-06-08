@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { extractCppMethodDefs, resolveCppMethods, extractCppReturnTypes, extractCppBases, extractCppVirtuals } from "../src/cpp-types.mjs";
+import { extractCppMethodDefs, resolveCppMethods, extractCppReturnTypes, extractCppBases, extractCppVirtuals, extractCppOverrides } from "../src/cpp-types.mjs";
 
 test("extractCppMethodDefs: out-of-class definition", () => {
   assert.deepEqual(extractCppMethodDefs(`int Foo::bar(int x) { return x; }`), [{ cls: "Foo", method: "bar" }]);
@@ -205,4 +205,15 @@ test("extractCppVirtuals: scopeClass supplies the class for a headerless chunk",
 });
 test("extractCppVirtuals: a non-virtual method is not captured", () => {
   assert.deepEqual(extractCppVirtuals(`class B { void plain(); virtual void v(); };`), [{ cls: "B", method: "v" }]);
+});
+
+test("extractCppOverrides: declaration and definition forms", () => {
+  const defs = extractCppOverrides(`class D { void a() override; int b(int) const override { return 0; } };`);
+  assert.deepEqual(defs, [{ cls: "D", method: "a" }, { cls: "D", method: "b" }]);
+});
+test("extractCppOverrides: scopeClass supplies the class for a headerless chunk", () => {
+  assert.deepEqual(extractCppOverrides(`void completeIo(DWORD n) override;`, "InputWorker"), [{ cls: "InputWorker", method: "completeIo" }]);
+});
+test("extractCppOverrides: a method without override is not captured", () => {
+  assert.deepEqual(extractCppOverrides(`class D { void a() override; void b(); };`), [{ cls: "D", method: "a" }]);
 });
