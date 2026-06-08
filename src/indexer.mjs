@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { extname, join } from "node:path";
+import { resolveAutoModel } from "./config.mjs";
 import { walkRepo, statPaths } from "./walker.mjs";
 import { langFor } from "./languages.mjs";
 import { grammarMissing, OPTIONAL_GRAMMARS, getParser } from "./parser.mjs";
@@ -220,8 +221,6 @@ export async function buildIndex(cfg, { rebuild = false, paths = null } = {}) {
     }
   }
 
-  const manifest = rebuild ? {} : await store.loadManifest();
-
   // Targeted refresh: when the caller (the file-watcher) hands us the exact changed paths, stat
   // just those instead of walking the whole tree — O(changed), not O(files on disk). Empty/absent
   // paths or a rebuild fall back to the full walk: hooks, manual `refresh`, and the watcher's
@@ -230,6 +229,22 @@ export async function buildIndex(cfg, { rebuild = false, paths = null } = {}) {
   const scan = targeted ? statPaths(cfg, paths) : { files: walkRepo(cfg), missing: null };
   const files = scan.files;
   const live = new Set(files.map((f) => f.relPath));
+
+  // Auto-select the embedding model from the file mix (a notes vault → nomic) unless the user pinned
+  // one. Only on a full walk — a targeted watcher refresh trusts the already-persisted choice. A model
+  // flip on an existing index forces a rebuild (embedding dim changes, so vectors must be re-embedded).
+  if (!targeted) {
+    const auto = resolveAutoModel(cfg, files.map((f) => f.relPath));
+    if (auto !== cfg.model) {
+      cfg.model = auto;
+      if (tableExists) {
+        const metaModel = (await store.readMeta()).model;
+        if (metaModel && metaModel !== cfg.model) rebuild = true;
+      }
+    }
+  }
+
+  const manifest = rebuild ? {} : await store.loadManifest();
 
   // Detect optional (build-on-demand) grammars this repo needs but doesn't have installed —
   // e.g. the gitignored HLSL/GLSL wasm on a fresh clone. Those files are still indexed (via

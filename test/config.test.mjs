@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadConfig, DEFAULTS } from "../src/config.mjs";
+import { loadConfig, DEFAULTS, pickEmbedModel, resolveAutoModel } from "../src/config.mjs";
 
 test("loadConfig returns defaults when no override file", () => {
   const repo = mkdtempSync(join(tmpdir(), "gtir-cfg-"));
@@ -76,4 +76,48 @@ test("DEFAULTS include disambiguation knobs", () => {
   assert.equal(DEFAULTS.disambiguate, true);
   assert.equal(DEFAULTS.disambigThreshold, 0.55);
   assert.equal(DEFAULTS.disambigMargin, 0.05);
+});
+
+test("pickEmbedModel: markdown-only repo → nomic", () => {
+  assert.equal(pickEmbedModel(["a.md", "notes/b.md", "c.mdx"]), "nomic-embed-text");
+});
+test("pickEmbedModel: any code file → null (default/qwen)", () => {
+  assert.equal(pickEmbedModel(["a.md", "src/x.ts"]), null);
+  assert.equal(pickEmbedModel(["a.md", "main.cpp"]), null);
+});
+test("pickEmbedModel: markdown + only data/markup files → still nomic", () => {
+  assert.equal(pickEmbedModel(["a.md", "settings.json", "x.yaml", "canvas.json"]), "nomic-embed-text");
+});
+test("pickEmbedModel: no markdown → null", () => {
+  assert.equal(pickEmbedModel(["a.json", "b.yaml"]), null);
+  assert.equal(pickEmbedModel([]), null);
+});
+
+test("resolveAutoModel: md-only repo with no pin → nomic, persisted to config.json", () => {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-am-"));
+  try {
+    mkdirSync(join(repo, ".gtir"), { recursive: true });
+    const cfg = loadConfig(repo);
+    assert.equal(resolveAutoModel(cfg, ["a.md", "b.md"]), "nomic-embed-text");
+    const written = JSON.parse(readFileSync(join(repo, ".gtir", "config.json"), "utf8"));
+    assert.equal(written.model, "nomic-embed-text");
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+test("resolveAutoModel: repo with code → returns cfg.model, writes nothing", () => {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-am-"));
+  try {
+    mkdirSync(join(repo, ".gtir"), { recursive: true });
+    const cfg = loadConfig(repo);
+    assert.equal(resolveAutoModel(cfg, ["a.md", "x.ts"]), cfg.model); // qwen default
+    assert.equal(existsSync(join(repo, ".gtir", "config.json")), false); // no write
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+test("resolveAutoModel: explicit model pin is respected (no flip)", () => {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-am-"));
+  try {
+    mkdirSync(join(repo, ".gtir"), { recursive: true });
+    writeFileSync(join(repo, ".gtir", "config.json"), JSON.stringify({ model: "x-custom" }));
+    const cfg = loadConfig(repo);  // cfg.model === "x-custom"
+    assert.equal(resolveAutoModel(cfg, ["a.md", "b.md"]), "x-custom");  // respected, not nomic
+  } finally { rmSync(repo, { recursive: true, force: true }); }
 });
