@@ -52,6 +52,20 @@ grep and gtir are complementary: grep for an exact string you know, gtir for fin
 - **Traversable in an editor** — search, read a span, outline a file, find similar chunks, jump to a
   symbol's definition or references.
 
+## 🔒 Privacy — zero egress
+
+During index, search, and `mcp-serve`, gtir makes outbound network requests **only** to the local
+endpoints you configure: `ollamaUrl` (embeddings, default `http://localhost:11434`) and, when rerank
+is on, `rerankUrl` (default `http://127.0.0.1:8088`). Nothing else — no telemetry, analytics,
+auto-update, or cloud/vendor calls, ever. (Point `OLLAMA_URL` at a LAN host if you want; that's your
+explicit choice and still not vendor egress.) Grammars are **bundled** at pack time, so there's no
+runtime grammar fetch either (`gtir fetch-grammars` is an explicit one-time setup step).
+
+This is a tested guarantee, not a promise: `test/no-egress.test.mjs` spies on global `fetch` while
+running the real index → search → MCP flows and asserts every contacted host is one of your configured
+endpoints, and a runtime host check (`src/net-guard.mjs`, `assertConfiguredUrl`) makes any stray
+request throw rather than silently phone home.
+
 ## ⚙️ How it works
 
 ```
