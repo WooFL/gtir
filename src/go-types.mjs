@@ -65,11 +65,13 @@ export function inferReceiverType(callNode, receiverName) {
   return collectGoBindings(fn).get(receiverName) ?? null;
 }
 
-// type Name interface { M1(...) ...; M2(...) ... } → { name, methods:[M1,M2] }. Method names are the
-// identifiers directly followed by '(' inside the interface body. Embedded interfaces (an identifier
-// NOT followed by '(') and method signatures are ignored — name-based satisfaction (v1).
+// type Name interface { M1(...) ...; M2(...) ... } → { name, methods:[M1,M2] }. A method name is an
+// identifier that STARTS a method spec — at the interface-body start, or after a newline or ';' — and
+// is followed by '('. Anchoring to the spec start (not just any `ident(`) avoids capturing a func-typed
+// param or return (`Register(cb func())`, `Make() func()`) as a phantom method. Embedded interfaces
+// (an identifier not followed by '(') and method signatures are ignored — name-based satisfaction (v1).
 const GO_IFACE = /type\s+([A-Za-z_]\w*)\s+interface\s*\{/g;
-const GO_IFACE_METHOD = /([A-Za-z_]\w*)\s*\(/g;
+const GO_IFACE_METHOD = /(?:^|[;\n])\s*([A-Za-z_]\w*)\s*\(/g;
 export function extractGoInterfaces(text) {
   const s = String(text || "");
   const out = [];

@@ -69,6 +69,11 @@ test("extractGoInterfaces: ignores non-interface type and struct", () => {
 test("extractGoInterfaces: empty interface yields no methods", () => {
   assert.deepEqual(extractGoInterfaces(`type Any interface {}`), [{ name: "Any", methods: [] }]);
 });
+test("extractGoInterfaces: a func-typed param/return is not captured as a phantom method", () => {
+  // `func(` inside a signature must NOT become a method name — only spec-start identifiers count.
+  assert.deepEqual(extractGoInterfaces(`type H interface {\n  Register(cb func())\n  Make() func()\n}`),
+    [{ name: "H", methods: ["Register", "Make"] }]);
+});
 
 const dMethodIdx = new Map([
   ["Circle#Area", [{ path: "circle.go", line_start: 1, line_end: 3 }]],
