@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { extractCppMethodDefs, resolveCppMethods, extractCppReturnTypes, extractCppBases, extractCppVirtuals, extractCppOverrides } from "../src/cpp-types.mjs";
+import { extractCppMethodDefs, resolveCppMethods, extractCppReturnTypes, extractCppBases, extractCppVirtuals, extractCppOverrides, resolveCppDispatch } from "../src/cpp-types.mjs";
 
 test("extractCppMethodDefs: out-of-class definition", () => {
   assert.deepEqual(extractCppMethodDefs(`int Foo::bar(int x) { return x; }`), [{ cls: "Foo", method: "bar" }]);
@@ -220,4 +220,53 @@ test("extractCppOverrides: scopeClass supplies the class for a headerless chunk"
 });
 test("extractCppOverrides: a method without override is not captured", () => {
   assert.deepEqual(extractCppOverrides(`class D { void a() override; void b(); };`), [{ cls: "D", method: "a" }]);
+});
+
+// Shape (abstract base) <- Circle, Rect (overrides). cppMethodIndex has concrete defs (out-of-class).
+const dMethodIdx = new Map([
+  ["Circle#area", [{ path: "circle.cpp", line_start: 1, line_end: 3 }]],
+  ["Rect#area", [{ path: "rect.cpp", line_start: 1, line_end: 3 }]],
+  ["Shape#area", [{ path: "shape.cpp", line_start: 9, line_end: 9 }]],   // a CONCRETE base impl (when present)
+]);
+const dDerived = new Map([["Shape", new Set(["Circle", "Rect"])]]);     // transitive derived of Shape
+const dVirtual = new Map([["Shape", new Set(["area"])]]);               // Shape declares area virtual
+const dOverride = new Map([["Circle", new Set(["area"])], ["Rect", new Set(["area"])]]);
+const cRow = (over = {}) => ({ kind: "calls", conf: "ambiguous", isMethod: true, ref_name: "area",
+  from_path: "use.cpp", receiverType: "Shape", to_path: null, to_symbol: null, candidates: [], ...over });
+
+test("resolveCppDispatch: abstract base call → dispatch over derived overrides (+ concrete base impl)", () => {
+  const [r] = resolveCppDispatch([cRow()], dMethodIdx, dDerived, dVirtual, dOverride);
+  assert.equal(r.conf, "dispatch");
+  assert.equal(r.to_symbol, "area");
+  assert.deepEqual([...r.candidates].sort(), ["circle.cpp", "rect.cpp", "shape.cpp"]);
+  assert.equal(r.to_path, null);
+});
+test("resolveCppDispatch: pure abstract base (no Shape#area def) → only derived candidates", () => {
+  const idx = new Map([["Circle#area", [{ path: "circle.cpp", line_start: 1, line_end: 3 }]], ["Rect#area", [{ path: "rect.cpp", line_start: 1, line_end: 3 }]]]);
+  const [r] = resolveCppDispatch([cRow()], idx, dDerived, dVirtual, dOverride);
+  assert.deepEqual([...r.candidates].sort(), ["circle.cpp", "rect.cpp"]);
+  assert.equal(r.conf, "dispatch");
+});
+test("resolveCppDispatch: base NOT virtual but derived has override → still dispatches (override signal)", () => {
+  const noVirtual = new Map();   // Shape doesn't declare area virtual in-index
+  const [r] = resolveCppDispatch([cRow()], dMethodIdx, dDerived, noVirtual, dOverride);
+  assert.equal(r.conf, "dispatch");
+  assert.deepEqual([...r.candidates].sort(), ["circle.cpp", "rect.cpp"]); // no base concrete (baseVirtual false)
+});
+test("resolveCppDispatch: no derived implementer → row unchanged (left for resolveCppMethods)", () => {
+  const [r] = resolveCppDispatch([cRow({ ref_name: "ghost" })], dMethodIdx, dDerived, dVirtual, dOverride);
+  assert.equal(r.conf, "ambiguous");
+});
+test("resolveCppDispatch: non-virtual, non-override derived method → not dispatched", () => {
+  const idx = new Map([["Circle#area", [{ path: "circle.cpp", line_start: 1, line_end: 3 }]]]);
+  const [r] = resolveCppDispatch([cRow()], idx, dDerived, new Map(), new Map()); // neither baseVirtual nor override
+  assert.equal(r.conf, "ambiguous");
+});
+test("resolveCppDispatch: receiver type has no derived → unchanged", () => {
+  const [r] = resolveCppDispatch([cRow({ receiverType: "Circle" })], dMethodIdx, dDerived, dVirtual, dOverride);
+  assert.equal(r.conf, "ambiguous");
+});
+test("resolveCppDispatch: non-.cpp caller gated out", () => {
+  const [r] = resolveCppDispatch([cRow({ from_path: "use.ts" })], dMethodIdx, dDerived, dVirtual, dOverride);
+  assert.equal(r.conf, "ambiguous");
 });

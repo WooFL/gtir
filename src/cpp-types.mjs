@@ -294,6 +294,33 @@ export function extractCppBases(text) {
 // C++ source-file extensions — used to gate resolveCppMethods to C++ callers only.
 const CPP_EXTS = /\.(cpp|cc|cxx|c|h|hpp|hh|hxx|metal)$/i;
 
+// Upgrade an ambiguous C++ member call on a base/abstract-typed receiver to conf:"dispatch" — the set
+// of in-repo derived classes that OVERRIDE the called virtual method. A derived D's def counts when the
+// base declares the method virtual (cppVirtualMethods) OR D marks it `override` (cppOverrideMethods).
+// Requires >=1 derived implementer (a non-virtual / no-override call yields nothing → left for
+// resolveCppMethods to resolve concretely). When the base itself has a concrete impl AND declared the
+// method virtual, the base's def is included too (the call may bind to the base). Runs BEFORE
+// resolveCppMethods. Pure.
+export function resolveCppDispatch(rows, cppMethodIndex, cppDerivedIndex, cppVirtualMethods, cppOverrideMethods) {
+  return rows.map((r) => {
+    if (r.kind !== "calls" || r.conf !== "ambiguous" || !r.isMethod || !r.receiverType) return r;
+    if (!CPP_EXTS.test(r.from_path ?? "")) return r;
+    const B = r.receiverType, m = r.ref_name;
+    const derived = cppDerivedIndex.get(B);
+    if (!derived || !derived.size) return r;
+    const baseVirtual = cppVirtualMethods.get(B)?.has(m) ?? false;
+    const paths = new Set();
+    for (const D of derived) {
+      const defs = cppMethodIndex.get(`${D}#${m}`);
+      if (!defs || !defs.length) continue;
+      if (baseVirtual || (cppOverrideMethods.get(D)?.has(m) ?? false)) for (const d of defs) paths.add(d.path);
+    }
+    if (paths.size === 0) return r;                                  // no real override → not a dispatch
+    if (baseVirtual) for (const d of (cppMethodIndex.get(`${B}#${m}`) || [])) paths.add(d.path);  // concrete base
+    return { ...r, conf: "dispatch", to_path: null, to_symbol: m, to_lines: null, candidates: [...paths] };
+  });
+}
+
 // Upgrade ambiguous C++ member-call rows to resolved when the receiver type pins a single target FILE.
 // Pure — new array; only touches kind:"calls" conf:"ambiguous" isMethod rows with a resolved receiver type (direct r.receiverType, or via a unique cppReturnIndex factory lookup).
 // Unique-PATH (not unique-def): overloads (several defs in one file) resolve; the same class#method
