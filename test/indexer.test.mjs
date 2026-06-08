@@ -391,3 +391,23 @@ test("indexEdges resolves a Go method call by receiver type (cross-file)", async
     assert.equal(flush.to_path, "batcher.go");     // resolved to Batcher, not Logger
   } finally { rmSync(repo, { recursive: true, force: true }); }
 });
+
+test("indexEdges resolves a C++ member call by receiver type (cross-file)", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-cpp-"));
+  try {
+    writeFileSync(join(repo, "encoder.cpp"), `class Encoder { public: int flush(); };\nint Encoder::flush() { return 1; }\n`);
+    writeFileSync(join(repo, "sink.cpp"), `class Sink { public: int flush(); };\nint Sink::flush() { return 2; }\n`);
+    writeFileSync(join(repo, "use.cpp"), `int run(Encoder* e) { return e->flush(); }\n`);
+    const cfg = loadConfig(repo);
+    cfg.embedImpl = (texts) => Promise.resolve(texts.map(() => [1, 0, 0]));
+    cfg.minChars = 1;
+    await buildIndex(cfg, { rebuild: true });
+    const edges = await (await openStore(cfg)).loadEdges();
+    const flush = edges.find((e) => e.kind === "calls" && e.from_path === "use.cpp" && e.ref_name === "flush");
+    assert.ok(flush, "expected a flush call edge from use.cpp");
+    assert.equal(flush.conf, "resolved");
+    assert.equal(flush.to_path, "encoder.cpp");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
