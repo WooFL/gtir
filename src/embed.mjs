@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { assertConfiguredUrl } from "./net-guard.mjs";
 
 export function l2normalize(v) {
   let n = 0;
@@ -18,7 +19,8 @@ async function embedOnce(texts, cfg, timeoutMs) {
   try {
     let res;
     try {
-      res = await fetchImpl(`${cfg.ollamaUrl}/api/embed`, {
+      const url = assertConfiguredUrl(`${cfg.ollamaUrl}/api/embed`, cfg);  // zero-egress guard
+      res = await fetchImpl(url, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ model: cfg.model, input: texts.map((t) => t.slice(0, cfg.maxEmbedChars ?? 6000)) }),

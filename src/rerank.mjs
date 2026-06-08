@@ -1,12 +1,14 @@
 // Cross-encoder rerank client for llama.cpp llama-server (--reranking, /rerank endpoint).
 // Mirrors embed.mjs: fetchImpl-injectable, and NEVER throws fatally — returns null on any
 // failure so search() can fall back to hybrid (RRF) order, like the FTS-unavailable path.
+import { assertConfiguredUrl } from "./net-guard.mjs";
 
 export async function rerankDocs(query, docs, cfg) {
   const fetchImpl = cfg.fetchImpl ?? fetch;
   const cap = cfg.rerankMaxChars ?? 2000;
   try {
-    const res = await fetchImpl(`${cfg.rerankUrl}/rerank`, {
+    const url = assertConfiguredUrl(`${cfg.rerankUrl}/rerank`, cfg);  // zero-egress guard
+    const res = await fetchImpl(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
