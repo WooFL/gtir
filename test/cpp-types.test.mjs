@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { extractCppMethodDefs, resolveCppMethods } from "../src/cpp-types.mjs";
+import { extractCppMethodDefs, resolveCppMethods, extractCppReturnTypes } from "../src/cpp-types.mjs";
 
 test("extractCppMethodDefs: out-of-class definition", () => {
   assert.deepEqual(extractCppMethodDefs(`int Foo::bar(int x) { return x; }`), [{ cls: "Foo", method: "bar" }]);
@@ -84,4 +84,34 @@ test("resolveCppMethods: no receiverType / unknown type / non-method → unchang
   assert.equal(resolveCppMethods([ambRow({ receiverType: null })], idx)[0].conf, "ambiguous");
   assert.equal(resolveCppMethods([ambRow({ receiverType: "Nope" })], idx)[0].conf, "ambiguous");
   assert.equal(resolveCppMethods([ambRow({ isMethod: false, receiverType: "Encoder" })], idx)[0].conf, "ambiguous");
+});
+
+test("extractCppReturnTypes: bare class return", () => {
+  assert.deepEqual(extractCppReturnTypes(`Widget makeWidget(){ return Widget(); }`), [{ name: "makeWidget", returnType: "Widget" }]);
+});
+test("extractCppReturnTypes: pointer and reference returns", () => {
+  assert.deepEqual(extractCppReturnTypes(`Foo* a(){ return 0; }`), [{ name: "a", returnType: "Foo" }]);
+  assert.deepEqual(extractCppReturnTypes(`Foo& b(){ static Foo f; return f; }`), [{ name: "b", returnType: "Foo" }]);
+  assert.deepEqual(extractCppReturnTypes(`Foo *c(){ return 0; }`), [{ name: "c", returnType: "Foo" }]);
+});
+test("extractCppReturnTypes: const-qualified return", () => {
+  assert.deepEqual(extractCppReturnTypes(`const Foo c(){ return Foo(); }`), [{ name: "c", returnType: "Foo" }]);
+});
+test("extractCppReturnTypes: trailing return type", () => {
+  assert.deepEqual(extractCppReturnTypes(`auto t() -> Gadget { return Gadget(); }`), [{ name: "t", returnType: "Gadget" }]);
+});
+test("extractCppReturnTypes: smart-pointer return unwraps to element", () => {
+  assert.deepEqual(extractCppReturnTypes(`std::unique_ptr<Widget> u(){ return {}; }`), [{ name: "u", returnType: "Widget" }]);
+  assert.deepEqual(extractCppReturnTypes(`shared_ptr<Gadget> s(){ return {}; }`), [{ name: "s", returnType: "Gadget" }]);
+});
+test("extractCppReturnTypes: NEGATIVES yield no entry", () => {
+  assert.deepEqual(extractCppReturnTypes(`Foo Bar::m(){ return Foo(); }`), []);   // out-of-class method
+  assert.deepEqual(extractCppReturnTypes(`struct W { W(){} };`), []);             // constructor
+  assert.deepEqual(extractCppReturnTypes(`void f(){ if (g()) { h(); } }`), []);   // control flow / void
+  assert.deepEqual(extractCppReturnTypes(`Foo f();`), []);                        // prototype (no body)
+  assert.deepEqual(extractCppReturnTypes(`void g(){ Foo x = make(); }`), []);     // variable, not a def
+  assert.deepEqual(extractCppReturnTypes(`int n(){ return 0; }`), []);            // primitive return
+  assert.deepEqual(extractCppReturnTypes(`Ns::Foo q(){ return {}; }`), []);       // qualified return
+  assert.deepEqual(extractCppReturnTypes(`Vec<int> v(){ return {}; }`), []);      // non-smart-ptr generic
+  assert.deepEqual(extractCppReturnTypes(`auto d(){ return 1; }`), []);           // deduced auto, no trailing
 });

@@ -31,6 +31,52 @@ export function extractCppMethodDefs(text) {
   return out;
 }
 
+// Free-function definition with a leading return type: `RetType name(params) [quals] {`. Linear params
+// `[^;{}()]*` (ReDoS-safe, same discipline as CPP_OUT_DEF). The return type allows one `::` qualifier
+// and one non-nested `<...>` (for std::unique_ptr<T>); normalizeReturnType classifies it. The
+// type/name separator `(?:\s*[*&]\s*|\s+)` requires a real boundary (ptr/ref or whitespace) so a
+// run-together `Widgetmake(){` cannot false-match.
+const CPP_LEADING_FN = /(?:^|[;{}])\s*(?:(?:inline|static|constexpr|virtual|explicit|friend)\s+)*((?:const\s+)?[A-Za-z_]\w*(?:\s*::\s*[A-Za-z_]\w*)?(?:\s*<[^<>;{}()]*>)?)(?:\s*[*&]\s*|\s+)([A-Za-z_]\w*)\s*\([^;{}()]*\)\s*(?:const|noexcept|override|final|mutable|volatile|\s)*\{/g;
+// Trailing-return form: `auto name(params) [quals] -> RetType {`.
+const CPP_TRAILING_FN = /(?:^|[;{}])\s*(?:(?:inline|static|constexpr|friend)\s+)*auto\s+([A-Za-z_]\w*)\s*\([^;{}()]*\)\s*(?:const|noexcept|\s)*->\s*((?:const\s+)?[A-Za-z_]\w*(?:\s*::\s*[A-Za-z_]\w*)?(?:\s*<[^<>;{}()]*>)?\s*[*&]?)\s*\{/g;
+const CPP_RET_PRIMITIVES = new Set(["void", "bool", "char", "short", "int", "long", "float", "double",
+  "signed", "unsigned", "wchar_t", "char8_t", "char16_t", "char32_t", "size_t", "auto"]);
+// std smart-pointer return → element type. Only std unique/shared/weak_ptr (return-type wrappers are
+// effectively always std); a custom forwarder as a *return* type is a deferred non-goal.
+const CPP_SMART_PTR_RET = /^(?:std\s*::\s*)?(unique_ptr|shared_ptr|weak_ptr)\s*<\s*([A-Za-z_]\w*)\s*>$/;
+
+// Reduce a captured return-type string to a bare element class name, or null when it is a primitive,
+// a qualified name (Ns::Foo), or a non-smart-pointer generic (Foo<T>). Smart-pointer wrappers unwrap.
+function normalizeReturnType(raw) {
+  const t = String(raw).replace(/^const\s+/, "").replace(/[\s*&]+$/, "").trim();
+  const sp = t.match(CPP_SMART_PTR_RET);
+  if (sp) return sp[2];
+  if (t.includes("::") || t.includes("<")) return null;
+  if (CPP_RET_PRIMITIVES.has(t)) return null;
+  return /^[A-Za-z_]\w*$/.test(t) ? t : null;
+}
+
+// Regex a chunk's text into {name, returnType} pairs for function definitions with an inferable simple
+// return type (bare class / pointer / reference / const / trailing-return / std smart-pointer). In-class
+// member defs are included (harmless — they resolve only an implicit-`this` `auto x = m()` call, which is
+// correct); out-of-class method defs (`Class::m`) are excluded by the name pattern not allowing `::`.
+export function extractCppReturnTypes(text) {
+  const s = String(text || "");
+  const out = [];
+  CPP_LEADING_FN.lastIndex = 0;
+  let m;
+  while ((m = CPP_LEADING_FN.exec(s))) {
+    const rt = normalizeReturnType(m[1]);
+    if (rt) out.push({ name: m[2], returnType: rt });
+  }
+  CPP_TRAILING_FN.lastIndex = 0;
+  while ((m = CPP_TRAILING_FN.exec(s))) {
+    const rt = normalizeReturnType(m[2]);
+    if (rt) out.push({ name: m[1], returnType: rt });
+  }
+  return out;
+}
+
 // Wrapper templates whose `ptr->method()` forwards to the element type's method. Std smart pointers
 // universally do; a project adds custom forwarders (e.g. AEFX_SuiteScoper) via cfg.cppSmartPointers.
 export const DEFAULT_SMART_PTRS = new Set(["unique_ptr", "shared_ptr", "weak_ptr"]);
