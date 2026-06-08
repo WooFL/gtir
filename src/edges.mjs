@@ -1,5 +1,6 @@
 import { dirname, join, basename } from "node:path";
 import { edgeTypes, targetTypes } from "./languages.mjs";
+import { inferReceiverType } from "./go-types.mjs";
 
 // Walk every named node depth-first, calling visit(node). Iterative (no recursion depth limit),
 // mirrors chunker.collectNodes' traversal.
@@ -46,6 +47,15 @@ function calleeOf(node) {
 const MEMBER_CALL = /^(member_expression|attribute|selector_expression|field_expression)$/;
 function isMemberCall(callee) {
   return !!callee && MEMBER_CALL.test(callee.type);
+}
+
+// The receiver of a member call as a plain identifier (`b.M()` → "b"), or null for a chained or
+// non-identifier receiver (`a.b.M()`, `pkg.X.M()`) — those defer to the embedding tier.
+function memberReceiver(callee) {
+  const recv = callee.childForFieldName?.("operand")   // go selector_expression
+    || callee.childForFieldName?.("object")            // ts/js member_expression
+    || callee.namedChild(0);
+  return recv && /^identifier$/.test(recv.type) ? recv.text : null;
 }
 
 // Strip surrounding quotes / angle brackets from an import source literal.
@@ -217,7 +227,7 @@ function resolveSourceStem(fromPath, source) {
 
 const noteKey = (s) => basename(String(s)).replace(/\.(md|mdx)$/i, "").toLowerCase();
 
-function row(kind, from, to, conf, candidates, contentHash, refName, score = null, isMethod = false) {
+function row(kind, from, to, conf, candidates, contentHash, refName, score = null, isMethod = false, receiverType = null) {
   return {
     kind, conf,
     from_path: from.path, from_lines: from.lines ?? `${from.fromLine}`, from_symbol: from.symbol ?? null,
@@ -228,6 +238,7 @@ function row(kind, from, to, conf, candidates, contentHash, refName, score = nul
     content_hash: contentHash ?? null,
     score: score ?? null,
     isMethod,
+    receiverType,
   };
 }
 
@@ -259,10 +270,10 @@ export function resolveEdges(rawEdges, symbolIndex, noteIndex, opts = {}) {
       if (cands.length === 1) {
         const only = cands[0];
         if (only.path === e.fromPath) { out.push(row("calls", from, { ...only, symbol: e.refName }, "resolved", [], contentHash, e.refName)); continue; }
-        out.push(row("calls", from, null, "ambiguous", [only.path], contentHash, e.refName, null, e.isMethod));
+        out.push(row("calls", from, null, "ambiguous", [only.path], contentHash, e.refName, null, e.isMethod, e.receiverType));
         continue;
       }
-      out.push(row("calls", from, null, "ambiguous", cands.map((c) => c.path), contentHash, e.refName, null, e.isMethod));
+      out.push(row("calls", from, null, "ambiguous", cands.map((c) => c.path), contentHash, e.refName, null, e.isMethod, e.receiverType));
     } else if (e.kind === "imports") {
       const stem = resolveSourceStem(e.fromPath, e.source);
       const from = { path: e.fromPath, fromLine: e.fromLine };
@@ -347,7 +358,10 @@ export function extractCodeEdges(tree, langId, relPath) {
           seen.add(key);
           // Best-effort: null when at module top-level or grammar doesn't expose a name.
           const fromSymbol = declSet.size > 0 ? enclosingSymbol(n, declSet) : null;
-          edges.push({ kind: "calls", refName: name, fromPath: relPath, fromLine: n.startPosition.row + 1, fromSymbol, isMethod: isMemberCall(callee) });
+          const isMethod = isMemberCall(callee);
+          const receiver = isMethod ? memberReceiver(callee) : null;
+          const receiverType = (langId === "go" && receiver) ? inferReceiverType(n, receiver) : null;
+          edges.push({ kind: "calls", refName: name, fromPath: relPath, fromLine: n.startPosition.row + 1, fromSymbol, isMethod, receiver, receiverType });
         }
       }
     } else if (importSet.has(n.type)) {

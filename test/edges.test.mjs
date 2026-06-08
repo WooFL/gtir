@@ -308,3 +308,44 @@ test("resolveEdges threads isMethod onto ambiguous calls rows", () => {
   assert.equal(r.conf, "ambiguous");
   assert.equal(r.isMethod, true);
 });
+
+test("extractCodeEdges (go): typed param → receiver + receiverType", async () => {
+  const edges = await edgesFor("go", `package p\nfunc use(b *Batcher) { b.Flush() }`, "a.go");
+  const call = edges.find((e) => e.kind === "calls" && e.refName === "Flush");
+  assert.equal(call.isMethod, true);
+  assert.equal(call.receiver, "b");
+  assert.equal(call.receiverType, "Batcher");
+});
+test("extractCodeEdges (go): var decl → receiverType", async () => {
+  const edges = await edgesFor("go", `package p\nfunc use() { var b Batcher; b.Flush() }`, "a.go");
+  const call = edges.find((e) => e.kind === "calls" && e.refName === "Flush");
+  assert.equal(call.receiverType, "Batcher");
+});
+test("extractCodeEdges (go): enclosing method receiver → receiverType", async () => {
+  const edges = await edgesFor("go", `package p\nfunc (t *T) a() {}\nfunc (t *T) b() { t.a() }`, "a.go");
+  const call = edges.find((e) => e.kind === "calls" && e.refName === "a");
+  assert.equal(call.receiverType, "T");
+});
+test("extractCodeEdges (go): := binding → receiverType null (deferred)", async () => {
+  const edges = await edgesFor("go", `package p\nfunc use() { b := make(); b.Flush() }`, "a.go");
+  const call = edges.find((e) => e.kind === "calls" && e.refName === "Flush");
+  assert.equal(call.receiverType, null);
+});
+test("extractCodeEdges (go): chained receiver a.b.M() → receiver null", async () => {
+  const edges = await edgesFor("go", `package p\nfunc use(a *A) { a.b.M() }`, "a.go");
+  const call = edges.find((e) => e.kind === "calls" && e.refName === "M");
+  assert.equal(call.receiver, null);
+  assert.equal(call.receiverType, null);
+});
+test("extractCodeEdges (non-go): receiverType stays null", async () => {
+  const edges = await edgesFor("typescript", `function a(){ obj.get(x); }`);
+  const call = edges.find((e) => e.kind === "calls" && e.refName === "get");
+  assert.equal(call.receiverType, null);
+});
+test("resolveEdges threads receiverType onto ambiguous calls rows", () => {
+  const idx = new Map([["Flush", [{ path: "a.go", line_start: 1, line_end: 3 }, { path: "b.go", line_start: 1, line_end: 3 }]]]);
+  const raw = [{ kind: "calls", refName: "Flush", fromPath: "c.go", fromLine: 5, fromSymbol: "use", isMethod: true, receiver: "b", receiverType: "Batcher" }];
+  const [r] = resolveEdges(raw, idx, new Map());
+  assert.equal(r.conf, "ambiguous");
+  assert.equal(r.receiverType, "Batcher");
+});

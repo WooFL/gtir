@@ -17,6 +17,52 @@ export function extractGoMethodDefs(text) {
   return out;
 }
 
+// The Go type name a type node denotes, or null for non-local-named types (qualified, slice, map,
+// interface, func, etc.). Pointer types unwrap to their element type.
+function goTypeName(t) {
+  if (!t) return null;
+  if (t.type === "pointer_type") return goTypeName(t.namedChild(0));
+  if (t.type === "type_identifier") return t.text;
+  return null;
+}
+
+// Add every (name → goTypeName(type)) binding declared by a parameter_declaration or var_spec node.
+// Both shapes are: one or more identifier children + a `type` field. `:=` (short_var_declaration) is
+// a different node type and is intentionally never visited here.
+function addBinding(decl, bindings) {
+  const tn = goTypeName(decl.childForFieldName?.("type"));
+  if (!tn) return;
+  for (let i = 0; i < decl.namedChildCount; i++) {
+    const c = decl.namedChild(i);
+    if (c.type === "identifier") bindings.set(c.text, tn);
+  }
+}
+
+// Collect all explicit single-hop type bindings visible in a function/method node: its receiver and
+// parameters (parameter_declaration) and its body's `var` specs (var_spec). Best-effort: a nested
+// func literal's params are also visited (rare; a wrong binding simply won't match a real method).
+function collectGoBindings(fn) {
+  const bindings = new Map();
+  const stack = [fn];
+  while (stack.length) {
+    const n = stack.pop();
+    if (n.type === "parameter_declaration" || n.type === "var_spec") addBinding(n, bindings);
+    for (let i = 0; i < n.namedChildCount; i++) stack.push(n.namedChild(i));
+  }
+  return bindings;
+}
+
+// Infer the Go type of `receiverName` at a call site by walking the call's enclosing function for an
+// explicit binding (typed param, `var` decl, or the method's own receiver). Returns the type name or
+// null. receiverName must be a plain identifier (chained/qualified receivers are passed as null).
+export function inferReceiverType(callNode, receiverName) {
+  if (!callNode || !receiverName) return null;
+  let fn = callNode.parent;
+  while (fn && fn.type !== "function_declaration" && fn.type !== "method_declaration") fn = fn.parent;
+  if (!fn) return null;
+  return collectGoBindings(fn).get(receiverName) ?? null;
+}
+
 // Upgrade ambiguous Go method-call rows to resolved when the receiver type pins a unique target.
 // Pure — returns a NEW array; only touches kind:"calls" conf:"ambiguous" isMethod rows that carry a
 // receiverType. 0 or >1 matching defs → left ambiguous (don't guess). Mirrors disambiguateEdges' shape.
