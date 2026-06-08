@@ -65,6 +65,30 @@ export function inferReceiverType(callNode, receiverName) {
   return collectGoBindings(fn).get(receiverName) ?? null;
 }
 
+// type Name interface { M1(...) ...; M2(...) ... } → { name, methods:[M1,M2] }. Method names are the
+// identifiers directly followed by '(' inside the interface body. Embedded interfaces (an identifier
+// NOT followed by '(') and method signatures are ignored — name-based satisfaction (v1).
+const GO_IFACE = /type\s+([A-Za-z_]\w*)\s+interface\s*\{/g;
+const GO_IFACE_METHOD = /([A-Za-z_]\w*)\s*\(/g;
+export function extractGoInterfaces(text) {
+  const s = String(text || "");
+  const out = [];
+  GO_IFACE.lastIndex = 0;
+  let m;
+  while ((m = GO_IFACE.exec(s))) {
+    const name = m[1];
+    let depth = 1, i = GO_IFACE.lastIndex;
+    for (; i < s.length && depth > 0; i++) { if (s[i] === "{") depth++; else if (s[i] === "}") depth--; }
+    const body = s.slice(GO_IFACE.lastIndex, i - 1);
+    const methods = [];
+    GO_IFACE_METHOD.lastIndex = 0;
+    let mm;
+    while ((mm = GO_IFACE_METHOD.exec(body))) methods.push(mm[1]);
+    out.push({ name, methods });
+  }
+  return out;
+}
+
 // Upgrade ambiguous Go method-call rows to resolved when the receiver type pins a unique target.
 // Pure — returns a NEW array; only touches kind:"calls" conf:"ambiguous" isMethod rows that carry a
 // receiverType. 0 or >1 matching defs → left ambiguous (don't guess). Mirrors disambiguateEdges' shape.

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { extractGoMethodDefs, resolveGoMethods } from "../src/go-types.mjs";
+import { extractGoMethodDefs, resolveGoMethods, extractGoInterfaces } from "../src/go-types.mjs";
 
 test("extractGoMethodDefs: pointer receiver", () => {
   assert.deepEqual(extractGoMethodDefs(`func (b *Batcher) Batch(x int) int { return x }`), [{ type: "Batcher", method: "Batch" }]);
@@ -57,4 +57,15 @@ test("resolveGoMethods: two defs for the same type#method → unchanged (genuine
   const dup = new Map([["Batcher#Flush", [{ path: "a.go", line_start: 1, line_end: 2 }, { path: "b.go", line_start: 1, line_end: 2 }]]]);
   const [r] = resolveGoMethods([ambRow({ receiverType: "Batcher" })], dup);
   assert.equal(r.conf, "ambiguous");
+});
+
+test("extractGoInterfaces: single + multi method", () => {
+  assert.deepEqual(extractGoInterfaces(`type Shaper interface { Area() float64 }`), [{ name: "Shaper", methods: ["Area"] }]);
+  assert.deepEqual(extractGoInterfaces(`type RW interface {\n  Read(p []byte) (int, error)\n  Write(p []byte) (int, error)\n}`), [{ name: "RW", methods: ["Read", "Write"] }]);
+});
+test("extractGoInterfaces: ignores non-interface type and struct", () => {
+  assert.deepEqual(extractGoInterfaces(`type T struct { x int }`), []);
+});
+test("extractGoInterfaces: empty interface yields no methods", () => {
+  assert.deepEqual(extractGoInterfaces(`type Any interface {}`), [{ name: "Any", methods: [] }]);
 });
