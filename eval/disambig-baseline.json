@@ -1,0 +1,14 @@
+{
+  "n": 4,
+  "cells": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 2,
+    "tn": 2
+  },
+  "promotions": 0,
+  "precision": 1,
+  "recall": 0,
+  "abstain_rate": 1,
+  "model": "qwen3-embedding:0.6b"
+}
