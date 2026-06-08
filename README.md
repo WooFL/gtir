@@ -192,6 +192,7 @@ gtir doctor  [--repo <project>] [--no-pull]            # check Ollama + model, p
 gtir mcp     --repo <project> [--label name:<repo>] [--watch] [--print-config]   # run the MCP server
 gtir eval    --repo <corpus> --golden <f> [--save] [--json]            # score retrieval quality
 gtir eval    --repo <corpus> --tune ["ftsWeight=0,0.2;ftsWeightMixed=0,1"]   # sweep fusion weights
+gtir eval    --repo <corpus> --edges [--save]                         # score call-edge extraction quality
 gtir graph   --repo <project> [--focus <symbol>] [--rollup] [--out FILE]    # render edge graph as HTML
 gtir impact  <symbol> --repo <project> [--downstream] [--depth N] [--path F]  # transitive blast radius
 gtir orphans --repo <project>                                               # likely-dead symbols
@@ -319,6 +320,19 @@ gtir eval --repo eval/corpus --tune "ftsWeightMixed=0,0.3,0.5,1" --no-build   # 
 
 It prints the grid best-first by (MRR, R@1, R@5) with per-tier R@1, marks your current config, and
 recommends a `.gtir/config.json` line. Re-run after any embedding-model change.
+
+**Edge-extraction quality — `gtir eval --edges`.** Beyond retrieval, a second harness scores the *call
+graph*. It runs `eval/edges-golden.json` (labeled cross-file, same-file, and expected-external calls
+across ts/py/rs/cpp) against the extracted edges over `eval/corpus/`, classifying each golden call as
+**correct** (resolved to the right file — `inferred` promotions count), **wrong** (resolved to the wrong
+file), or **missing** (extraction never saw the call). `missing` isolates extraction gaps; `wrong`
+isolates resolution gaps. It reports per-language recall + the `resolved/inferred/ambiguous/external`
+split and gates on a recall floor + wrong-rate ceiling vs. `eval/edges-baseline.json`:
+
+```bash
+npm run eval:edges            # score call-edge extraction, compare to baseline
+npm run eval:edges -- --save  # set the current metrics as the new baseline
+```
 
 ## 🥇 Reranking (optional)
 

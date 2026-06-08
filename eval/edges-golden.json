@@ -1,62 +1,17 @@
 [
-  {
-    "from": "auth/jwt.test.ts",
-    "to": "auth/jwt.ts",
-    "symbol": "signToken",
-    "kind": "calls"
-  },
-  {
-    "from": "auth/jwt.test.ts",
-    "to": "auth/jwt.ts",
-    "symbol": "verifyToken",
-    "kind": "calls"
-  },
-  {
-    "from": "http/retry.test.ts",
-    "to": "http/retry.ts",
-    "symbol": "fetchWithRetry",
-    "kind": "calls"
-  },
-  {
-    "from": "http/retry.test.ts",
-    "to": "http/retry.ts",
-    "symbol": "isRetryable",
-    "kind": "calls"
-  },
-  {
-    "from": "crypto/hmac.ts",
-    "to": "crypto/hmac.ts",
-    "symbol": "hmacSign",
-    "kind": "calls"
-  },
-  {
-    "from": "crypto/aes.py",
-    "to": "crypto/aes.py",
-    "symbol": "pkcs7_pad",
-    "kind": "calls"
-  },
-  {
-    "from": "crypto/aes.py",
-    "to": "crypto/aes.py",
-    "symbol": "pkcs7_unpad",
-    "kind": "calls"
-  },
-  {
-    "from": "concurrency/semaphore.ts",
-    "to": "concurrency/semaphore.ts",
-    "symbol": "acquire",
-    "kind": "calls"
-  },
-  {
-    "from": "concurrency/semaphore.ts",
-    "to": "concurrency/semaphore.ts",
-    "symbol": "release",
-    "kind": "calls"
-  },
-  {
-    "from": "geometry/quaternion.rs",
-    "to": "geometry/quaternion.rs",
-    "symbol": "mul",
-    "kind": "calls"
-  }
+  { "from": "auth/jwt.test.ts", "to": "auth/jwt.ts", "symbol": "signToken", "kind": "calls" },
+  { "from": "auth/jwt.test.ts", "to": "auth/jwt.ts", "symbol": "verifyToken", "kind": "calls" },
+  { "from": "http/retry.test.ts", "to": "http/retry.ts", "symbol": "fetchWithRetry", "kind": "calls" },
+  { "from": "http/retry.test.ts", "to": "http/retry.ts", "symbol": "isRetryable", "kind": "calls" },
+  { "from": "crypto/hmac.ts", "to": "crypto/hmac.ts", "symbol": "hmacSign", "kind": "calls" },
+  { "from": "crypto/aes.py", "to": "crypto/aes.py", "symbol": "pkcs7_pad", "kind": "calls" },
+  { "from": "crypto/aes.py", "to": "crypto/aes.py", "symbol": "pkcs7_unpad", "kind": "calls" },
+  { "from": "concurrency/semaphore.ts", "to": "concurrency/semaphore.ts", "symbol": "acquire", "kind": "calls" },
+  { "from": "concurrency/semaphore.ts", "to": "concurrency/semaphore.ts", "symbol": "release", "kind": "calls" },
+  { "from": "geometry/quaternion.rs", "to": "geometry/quaternion.rs", "symbol": "mul", "kind": "calls" },
+  { "from": "text/levenshtein.py", "to": "text/levenshtein.py", "symbol": "levenshtein", "kind": "calls" },
+  { "from": "text/slugify.ts", "to": "text/slugify.ts", "symbol": "slugify", "kind": "calls" },
+  { "from": "gpu/spatial_hash.cpp", "to": "gpu/spatial_hash.cpp", "symbol": "cellHash", "kind": "calls" },
+  { "from": "graph/bfs.py", "to": null, "symbol": "deque", "kind": "calls" },
+  { "from": "http/retry.ts", "to": null, "symbol": "fetch", "kind": "calls" }
 ]

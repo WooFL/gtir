@@ -121,6 +121,44 @@ export function evalEdges(edges, golden) {
   return { recall, n: golden.length, found, split };
 }
 
+// Classify one golden call edge against the extracted edge set: correct / wrong / missing.
+// `missing` = extraction never produced the call (extraction-failure axis);
+// `wrong`   = produced but resolved to the wrong target (resolution-failure axis);
+// `correct` = a produced edge hits `g.to` (or is external/unresolved (ambiguous) when `g.to` is null). `inferred` counts.
+export function scoreEdge(edges, g) {
+  const produced = edges.filter((e) => e.kind === g.kind && e.from_path === g.from && e.ref_name === g.symbol);
+  if (!produced.length) return "missing";
+  const hit = produced.some((e) => (g.to == null ? (e.conf === "external" || !e.to_path) : e.to_path === g.to));
+  return hit ? "correct" : "wrong";
+}
+
+// Per-edge correctness over a call-edge golden. byLang is keyed by the caller file's extension.
+// Returns { n, tally, byLang, split, recall, wrong_rate, missing_rate } — the three rates sum to 1.
+export function evalEdgeExtraction(edges, golden) {
+  const tally = { correct: 0, wrong: 0, missing: 0 };
+  const byLang = {};
+  for (const g of golden) {
+    const r = scoreEdge(edges, g);
+    tally[r]++;
+    const lang = g.from.includes(".") ? g.from.split(".").pop() : "?";
+    (byLang[lang] ??= { correct: 0, wrong: 0, missing: 0, n: 0 });
+    byLang[lang][r]++;
+    byLang[lang].n++;
+  }
+  const denom = golden.length || 1;
+  const split = { resolved: 0, inferred: 0, ambiguous: 0, external: 0 };
+  for (const e of edges) if (e.conf in split) split[e.conf]++;
+  return {
+    n: golden.length,
+    tally,
+    byLang,
+    split,
+    recall: round(tally.correct / denom),
+    wrong_rate: round(tally.wrong / denom),
+    missing_rate: round(tally.missing / denom),
+  };
+}
+
 // Compare per-tier metrics. Returns regressions with metric names prefixed "<tier>:".
 // A tier present in cur but absent from base is skipped (mirrors compareBaseline's missing-metric rule).
 export function compareTiers(cur, base, tol = 0.005) {

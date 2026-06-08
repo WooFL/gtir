@@ -1,0 +1,44 @@
+{
+  "n": 15,
+  "tally": {
+    "correct": 15,
+    "wrong": 0,
+    "missing": 0
+  },
+  "byLang": {
+    "ts": {
+      "correct": 9,
+      "wrong": 0,
+      "missing": 0,
+      "n": 9
+    },
+    "py": {
+      "correct": 4,
+      "wrong": 0,
+      "missing": 0,
+      "n": 4
+    },
+    "rs": {
+      "correct": 1,
+      "wrong": 0,
+      "missing": 0,
+      "n": 1
+    },
+    "cpp": {
+      "correct": 1,
+      "wrong": 0,
+      "missing": 0,
+      "n": 1
+    }
+  },
+  "split": {
+    "resolved": 32,
+    "inferred": 0,
+    "ambiguous": 43,
+    "external": 249
+  },
+  "recall": 1,
+  "wrong_rate": 0,
+  "missing_rate": 0,
+  "model": "qwen3-embedding:0.6b"
+}

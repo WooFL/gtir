@@ -13,7 +13,7 @@ import { watchRepo, watcherLive } from "../src/watch.mjs";
 import { probeDim } from "../src/embed.mjs";
 import { runInit, ensureGitignore } from "../src/init.mjs";
 import { resolveIndexes, serveStdio, printConfig, startWatchers, preflightIndexes } from "../src/mcp.mjs";
-import { evalGolden, flattenMetrics, compareBaseline, compareTiers } from "../src/eval.mjs";
+import { evalGolden, flattenMetrics, compareBaseline, compareTiers, evalEdgeExtraction } from "../src/eval.mjs";
 import { runDemo, formatDemo } from "../src/demo.mjs";
 import { runDoctor, preflight } from "../src/doctor.mjs";
 import { fetchGrammars } from "../src/fetch-grammars.mjs";
@@ -248,6 +248,83 @@ async function runEval(args) {
   return 0;
 }
 
+// `gtir eval --edges`: score extracted call edges against a per-edge-correctness golden over the
+// indexed corpus. Mirrors runEval's --save/baseline/gate flow but on the edge layer. Returns an exit code.
+export async function runEdgeEval({ repo, golden: goldenArg = null, baseline: baselineArg = null, noBuild = false, save = false, json = false } = {}) {
+  const root = repo || process.cwd();
+  const cfg = loadConfig(root);
+  const goldenPath = goldenArg || path.join(root, "eval", "edges-golden.json");
+  if (!existsSync(goldenPath)) {
+    process.stderr.write(`eval --edges: no golden file at ${goldenPath} — pass --golden <file>\n`);
+    return 2;
+  }
+  let golden;
+  try { golden = JSON.parse(readFileSync(goldenPath, "utf8")); }
+  catch (e) { process.stderr.write(`eval --edges: cannot parse ${goldenPath}: ${e.message}\n`); return 2; }
+  if (!Array.isArray(golden) || golden.length === 0) {
+    process.stderr.write("eval --edges: golden set is empty\n"); return 2;
+  }
+
+  if (!noBuild) await buildIndex(cfg, { rebuild: false });
+
+  const store = await openStore(cfg);
+  const edges = await store.loadEdges();
+  if (edges.length === 0) {
+    process.stderr.write(`eval --edges: WARNING no edges in index at ${cfg.indexDir} — run \`gtir index\` (or drop --no-build)\n`);
+  }
+  const metrics = evalEdgeExtraction(edges, golden);
+  metrics.model = ((await store.readMeta()) || {}).model || cfg.model;
+
+  printEdgeEval(metrics);
+  if (json) process.stdout.write(JSON.stringify(metrics) + "\n");
+
+  const baselinePath = baselineArg || path.join(root, "eval", "edges-baseline.json");
+  if (save) {
+    writeFileSync(baselinePath, JSON.stringify(metrics, null, 2) + "\n");
+    process.stderr.write(`eval --edges: saved baseline → ${baselinePath} (n=${metrics.n}, model=${metrics.model})\n`);
+    return 0;
+  }
+
+  let base = null;
+  if (existsSync(baselinePath)) {
+    try { base = JSON.parse(readFileSync(baselinePath, "utf8")); } catch { /* treat as none */ }
+  }
+  if (!base) {
+    process.stderr.write("eval --edges: no baseline to compare (run with --save to set one)\n");
+    return 0;
+  }
+  if (base.model && base.model !== metrics.model) {
+    process.stderr.write(`eval --edges: WARNING baseline model (${base.model}) != current (${metrics.model}) — cross-model comparison\n`);
+  }
+  if (typeof base.recall !== "number" || typeof base.wrong_rate !== "number") {
+    process.stderr.write("eval --edges: baseline missing numeric recall/wrong_rate — re-save it with --save; skipping gate\n");
+    return 0;
+  }
+  // Gate: recall must not drop and wrong_rate must not rise beyond tol. tol=0.02 absorbs the small
+  // run-to-run wobble in `inferred` promotions (embedding-driven); real regressions move these by ≥0.05.
+  const tol = 0.02;
+  const regressions = [];
+  if (metrics.recall < base.recall - tol) regressions.push(`recall ${base.recall} → ${metrics.recall}`);
+  if (metrics.wrong_rate > base.wrong_rate + tol) regressions.push(`wrong_rate ${base.wrong_rate} → ${metrics.wrong_rate}`);
+  if (regressions.length) {
+    for (const r of regressions) process.stderr.write(`eval --edges: REGRESSION ${r}\n`);
+    return 1;
+  }
+  process.stderr.write("eval --edges: no regressions\n");
+  return 0;
+}
+
+function printEdgeEval(m) {
+  const out = [`edge eval: n=${m.n} recall=${m.recall} wrong=${m.wrong_rate} missing=${m.missing_rate} model=${m.model ?? "?"}`];
+  out.push("  by lang:");
+  for (const lang of Object.keys(m.byLang).sort()) {
+    const b = m.byLang[lang];
+    out.push(`    ${lang.padEnd(5)} n=${b.n} correct=${b.correct} wrong=${b.wrong} missing=${b.missing}`);
+  }
+  out.push(`  conf split: resolved=${m.split.resolved} inferred=${m.split.inferred} ambiguous=${m.split.ambiguous} external=${m.split.external}`);
+  process.stderr.write(out.join("\n") + "\n");
+}
+
 // Memoizing embed wrapper: the golden query set is fixed across combos, so embed each unique
 // text once and replay from cache. Turns an N-combo sweep from N×(embed all queries) into
 // 1×(embed all queries) — the embed call is the only real cost; fusion is in-memory.
@@ -462,7 +539,7 @@ async function main() {
         return; // keep the process alive on stdin; do not fall through to exit
       }
       case "eval": {
-        process.exit(await runEval(args));
+        process.exit(await (args.edges ? runEdgeEval(args) : runEval(args)));
       }
       case "init": {
         const mode = args.notes ? "notes" : args.code ? "code" : null;

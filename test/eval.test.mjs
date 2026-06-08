@@ -251,3 +251,70 @@ test("edges-golden.json is a non-empty array of well-formed entries", () => {
     assert.ok(["calls", "links", "imports", "embeds"].includes(g.kind));
   }
 });
+
+import { scoreEdge } from "../src/eval.mjs";
+
+// Edges carrying ref_name (what scoreEdge keys on), unlike the to_symbol-keyed set above.
+const callEdges = [
+  { kind: "calls", conf: "resolved", from_path: "a.ts", to_path: "b.ts", ref_name: "g" },
+  { kind: "calls", conf: "resolved", from_path: "c.ts", to_path: "wrong.ts", ref_name: "h" },
+  { kind: "calls", conf: "external", from_path: "x.ts", to_path: null, ref_name: "ext" },
+];
+
+test("scoreEdge: produced edge hits the expected target → correct", () => {
+  assert.equal(scoreEdge(callEdges, { from: "a.ts", to: "b.ts", symbol: "g", kind: "calls" }), "correct");
+});
+test("scoreEdge: produced edge resolves to a different file → wrong", () => {
+  assert.equal(scoreEdge(callEdges, { from: "c.ts", to: "right.ts", symbol: "h", kind: "calls" }), "wrong");
+});
+test("scoreEdge: no produced edge for the call → missing", () => {
+  assert.equal(scoreEdge(callEdges, { from: "a.ts", to: "b.ts", symbol: "absent", kind: "calls" }), "missing");
+});
+test("scoreEdge: expected-external (to=null) matched by an external edge → correct", () => {
+  assert.equal(scoreEdge(callEdges, { from: "x.ts", to: null, symbol: "ext", kind: "calls" }), "correct");
+});
+test("scoreEdge: expected-external but edge resolved to a file → wrong", () => {
+  assert.equal(scoreEdge(callEdges, { from: "a.ts", to: null, symbol: "g", kind: "calls" }), "wrong");
+});
+test("scoreEdge: any produced edge hitting the target counts (multi-call site)", () => {
+  const multi = [
+    { kind: "calls", conf: "ambiguous", from_path: "m.ts", to_path: null, ref_name: "f" },
+    { kind: "calls", conf: "resolved", from_path: "m.ts", to_path: "t.ts", ref_name: "f" },
+  ];
+  assert.equal(scoreEdge(multi, { from: "m.ts", to: "t.ts", symbol: "f", kind: "calls" }), "correct");
+});
+
+import { evalEdgeExtraction } from "../src/eval.mjs";
+
+test("evalEdgeExtraction: recall/wrong/missing sum to 1, byLang groups by `from` extension, split counts conf", () => {
+  const edges = [
+    { kind: "calls", conf: "resolved", from_path: "a.ts", to_path: "b.ts", ref_name: "g" },     // correct (ts)
+    { kind: "calls", conf: "resolved", from_path: "c.py", to_path: "wrong.py", ref_name: "h" },  // wrong   (py)
+    { kind: "calls", conf: "inferred", from_path: "d.py", to_path: "e.py", ref_name: "k" },       // correct (py)
+    { kind: "calls", conf: "ambiguous", from_path: "z.ts", to_path: null, ref_name: "noise" },    // not in golden
+  ];
+  const golden = [
+    { from: "a.ts", to: "b.ts", symbol: "g", kind: "calls" },
+    { from: "c.py", to: "right.py", symbol: "h", kind: "calls" },
+    { from: "d.py", to: "e.py", symbol: "k", kind: "calls" },
+    { from: "x.ts", to: "y.ts", symbol: "absent", kind: "calls" }, // missing (ts)
+  ];
+  const m = evalEdgeExtraction(edges, golden);
+  assert.equal(m.n, 4);
+  assert.deepEqual(m.tally, { correct: 2, wrong: 1, missing: 1 });
+  assert.equal(m.recall, 0.5);
+  assert.equal(m.wrong_rate, 0.25);
+  assert.equal(m.missing_rate, 0.25);
+  // rates sum to 1 (inline tolerance — `round` is module-private, not importable here)
+  assert.ok(Math.abs(m.recall + m.wrong_rate + m.missing_rate - 1) < 1e-9);
+  assert.deepEqual(m.byLang.ts, { correct: 1, wrong: 0, missing: 1, n: 2 });
+  assert.deepEqual(m.byLang.py, { correct: 1, wrong: 1, missing: 0, n: 2 });
+  assert.deepEqual(m.split, { resolved: 2, inferred: 1, ambiguous: 1, external: 0 });
+});
+
+test("evalEdgeExtraction: empty golden → zeros, no divide-by-zero", () => {
+  const m = evalEdgeExtraction([], []);
+  assert.equal(m.n, 0);
+  assert.equal(m.recall, 0);
+  assert.deepEqual(m.tally, { correct: 0, wrong: 0, missing: 0 });
+});
