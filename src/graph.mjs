@@ -540,7 +540,7 @@ export function renderMermaid({ nodes, edges, meta = {} } = {}) {
       const si = nodeIdx.get(e.source);
       const ti = nodeIdx.get(e.target);
       if (si === undefined || ti === undefined) continue; // edge refers to unknown node — skip
-      lines.push(`  n${si} -->|${e.kind ?? "edge"}| n${ti}`);
+      lines.push(`  n${si} -->|${e.kind || "edge"}| n${ti}`);
     }
   }
 

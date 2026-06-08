@@ -101,7 +101,7 @@ export async function runGraph({ repo, out = null, format = "html", focus = null
     if (dest === "-") {
       process.stdout.write(mmd + "\n");
     } else {
-      writeFileSync(dest, mmd);
+      writeFileSync(dest, mmd + "\n");
     }
     return { out: dest, nodes: graph.nodes.length, edges: graph.edges.length, truncated: graph.truncated, dropped: graph.dropped };
   }
