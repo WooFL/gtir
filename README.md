@@ -208,7 +208,7 @@ gtir eval    --repo <corpus> --golden <f> [--save] [--json]            # score r
 gtir eval    --repo <corpus> --tune ["ftsWeight=0,0.2;ftsWeightMixed=0,1"]   # sweep fusion weights
 gtir eval    --repo <corpus> --edges [--save]                         # score call-edge extraction quality
 gtir eval    --repo <corpus> --disambig [--tune] [--save]             # score ambiguous→inferred promotion
-gtir graph   --repo <project> [--focus <symbol>] [--rollup] [--out FILE]    # render edge graph as HTML
+gtir graph   --repo <project> [--focus <symbol>] [--rollup] [--out FILE] [--format <html|mermaid>]    # render edge graph as HTML or Mermaid
 gtir impact  <symbol> --repo <project> [--downstream] [--depth N] [--path F]  # transitive blast radius
 gtir orphans --repo <project>                                               # likely-dead symbols
 gtir cycles  --repo <project>                                               # circular dependencies
@@ -462,10 +462,12 @@ Tunables (config): `disambiguate` (default true), `disambigThreshold` (0.55), `d
     gtir graph --repo .                         # whole repo (full graph, GPU-rendered)
     gtir graph --repo . --focus verifyToken     # ego-graph: 2 hops around one symbol
     gtir graph --repo . --rollup                # collapse symbols to files (architecture view)
+    gtir graph --repo . --format mermaid        # pasteable Mermaid call-flow diagram (GitHub/mermaid.live render it)
+    gtir graph --repo . --format mermaid --out -  # print to stdout
 
 In the page, a control panel filters live: a **min-degree** slider hides leaf nodes, **kind** and **confidence** toggles carve the graph (external edges start hidden), a **spacing** slider sizes the territories, a **labels** slider sets how many hubs are named, search centers a node, and the cluster legend isolates a package. The full graph is embedded and filtered in-browser, so no regeneration is needed.
 
-Flags: `--out FILE` (default `gtir-graph.html`), `--focus SYM [--depth N]`, `--rollup`, `--kind`/`--conf`/`--path-prefix` pre-filters, `--max-nodes N` (optional hard cap; off by default). The graph reads edges built during `gtir index`.
+Flags: `--out FILE` (default `gtir-graph.html` for html, `gtir-graph.mmd` for mermaid; use `-` for stdout), `--format <html|mermaid>` (default `html`), `--focus SYM [--depth N]`, `--rollup`, `--kind`/`--conf`/`--path-prefix` pre-filters, `--max-nodes N` (optional hard cap; off by default). The graph reads edges built during `gtir index`.
 
 > The vendored WebGL bundle (`vendor/cosmos.min.js`) is regenerated with `npm run bundle:cosmos` (needs dev deps); it ships in the npm package.
 
