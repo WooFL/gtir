@@ -390,3 +390,8 @@ test("extractCodeEdges (cpp): pointer-init local decl → receiverType", async (
   const edges = await edgesFor("cpp", `void use() { Foo* p = mk(); p->bar(); }`, "a.cpp");
   assert.equal(edges.find((e) => e.refName === "bar").receiverType, "Foo");
 });
+
+test("extractCodeEdges (cpp): namespaced out-of-class def this-> → null (deferred non-goal)", async () => {
+  const edges = await edgesFor("cpp", `void Ns::Foo::m() { this->bar(); }`, "a.cpp");
+  assert.equal(edges.find((e) => e.refName === "bar").receiverType, null);
+});

@@ -42,6 +42,8 @@ function declName(decl) {
 
 // Add a (name → typeName) binding from a parameter_declaration or declaration node. The type is the
 // `type` field; only a bare `type_identifier` yields a name (auto/template/qualified → null, deferred).
+// Note: a multi-declarator `Foo a, b;` binds only the first name (childForFieldName returns one) —
+// the rest are an accepted miss (null receiverType → no resolution, never a wrong one).
 function addCppBinding(node, bindings) {
   const type = node.childForFieldName?.("type");
   if (!type || type.type !== "type_identifier") return;
@@ -69,8 +71,11 @@ function enclosingCppClass(callNode, fn) {
   const fdecl = fn?.childForFieldName?.("declarator");          // function_declarator
   const qual = fdecl?.childForFieldName?.("declarator");        // qualified_identifier | identifier
   if (qual?.type === "qualified_identifier") {
+    const name = qual.childForFieldName?.("name");
     const scope = qual.childForFieldName?.("scope");
-    if (scope && scope.type === "namespace_identifier") return scope.text;
+    // Simple `Class::method` (name is a plain identifier) → scope IS the class. A nested
+    // `Ns::Class::method` (name is itself qualified) is namespaced — a deferred non-goal → null.
+    if (name && name.type === "identifier" && scope && scope.type === "namespace_identifier") return scope.text;
   }
   for (let p = callNode.parent; p; p = p.parent) {
     if (p.type === "class_specifier") {
