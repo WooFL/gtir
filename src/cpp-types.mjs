@@ -36,7 +36,7 @@ export function extractCppMethodDefs(text) {
 // and one non-nested `<...>` (for std::unique_ptr<T>); normalizeReturnType classifies it. The
 // type/name separator `(?:\s*[*&]\s*|\s+)` requires a real boundary (ptr/ref or whitespace) so a
 // run-together `Widgetmake(){` cannot false-match.
-const CPP_LEADING_FN = /(?:^|[;{}])\s*(?:(?:inline|static|constexpr|virtual|explicit|friend)\s+)*((?:const\s+)?[A-Za-z_]\w*(?:\s*::\s*[A-Za-z_]\w*)?(?:\s*<[^<>;{}()]*>)?)(?:\s*[*&]\s*|\s+)([A-Za-z_]\w*)\s*\([^;{}()]*\)\s*(?:const|noexcept|override|final|mutable|volatile|\s)*\{/g;
+const CPP_LEADING_FN = /(?:^|[;{}])\s*(?:(?:inline|static|constexpr|virtual|friend)\s+)*((?:const\s+)?[A-Za-z_]\w*(?:\s*::\s*[A-Za-z_]\w*)?(?:\s*<[^<>;{}()]*>)?)(?:\s*[*&]\s*|\s+)([A-Za-z_]\w*)\s*\([^;{}()]*\)\s*(?:const|noexcept|override|final|mutable|volatile|\s)*\{/g;
 // Trailing-return form: `auto name(params) [quals] -> RetType {`.
 const CPP_TRAILING_FN = /(?:^|[;{}])\s*(?:(?:inline|static|constexpr|friend)\s+)*auto\s+([A-Za-z_]\w*)\s*\([^;{}()]*\)\s*(?:const|noexcept|\s)*->\s*((?:const\s+)?[A-Za-z_]\w*(?:\s*::\s*[A-Za-z_]\w*)?(?:\s*<[^<>;{}()]*>)?\s*[*&]?)\s*\{/g;
 const CPP_RET_PRIMITIVES = new Set(["void", "bool", "char", "short", "int", "long", "float", "double",
