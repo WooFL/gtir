@@ -426,7 +426,7 @@ test("indexEdges resolves a C++ member call by factory return type (cross-file)"
     const call = edges.find((e) => e.kind === "calls" && e.from_path.endsWith("make.cpp") && e.ref_name === "run");
     assert.ok(call, "expected a run call edge from make.cpp");
     assert.equal(call.conf, "resolved");
-    assert.ok(call.to_path.endsWith("widget.cpp"));
+    assert.equal(call.to_path, "widget.cpp");
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
