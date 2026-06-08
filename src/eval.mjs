@@ -173,3 +173,15 @@ export function compareTiers(cur, base, tol = 0.005) {
   }
   return out;
 }
+
+// Classify one golden ambiguous-call entry against the replayed edge set.
+// g = { from, symbol, expect }: expect = correct target path (positive) or null (should abstain).
+// → "tp" (positive promoted to expect) | "fp" (positive promoted elsewhere, or negative promoted)
+//   | "fn" (positive not promoted) | "tn" (negative not promoted).
+export function scoreDisambig(edges, g) {
+  const e = edges.find((x) => x.kind === "calls" && x.from_path === g.from && x.ref_name === g.symbol);
+  const promoted = !!e && e.conf === "inferred";
+  if (g.expect == null) return promoted ? "fp" : "tn";
+  if (!promoted) return "fn";
+  return e.to_path === g.expect ? "tp" : "fp";
+}

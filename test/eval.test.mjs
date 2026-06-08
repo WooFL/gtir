@@ -318,3 +318,32 @@ test("evalEdgeExtraction: empty golden → zeros, no divide-by-zero", () => {
   assert.equal(m.recall, 0);
   assert.deepEqual(m.tally, { correct: 0, wrong: 0, missing: 0 });
 });
+
+import { scoreDisambig } from "../src/eval.mjs";
+
+// Replayed edge set: each is a calls row, some promoted (inferred), some left ambiguous.
+const dEdges = [
+  { kind: "calls", conf: "inferred", from_path: "use_json.py", ref_name: "encode", to_path: "json_codec.py" }, // promoted right
+  { kind: "calls", conf: "inferred", from_path: "use_csv.py",  ref_name: "encode", to_path: "json_codec.py" }, // promoted WRONG (wanted csv)
+  { kind: "calls", conf: "ambiguous", from_path: "use_tie.py", ref_name: "normalize", to_path: null },          // abstained
+  { kind: "calls", conf: "inferred", from_path: "noisy.py",   ref_name: "flatten", to_path: "x.py" },          // promoted a negative
+];
+
+test("scoreDisambig: positive promoted to expected target → tp", () => {
+  assert.equal(scoreDisambig(dEdges, { from: "use_json.py", symbol: "encode", expect: "json_codec.py" }), "tp");
+});
+test("scoreDisambig: positive promoted to a different target → fp", () => {
+  assert.equal(scoreDisambig(dEdges, { from: "use_csv.py", symbol: "encode", expect: "csv_codec.py" }), "fp");
+});
+test("scoreDisambig: positive left ambiguous → fn", () => {
+  assert.equal(scoreDisambig(dEdges, { from: "use_tie.py", symbol: "normalize", expect: "tie_alpha.py" }), "fn");
+});
+test("scoreDisambig: negative left ambiguous → tn", () => {
+  assert.equal(scoreDisambig(dEdges, { from: "use_tie.py", symbol: "normalize", expect: null }), "tn");
+});
+test("scoreDisambig: negative that got promoted → fp", () => {
+  assert.equal(scoreDisambig(dEdges, { from: "noisy.py", symbol: "flatten", expect: null }), "fp");
+});
+test("scoreDisambig: positive with no matching edge → fn", () => {
+  assert.equal(scoreDisambig(dEdges, { from: "absent.py", symbol: "gone", expect: "x.py" }), "fn");
+});
