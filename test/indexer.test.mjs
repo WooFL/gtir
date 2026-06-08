@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, rmSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, readFileSync, existsSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as lancedb from "@lancedb/lancedb";
@@ -582,5 +582,22 @@ test("buildIndex: a repo with code keeps qwen and writes no config", async () =>
     const meta = await openStore(loadConfig(repo)).then((s) => s.readMeta());
     assert.equal(meta.model, "qwen3-embedding:0.6b");
     assert.equal(existsSync(join(repo, ".gtir", "config.json")), false);
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
+test("buildIndex: an existing index on a different model auto-rebuilds when detection flips it", async () => {
+  // Simulates /g/notes: a markdown vault already indexed with qwen (pinned), then re-indexed after
+  // the pin is removed — auto-detection picks nomic, sees the model changed vs meta, and rebuilds.
+  const repo = mkdtempSync(join(tmpdir(), "gtir-autoflip-"));
+  try {
+    writeFileSync(join(repo, "a.md"), `# A\n\nnotes\n`);
+    writeFileSync(join(repo, "b.md"), `# B\n\nmore notes\n`);
+    mkdirSync(join(repo, ".gtir"), { recursive: true });
+    writeFileSync(join(repo, ".gtir", "config.json"), JSON.stringify({ model: "qwen3-embedding:0.6b" }));
+    await buildIndex({ ...loadConfig(repo), embedImpl: fakeEmbed, minChars: 1 }, { rebuild: true });
+    assert.equal((await openStore(loadConfig(repo)).then((s) => s.readMeta())).model, "qwen3-embedding:0.6b");
+    rmSync(join(repo, ".gtir", "config.json"));   // drop the pin → next index auto-detects nomic
+    await buildIndex({ ...loadConfig(repo), embedImpl: fakeEmbed, minChars: 1 }, {});  // no rebuild flag
+    assert.equal((await openStore(loadConfig(repo)).then((s) => s.readMeta())).model, "nomic-embed-text");
   } finally { rmSync(repo, { recursive: true, force: true }); }
 });
