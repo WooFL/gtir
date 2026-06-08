@@ -10,7 +10,7 @@ import { openStore } from "./store.mjs";
 import { extractCodeEdges, extractNotesEdges, resolveEdges, noteKey } from "./edges.mjs";
 import { disambiguateEdges } from "./disambiguate.mjs";
 import { declaredSymbols, declaredCallables } from "./symbols.mjs";
-import { extractGoMethodDefs, resolveGoMethods } from "./go-types.mjs";
+import { extractGoMethodDefs, resolveGoMethods, extractGoInterfaces, resolveGoDispatch } from "./go-types.mjs";
 import { extractCppMethodDefs, resolveCppMethods, extractCppReturnTypes } from "./cpp-types.mjs";
 import { extractTsClassNames, resolveTsMethods } from "./ts-types.mjs";
 
@@ -39,6 +39,7 @@ async function indexEdges(cfg, store, toIndex, { rebuild, deleted = [] }) {
   const deletedSet = new Set(deleted);
   const symbolIndex = new Map(), noteIndex = new Map(), callSiteVec = new Map(), chunkByPath = new Map();
   const goMethodIndex = new Map();
+  const goInterfaceIndex = new Map();
   const cppMethodIndex = new Map();
   const cppReturnIndex = new Map();
   const tsClassFiles = new Map();
@@ -82,6 +83,7 @@ async function indexEdges(cfg, store, toIndex, { rebuild, deleted = [] }) {
           embedding: r.embedding ? Array.from(r.embedding) : null, content_hash: r.content_hash || null });
         if (changedSet.has(r.path)) changedSymbols.add(method);
       }
+      for (const { name, methods } of extractGoInterfaces(r.text)) goInterfaceIndex.set(name, new Set(methods));
     }
     if (r.language === "cpp") {
       const scopeClass = hasScope ? chunkScopeClass(r.scope_json) : null;
@@ -158,7 +160,18 @@ async function indexEdges(cfg, store, toIndex, { rebuild, deleted = [] }) {
     }
     if (raw.length) all.push(...resolveEdges(raw, symbolIndex, noteIndex));
   }
+  // type -> set of its method names, derived from goMethodIndex keys (`Type#method`). Drives interface
+  // satisfaction in resolveGoDispatch.
+  const goTypeMethodSets = new Map();
+  for (const k of goMethodIndex.keys()) {
+    const hash = k.indexOf("#");
+    if (hash < 0) continue;
+    const t = k.slice(0, hash), meth = k.slice(hash + 1);
+    if (!goTypeMethodSets.has(t)) goTypeMethodSets.set(t, new Set());
+    goTypeMethodSets.get(t).add(meth);
+  }
   all = resolveGoMethods(all, goMethodIndex);
+  all = resolveGoDispatch(all, goMethodIndex, goInterfaceIndex, goTypeMethodSets);
   all = resolveCppMethods(all, cppMethodIndex, cppReturnIndex);
   all = resolveTsMethods(all, tsClassFiles, tsCallableFiles);
   if (chunkByPath.size) {
