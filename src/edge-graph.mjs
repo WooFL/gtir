@@ -65,6 +65,43 @@ export function buildGraph(edges, { includeAmbiguous = false } = {}) {
   return { edgeList, fwd, rev, nodeMeta, externalOut };
 }
 
+// Shortest call-path (forward/callee direction) from any startKey to any endKey.
+// Multi-source BFS: all startKeys enter the frontier at depth 0. Stops when any endKey is
+// dequeued. Reconstructs the node-key path via a predecessor map. Returns null if no path
+// exists within maxDepth. If a startKey is itself in endKeys, returns [thatKey] immediately.
+// Cycle-safe via a visited set.
+export function pathBetween(graph, startKeys, endKeys, { maxDepth = Infinity } = {}) {
+  const endSet = endKeys instanceof Set ? endKeys : new Set(endKeys);
+  // Check trivial case: any start is already an end
+  for (const k of startKeys) {
+    if (endSet.has(k)) return [k];
+  }
+  const adj = graph.fwd;
+  // pred maps each visited key → its predecessor (null for start nodes)
+  const pred = new Map();
+  for (const k of startKeys) pred.set(k, null);
+  let frontier = [...startKeys];
+  for (let d = 1; frontier.length && d <= maxDepth; d++) {
+    const next = [];
+    for (const k of frontier) {
+      for (const nb of (adj.get(k) || [])) {
+        if (pred.has(nb)) continue; // already visited
+        pred.set(nb, k);
+        if (endSet.has(nb)) {
+          // reconstruct path
+          const path = [];
+          for (let v = nb; v !== null; v = pred.get(v)) path.push(v);
+          path.reverse();
+          return path;
+        }
+        next.push(nb);
+      }
+    }
+    frontier = next;
+  }
+  return null;
+}
+
 // Transitive reachability from startKeys. direction "upstream" walks rev (callers),
 // "downstream" walks fwd (callees). BFS records hop distance; dedup via visited; the start
 // nodes are excluded from output. Stops a branch at `depth` and overall at `limit` (truncated).
