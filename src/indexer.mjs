@@ -19,6 +19,14 @@ import { extractTsClassNames, resolveTsMethods } from "./ts-types.mjs";
 const REQUIRED_CHUNK_COLUMNS = ["id", "path", "language", "chunk_start", "chunk_end",
   "line_start", "line_end", "text", "fts_text", "mtime_ms", "embedding"];
 
+// The innermost enclosing-scope name from a chunk's persisted scope_json breadcrumb, or null. Used to
+// recover the class of an in-class C++ method whose chunk lost its `class X {` header to a chunk split.
+function chunkScopeClass(scopeJson) {
+  if (!scopeJson) return null;
+  try { const sc = JSON.parse(scopeJson); return Array.isArray(sc) && sc.length ? sc[sc.length - 1] : null; }
+  catch { return null; }
+}
+
 // Build edges for the changed files and persist them. Re-reads + re-parses only the changed
 // files (cheap on a refresh). symbolIndex/noteIndex are built from the FULL current chunk set so
 // a call in a changed file can resolve to a definition in an unchanged file.
@@ -39,7 +47,12 @@ async function indexEdges(cfg, store, toIndex, { rebuild, deleted = [] }) {
   // Relies on buildIndex having already upsertRows'd the changed files BEFORE calling indexEdges —
   // so the chunks table here reflects the new state. Keep that ordering.
   const changedSymbols = new Set();
-  const rows = await tbl.query().select(["path", "line_start", "line_end", "text", "language", "embedding", "content_hash"]).toArray();
+  // scope_json (the chunker's enclosing-scope breadcrumb) is optional — present only on tables built
+  // since #8. Select it when the column exists so the C++ method index can recover a split method's
+  // class; a pre-scope table degrades to header-in-text-only keying (the prior behavior).
+  const hasScope = (await store.chunkColumns())?.has("scope_json") === true;
+  const selectCols = ["path", "line_start", "line_end", "text", "language", "embedding", "content_hash"];
+  const rows = await tbl.query().select(hasScope ? [...selectCols, "scope_json"] : selectCols).toArray();
   for (const r of rows) {
     if (r.content_hash && r.embedding) callSiteVec.set(r.content_hash, Array.from(r.embedding));
     if (r.content_hash) {
@@ -71,7 +84,8 @@ async function indexEdges(cfg, store, toIndex, { rebuild, deleted = [] }) {
       }
     }
     if (r.language === "cpp") {
-      for (const { cls, method } of extractCppMethodDefs(r.text)) {
+      const scopeClass = hasScope ? chunkScopeClass(r.scope_json) : null;
+      for (const { cls, method } of extractCppMethodDefs(r.text, scopeClass)) {
         const k = `${cls}#${method}`;
         if (!cppMethodIndex.has(k)) cppMethodIndex.set(k, []);
         cppMethodIndex.get(k).push({ path: r.path, line_start: Number(r.line_start), line_end: Number(r.line_end) });
@@ -289,6 +303,11 @@ export async function buildIndex(cfg, { rebuild = false, paths = null } = {}) {
   // than being force-migrated. Without this, a non-rebuild first build re-embeds the whole changed
   // file on every refresh (the cache never engages).
   const writeHash = rebuild || tableHasHash || !tableExists;
+  // scope_json carries the chunker's enclosing-scope breadcrumb so resolveCppMethods can key an
+  // in-class method that was split out of its class chunk (#8). Optional like content_hash: only write
+  // it on a fresh/rebuilt table or one that already has the column, so appending to a pre-scope table
+  // (which lacks it) never trips a schema mismatch.
+  const writeScope = rebuild || !tableExists || (await store.chunkColumns())?.has("scope_json") === true;
   const rows = allChunks.map((c, i) => ({
     id: stableId(c), path: c.path, language: c.language,
     chunk_start: c.chunkStart, chunk_end: c.chunkEnd,
@@ -296,6 +315,7 @@ export async function buildIndex(cfg, { rebuild = false, paths = null } = {}) {
     text: c.text, fts_text: ctx[i].ftsText,
     mtime_ms: c.mtimeMs, embedding: vecs[i],
     ...(writeHash ? { content_hash: hashes[i] } : {}),
+    ...(writeScope ? { scope_json: JSON.stringify(c.scope ?? []) } : {}),
   }));
   await store.upsertRows(rows);
   await store.writeMeta({ model: cfg.model, dim, version: cfg.version });

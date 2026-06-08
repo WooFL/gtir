@@ -412,6 +412,34 @@ test("indexEdges resolves a C++ member call by receiver type (cross-file)", asyn
   }
 });
 
+test("indexEdges resolves a C++ in-class method split into its own chunk (chunk-robust)", async () => {
+  // A class big enough that the chunker drops the oversize class_specifier and surfaces each inline
+  // method as its own chunk — the `class Encoder {` header then appears in NO chunk's text, only in
+  // the chunk's scope breadcrumb. The method index must still key Encoder#flush via that breadcrumb,
+  // else a cross-file receiver-typed call cannot resolve.
+  const repo = mkdtempSync(join(tmpdir(), "gtir-cpp-split-"));
+  try {
+    const big = (cls) => `class ${cls} {\npublic:\n  int flush() {\n    int total = 0;\n` +
+      `    for (int i = 0; i < 100; i++) total += i;\n    return total;\n  }\n` +
+      `  int reset() {\n    int total = 0;\n    for (int i = 0; i < 50; i++) total += i;\n    return total;\n  }\n};\n`;
+    writeFileSync(join(repo, "encoder.cpp"), big("Encoder"));
+    writeFileSync(join(repo, "sink.cpp"), big("Sink"));
+    writeFileSync(join(repo, "use.cpp"), `int run(Encoder* e) { return e->flush(); }\n`);
+    const cfg = loadConfig(repo);
+    cfg.embedImpl = (texts) => Promise.resolve(texts.map(() => [1, 0, 0]));
+    cfg.minChars = 1;
+    cfg.maxChars = 90;   // forces the oversize class to split each method into its own chunk
+    await buildIndex(cfg, { rebuild: true });
+    const edges = await (await openStore(cfg)).loadEdges();
+    const flush = edges.find((e) => e.kind === "calls" && e.from_path === "use.cpp" && e.ref_name === "flush");
+    assert.ok(flush, "expected a flush call edge from use.cpp");
+    assert.equal(flush.conf, "resolved");
+    assert.equal(flush.to_path, "encoder.cpp");   // Encoder, not Sink — via the scope breadcrumb
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test("indexEdges resolves a C++ member call by factory return type (cross-file)", async () => {
   const repo = mkdtempSync(join(tmpdir(), "gtir-cpp-"));
   try {
