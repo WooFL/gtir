@@ -191,6 +191,10 @@ export function inferCppReceiverType(callNode, receiverName, smartPtrs = DEFAULT
 // The free-function name whose return value initializes `receiverName`, when that local is declared
 // `auto x = freeFn(...)`, else null. Walks the call's enclosing function_definition (does not descend
 // into lambdas — scope-bleed guard). Member/qualified factory calls (obj.make(), ns::make()) → null.
+// For a uniquely-named local (the common case) the match is unambiguous; when `receiverName` is
+// re-declared in a nested block, the last-textual declaration wins (deterministic). Known limitation
+// (same as inferCppReceiverType): a call site inside a lambda walks up through the lambda to the outer
+// function_definition, so it may still see the outer factory declaration.
 export function inferCppFactory(callNode, receiverName) {
   if (!callNode || !receiverName) return null;
   let fn = callNode.parent;
