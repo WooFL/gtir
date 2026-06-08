@@ -185,3 +185,33 @@ export function scoreDisambig(edges, g) {
   if (!promoted) return "fn";
   return e.to_path === g.expect ? "tp" : "fp";
 }
+
+// Precision-first aggregation over a disambiguation golden. precision is the gated metric;
+// recall + abstain_rate are reported meters. No promotions ⇒ precision 1.0 (vacuously correct).
+export function evalDisambiguation(edges, golden) {
+  const cells = { tp: 0, fp: 0, fn: 0, tn: 0 };
+  let positives = 0, negatives = 0;
+  for (const g of golden) {
+    (g.expect == null ? negatives++ : positives++);
+    cells[scoreDisambig(edges, g)]++;
+  }
+  const promotions = cells.tp + cells.fp;
+  return {
+    n: golden.length, cells, promotions,
+    precision: round(promotions ? cells.tp / promotions : 1),
+    recall: round(positives ? cells.tp / positives : 0),
+    abstain_rate: round(negatives ? cells.tn / negatives : 1),
+  };
+}
+
+// Rank sweep rows precision-first: prefer precision===1, then higher recall, then higher precision,
+// then lower threshold. rows: [{ threshold, margin, precision, recall, promotions }].
+export function rankDisambigOperatingPoint(rows) {
+  return [...rows].sort((a, b) => {
+    const pa = a.precision === 1 ? 1 : 0, pb = b.precision === 1 ? 1 : 0;
+    if (pa !== pb) return pb - pa;
+    if (b.recall !== a.recall) return b.recall - a.recall;
+    if (b.precision !== a.precision) return b.precision - a.precision;
+    return a.threshold - b.threshold;
+  });
+}

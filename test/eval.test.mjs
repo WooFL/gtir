@@ -347,3 +347,58 @@ test("scoreDisambig: negative that got promoted → fp", () => {
 test("scoreDisambig: positive with no matching edge → fn", () => {
   assert.equal(scoreDisambig(dEdges, { from: "absent.py", symbol: "gone", expect: "x.py" }), "fn");
 });
+
+import { evalDisambiguation, rankDisambigOperatingPoint } from "../src/eval.mjs";
+
+test("evalDisambiguation: precision-first metrics over a mixed golden", () => {
+  const edges = [
+    { kind: "calls", conf: "inferred", from_path: "p1", ref_name: "f", to_path: "right1" }, // tp
+    { kind: "calls", conf: "inferred", from_path: "p2", ref_name: "f", to_path: "wrong" },   // fp (positive, wrong target)
+    { kind: "calls", conf: "ambiguous", from_path: "p3", ref_name: "f", to_path: null },      // fn (positive, missed)
+    { kind: "calls", conf: "ambiguous", from_path: "n1", ref_name: "g", to_path: null },      // tn (negative, abstained)
+    { kind: "calls", conf: "inferred", from_path: "n2", ref_name: "g", to_path: "z" },        // fp (negative, promoted)
+  ];
+  const golden = [
+    { from: "p1", symbol: "f", expect: "right1" },
+    { from: "p2", symbol: "f", expect: "right2" },
+    { from: "p3", symbol: "f", expect: "right3" },
+    { from: "n1", symbol: "g", expect: null },
+    { from: "n2", symbol: "g", expect: null },
+  ];
+  const m = evalDisambiguation(edges, golden);
+  assert.equal(m.n, 5);
+  assert.deepEqual(m.cells, { tp: 1, fp: 2, fn: 1, tn: 1 });
+  assert.equal(m.promotions, 3);
+  assert.equal(m.precision, 0.3333); // 1/3
+  assert.equal(m.recall, 0.3333);    // 1/3 positives
+  assert.equal(m.abstain_rate, 0.5); // 1/2 negatives
+});
+
+test("evalDisambiguation: no promotions → precision 1.0 (vacuous), recall 0", () => {
+  const edges = [
+    { kind: "calls", conf: "ambiguous", from_path: "p1", ref_name: "f", to_path: null },
+    { kind: "calls", conf: "ambiguous", from_path: "n1", ref_name: "g", to_path: null },
+  ];
+  const golden = [
+    { from: "p1", symbol: "f", expect: "x" },
+    { from: "n1", symbol: "g", expect: null },
+  ];
+  const m = evalDisambiguation(edges, golden);
+  assert.equal(m.promotions, 0);
+  assert.equal(m.precision, 1);
+  assert.equal(m.recall, 0);
+  assert.equal(m.abstain_rate, 1);
+});
+
+test("rankDisambigOperatingPoint: precision-first — prefer precision 1, then higher recall, then lower threshold", () => {
+  const rows = [
+    { threshold: 0.45, margin: 0.05, precision: 0.5, recall: 1.0, promotions: 4 },
+    { threshold: 0.55, margin: 0.05, precision: 1.0, recall: 0.5, promotions: 2 },
+    { threshold: 0.50, margin: 0.05, precision: 1.0, recall: 0.5, promotions: 2 },
+    { threshold: 0.65, margin: 0.05, precision: 1.0, recall: 0.0, promotions: 0 },
+  ];
+  const best = rankDisambigOperatingPoint(rows)[0];
+  assert.equal(best.precision, 1);
+  assert.equal(best.recall, 0.5);
+  assert.equal(best.threshold, 0.50);
+});
