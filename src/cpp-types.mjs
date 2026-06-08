@@ -31,6 +31,52 @@ export function extractCppMethodDefs(text) {
   return out;
 }
 
+// Free-function definition with a leading return type: `RetType name(params) [quals] {`. Linear params
+// `[^;{}()]*` (ReDoS-safe, same discipline as CPP_OUT_DEF). The return type allows one `::` qualifier
+// and one non-nested `<...>` (for std::unique_ptr<T>); normalizeReturnType classifies it. The
+// type/name separator `(?:\s*[*&]\s*|\s+)` requires a real boundary (ptr/ref or whitespace) so a
+// run-together `Widgetmake(){` cannot false-match.
+const CPP_LEADING_FN = /(?:^|[;{}])\s*(?:(?:inline|static|constexpr|virtual|friend)\s+)*((?:const\s+)?[A-Za-z_]\w*(?:\s*::\s*[A-Za-z_]\w*)?(?:\s*<[^<>;{}()]*>)?)(?:\s*[*&]\s*|\s+)([A-Za-z_]\w*)\s*\([^;{}()]*\)\s*(?:const|noexcept|override|final|mutable|volatile|\s)*\{/g;
+// Trailing-return form: `auto name(params) [quals] -> RetType {`.
+const CPP_TRAILING_FN = /(?:^|[;{}])\s*(?:(?:inline|static|constexpr|friend)\s+)*auto\s+([A-Za-z_]\w*)\s*\([^;{}()]*\)\s*(?:const|noexcept|\s)*->\s*((?:const\s+)?[A-Za-z_]\w*(?:\s*::\s*[A-Za-z_]\w*)?(?:\s*<[^<>;{}()]*>)?\s*[*&]?)\s*\{/g;
+const CPP_RET_PRIMITIVES = new Set(["void", "bool", "char", "short", "int", "long", "float", "double",
+  "signed", "unsigned", "wchar_t", "char8_t", "char16_t", "char32_t", "size_t", "auto"]);
+// std smart-pointer return → element type. Only std unique/shared/weak_ptr (return-type wrappers are
+// effectively always std); a custom forwarder as a *return* type is a deferred non-goal.
+const CPP_SMART_PTR_RET = /^(?:std\s*::\s*)?(unique_ptr|shared_ptr|weak_ptr)\s*<\s*([A-Za-z_]\w*)\s*>$/;
+
+// Reduce a captured return-type string to a bare element class name, or null when it is a primitive,
+// a qualified name (Ns::Foo), or a non-smart-pointer generic (Foo<T>). Smart-pointer wrappers unwrap.
+function normalizeReturnType(raw) {
+  const t = String(raw).replace(/^const\s+/, "").replace(/[\s*&]+$/, "").trim();
+  const sp = t.match(CPP_SMART_PTR_RET);
+  if (sp) return sp[2];
+  if (t.includes("::") || t.includes("<")) return null;
+  if (CPP_RET_PRIMITIVES.has(t)) return null;
+  return /^[A-Za-z_]\w*$/.test(t) ? t : null;
+}
+
+// Regex a chunk's text into {name, returnType} pairs for function definitions with an inferable simple
+// return type (bare class / pointer / reference / const / trailing-return / std smart-pointer). In-class
+// member defs are included (harmless — they resolve only an implicit-`this` `auto x = m()` call, which is
+// correct); out-of-class method defs (`Class::m`) are excluded by the name pattern not allowing `::`.
+export function extractCppReturnTypes(text) {
+  const s = String(text || "");
+  const out = [];
+  CPP_LEADING_FN.lastIndex = 0;
+  let m;
+  while ((m = CPP_LEADING_FN.exec(s))) {
+    const rt = normalizeReturnType(m[1]);
+    if (rt) out.push({ name: m[2], returnType: rt });
+  }
+  CPP_TRAILING_FN.lastIndex = 0;
+  while ((m = CPP_TRAILING_FN.exec(s))) {
+    const rt = normalizeReturnType(m[2]);
+    if (rt) out.push({ name: m[1], returnType: rt });
+  }
+  return out;
+}
+
 // Wrapper templates whose `ptr->method()` forwards to the element type's method. Std smart pointers
 // universally do; a project adds custom forwarders (e.g. AEFX_SuiteScoper) via cfg.cppSmartPointers.
 export const DEFAULT_SMART_PTRS = new Set(["unique_ptr", "shared_ptr", "weak_ptr"]);
@@ -142,18 +188,54 @@ export function inferCppReceiverType(callNode, receiverName, smartPtrs = DEFAULT
   return b.type;
 }
 
+// The free-function name whose return value initializes `receiverName`, when that local is declared
+// `auto x = freeFn(...)`, else null. Walks the call's enclosing function_definition (does not descend
+// into lambdas — scope-bleed guard). Member/qualified factory calls (obj.make(), ns::make()) → null.
+// For a uniquely-named local (the common case) the match is unambiguous; when `receiverName` is
+// re-declared in a nested block, the last-textual declaration wins (deterministic). Known limitation
+// (same as inferCppReceiverType): a call site inside a lambda walks up through the lambda to the outer
+// function_definition, so it may still see the outer factory declaration.
+export function inferCppFactory(callNode, receiverName) {
+  if (!callNode || !receiverName) return null;
+  let fn = callNode.parent;
+  while (fn && fn.type !== "function_definition") fn = fn.parent;
+  if (!fn) return null;
+  const stack = [fn];
+  while (stack.length) {
+    const n = stack.pop();
+    if (n !== fn && n.type === "lambda_expression") continue;
+    if (n.type === "declaration"
+      && n.childForFieldName?.("type")?.type === "placeholder_type_specifier") {
+      const decl = n.childForFieldName?.("declarator");
+      if (decl?.type === "init_declarator" && declName(decl.childForFieldName?.("declarator")) === receiverName) {
+        const val = decl.childForFieldName?.("value");
+        const callee = val?.type === "call_expression" ? val.childForFieldName?.("function") : null;
+        return callee?.type === "identifier" ? callee.text : null;
+      }
+    }
+    for (let i = 0; i < n.namedChildCount; i++) stack.push(n.namedChild(i));
+  }
+  return null;
+}
+
 // C++ source-file extensions — used to gate resolveCppMethods to C++ callers only.
 const CPP_EXTS = /\.(cpp|cc|cxx|c|h|hpp|hh|hxx|metal)$/i;
 
 // Upgrade ambiguous C++ member-call rows to resolved when the receiver type pins a single target FILE.
-// Pure — new array; only touches kind:"calls" conf:"ambiguous" isMethod rows with a receiverType.
+// Pure — new array; only touches kind:"calls" conf:"ambiguous" isMethod rows with a resolved receiver type (direct r.receiverType, or via a unique cppReturnIndex factory lookup).
 // Unique-PATH (not unique-def): overloads (several defs in one file) resolve; the same class#method
 // in two files stays ambiguous (don't guess). Mirrors resolveGoMethods.
-export function resolveCppMethods(rows, cppMethodIndex) {
+export function resolveCppMethods(rows, cppMethodIndex, cppReturnIndex = new Map()) {
   return rows.map((r) => {
-    if (r.kind !== "calls" || r.conf !== "ambiguous" || !r.isMethod || !r.receiverType) return r;
+    if (r.kind !== "calls" || r.conf !== "ambiguous" || !r.isMethod) return r;
     if (!CPP_EXTS.test(r.from_path ?? "")) return r;
-    const defs = cppMethodIndex.get(`${r.receiverType}#${r.ref_name}`);
+    let rt = r.receiverType;
+    if (!rt && r.receiverFactory) {                          // auto x = factory(); x.m()
+      const types = cppReturnIndex.get(r.receiverFactory);
+      if (types && types.size === 1) rt = [...types][0];     // unique return type only — don't guess
+    }
+    if (!rt) return r;
+    const defs = cppMethodIndex.get(`${rt}#${r.ref_name}`);
     if (!defs || !defs.length) return r;
     const paths = [...new Set(defs.map((d) => d.path))];
     if (paths.length !== 1) return r;

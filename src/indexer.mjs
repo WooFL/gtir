@@ -11,7 +11,7 @@ import { extractCodeEdges, extractNotesEdges, resolveEdges } from "./edges.mjs";
 import { disambiguateEdges } from "./disambiguate.mjs";
 import { declaredSymbols, declaredCallables } from "./symbols.mjs";
 import { extractGoMethodDefs, resolveGoMethods } from "./go-types.mjs";
-import { extractCppMethodDefs, resolveCppMethods } from "./cpp-types.mjs";
+import { extractCppMethodDefs, resolveCppMethods, extractCppReturnTypes } from "./cpp-types.mjs";
 import { extractTsClassNames, resolveTsMethods } from "./ts-types.mjs";
 
 // Columns the current row shape ALWAYS writes. content_hash is deliberately excluded — it's
@@ -32,6 +32,7 @@ async function indexEdges(cfg, store, toIndex, { rebuild, deleted = [] }) {
   const symbolIndex = new Map(), noteIndex = new Map(), callSiteVec = new Map(), chunkByPath = new Map();
   const goMethodIndex = new Map();
   const cppMethodIndex = new Map();
+  const cppReturnIndex = new Map();
   const tsClassFiles = new Map();
   const tsCallableFiles = new Map();
   // Symbols declared by the changed files (drives the "a new def appeared" caller re-resolution).
@@ -74,6 +75,10 @@ async function indexEdges(cfg, store, toIndex, { rebuild, deleted = [] }) {
         const k = `${cls}#${method}`;
         if (!cppMethodIndex.has(k)) cppMethodIndex.set(k, []);
         cppMethodIndex.get(k).push({ path: r.path, line_start: Number(r.line_start), line_end: Number(r.line_end) });
+      }
+      for (const { name, returnType } of extractCppReturnTypes(r.text)) {
+        if (!cppReturnIndex.has(name)) cppReturnIndex.set(name, new Set());
+        cppReturnIndex.get(name).add(returnType);
       }
     }
     if (r.language === "typescript" || r.language === "tsx" || r.language === "javascript") {
@@ -133,7 +138,7 @@ async function indexEdges(cfg, store, toIndex, { rebuild, deleted = [] }) {
     if (raw.length) all.push(...resolveEdges(raw, symbolIndex, noteIndex));
   }
   all = resolveGoMethods(all, goMethodIndex);
-  all = resolveCppMethods(all, cppMethodIndex);
+  all = resolveCppMethods(all, cppMethodIndex, cppReturnIndex);
   all = resolveTsMethods(all, tsClassFiles, tsCallableFiles);
   if (chunkByPath.size) {
     all = all.map((e) => {

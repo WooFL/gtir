@@ -445,6 +445,29 @@ test("extractCodeEdges (cpp): a wrapper NOT in the allowlist → null", async ()
   assert.equal(edges.find((e) => e.kind === "calls" && e.refName === "bar").receiverType, null);
 });
 
+test("inferCppFactory: auto local from a free-function call sets receiverFactory", async () => {
+  const edges = await edgesFor("cpp", `void use(){ auto w = makeWidget(); w.run(); }`, "a.cpp");
+  const call = edges.find((e) => e.refName === "run");
+  assert.equal(call.receiverFactory, "makeWidget");
+  assert.equal(call.receiverType, null);
+});
+test("inferCppFactory: member-call factory is not captured", async () => {
+  const edges = await edgesFor("cpp", `void use(){ auto x = obj.make(); x.run(); }`, "a.cpp");
+  const call = edges.find((e) => e.refName === "run");
+  assert.equal(call.receiverFactory, null);
+});
+test("inferCppFactory: qualified factory is not captured", async () => {
+  const edges = await edgesFor("cpp", `void use(){ auto x = ns::make(); x.run(); }`, "a.cpp");
+  const call = edges.find((e) => e.refName === "run");
+  assert.equal(call.receiverFactory, null);
+});
+test("inferCppFactory: a typed local sets receiverType, not receiverFactory", async () => {
+  const edges = await edgesFor("cpp", `void use(){ Foo x; x.run(); }`, "a.cpp");
+  const call = edges.find((e) => e.refName === "run");
+  assert.equal(call.receiverType, "Foo");
+  assert.equal(call.receiverFactory, null);
+});
+
 test("extractCodeEdges (ts): typed param → receiverType", async () => {
   const edges = await edgesFor("typescript", `function run(e: Encoder) { e.flush(); }`, "a.ts");
   assert.equal(edges.find((e) => e.refName === "flush").receiverType, "Encoder");

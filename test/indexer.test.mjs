@@ -412,6 +412,26 @@ test("indexEdges resolves a C++ member call by receiver type (cross-file)", asyn
   }
 });
 
+test("indexEdges resolves a C++ member call by factory return type (cross-file)", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-cpp-"));
+  try {
+    writeFileSync(join(repo, "widget.cpp"), `struct Widget { void run(){} };\n`);
+    writeFileSync(join(repo, "gadget.cpp"), `struct Gadget { void run(){} };\n`);
+    writeFileSync(join(repo, "make.cpp"), `Widget makeWidget(){ return Widget(); }\nvoid useW(){ auto w = makeWidget(); w.run(); }\n`);
+    const cfg = loadConfig(repo);
+    cfg.embedImpl = (texts) => Promise.resolve(texts.map(() => [1, 0, 0]));
+    cfg.minChars = 1;
+    await buildIndex(cfg, { rebuild: true });
+    const edges = await (await openStore(cfg)).loadEdges();
+    const call = edges.find((e) => e.kind === "calls" && e.from_path.endsWith("make.cpp") && e.ref_name === "run");
+    assert.ok(call, "expected a run call edge from make.cpp");
+    assert.equal(call.conf, "resolved");
+    assert.equal(call.to_path, "widget.cpp");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test("indexEdges resolves a TS member call by receiver type (cross-file)", async () => {
   const repo = mkdtempSync(join(tmpdir(), "gtir-ts-"));
   try {
