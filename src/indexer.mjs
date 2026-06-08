@@ -7,7 +7,7 @@ import { chunkFile, stableId } from "./chunker.mjs";
 import { contextualizeChunk } from "./contextualize.mjs";
 import { embedTexts, contentHash } from "./embed.mjs";
 import { openStore } from "./store.mjs";
-import { extractCodeEdges, extractNotesEdges, resolveEdges } from "./edges.mjs";
+import { extractCodeEdges, extractNotesEdges, resolveEdges, noteKey } from "./edges.mjs";
 import { disambiguateEdges } from "./disambiguate.mjs";
 import { declaredSymbols, declaredCallables } from "./symbols.mjs";
 import { extractGoMethodDefs, resolveGoMethods } from "./go-types.mjs";
@@ -115,16 +115,23 @@ async function indexEdges(cfg, store, toIndex, { rebuild, deleted = [] }) {
   }
 
   // Re-extract set: changed files + unchanged callers whose call resolution could have changed.
+  // Note keys (basename, lowercased) of changed markdown files — lets an unresolved/resolved
+  // [[C]] link re-resolve when a note named C is added/changed/renamed-in (mirrors nameNowDeclared).
+  const changedNoteNames = new Set();
+  for (const p of changedSet) if (/\.(md|mdx)$/i.test(p)) changedNoteNames.add(noteKey(p));
   const reExtract = new Set(changedSet);
   if (!rebuild) {
     const existing = await store.loadEdges();
     for (const e of existing) {
-      if (e.kind !== "calls" || !e.from_path) continue;
+      if (!e.from_path) continue;
       if (changedSet.has(e.from_path) || deletedSet.has(e.from_path)) continue; // changed (in set) / deleted (evicted)
       const targetChanged = e.to_path && (changedSet.has(e.to_path) || deletedSet.has(e.to_path));
       const candChanged = (e.candidates || []).some((c) => changedSet.has(c) || deletedSet.has(c));
-      const nameNowDeclared = e.ref_name && changedSymbols.has(e.ref_name);
-      if (targetChanged || candChanged || nameNowDeclared) reExtract.add(e.from_path);
+      let nameTrigger = false;
+      if (e.kind === "calls") nameTrigger = e.ref_name && changedSymbols.has(e.ref_name);
+      else if (e.kind === "links" || e.kind === "embeds") nameTrigger = e.ref_name && changedNoteNames.has(noteKey(e.ref_name));
+      else continue;   // imports: not re-resolved here (unchanged behavior)
+      if (targetChanged || candChanged || nameTrigger) reExtract.add(e.from_path);
     }
   }
   for (const d of deletedSet) reExtract.delete(d);

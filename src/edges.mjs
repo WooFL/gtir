@@ -244,7 +244,10 @@ function resolveSourceStem(fromPath, source) {
   return stripExt(joined);
 }
 
-const noteKey = (s) => basename(String(s)).replace(/\.(md|mdx)$/i, "").toLowerCase();
+// Normalize a note path/target to its index key: forward-slash the separators (so a backslash path
+// resolves the same on POSIX and Windows — matching the noteIndex key builder in indexer.mjs), take
+// the basename, strip the .md/.mdx extension, lowercase.
+export const noteKey = (s) => basename(String(s).replace(/\\/g, "/")).replace(/\.(md|mdx)$/i, "").toLowerCase();
 
 function row(kind, from, to, conf, candidates, contentHash, refName, score = null, isMethod = false, receiverType = null, receiverFactory = null) {
   return {

@@ -374,6 +374,68 @@ test("refresh: deleting an isolated file with no callers is a clean no-op", asyn
   } finally { rmSync(repo, { recursive: true, force: true }); }
 });
 
+test("refresh: deleting a linked note re-resolves inbound links (no stale resolved link)", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-notedel-"));
+  writeFileSync(join(repo, "a.md"), `# A\n\nsee [[B]]\n`);
+  writeFileSync(join(repo, "b.md"), `# B\n\nbody\n`);
+  try {
+    await buildIndex({ ...loadConfig(repo), embedImpl: fakeEmbed, minChars: 1 }, { rebuild: true });
+    let link = (await openStore(loadConfig(repo)).then((s) => s.loadEdges())).find((e) => e.kind === "links" && e.from_path === "a.md");
+    assert.equal(link.conf, "resolved"); assert.equal(link.to_path, "b.md");
+    await new Promise((r) => setTimeout(r, 1100));
+    rmSync(join(repo, "b.md"));
+    await buildIndex({ ...loadConfig(repo), embedImpl: fakeEmbed, minChars: 1 }, { rebuild: false });
+    link = (await openStore(loadConfig(repo)).then((s) => s.loadEdges())).find((e) => e.kind === "links" && e.from_path === "a.md");
+    assert.equal(link.conf, "external"); assert.equal(link.to_path, null);
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
+test("refresh: adding a note resolves a previously-external UNCHANGED inbound link", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-noteadd-"));
+  writeFileSync(join(repo, "a.md"), `# A\n\nsee [[C]]\n`);
+  try {
+    await buildIndex({ ...loadConfig(repo), embedImpl: fakeEmbed, minChars: 1 }, { rebuild: true });
+    let link = (await openStore(loadConfig(repo)).then((s) => s.loadEdges())).find((e) => e.kind === "links" && e.from_path === "a.md");
+    assert.equal(link.conf, "external");
+    await new Promise((r) => setTimeout(r, 1100));
+    writeFileSync(join(repo, "c.md"), `# C\n\nbody\n`); // a.md UNCHANGED; only c.md added
+    await buildIndex({ ...loadConfig(repo), embedImpl: fakeEmbed, minChars: 1 }, { rebuild: false });
+    link = (await openStore(loadConfig(repo)).then((s) => s.loadEdges())).find((e) => e.kind === "links" && e.from_path === "a.md");
+    assert.equal(link.conf, "resolved"); assert.equal(link.to_path, "c.md");
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
+test("refresh: renaming a linked note re-resolves the now-broken inbound link to external", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-noteren-"));
+  writeFileSync(join(repo, "a.md"), `# A\n\nsee [[B]]\n`);
+  writeFileSync(join(repo, "b.md"), `# B\n\nbody\n`);
+  try {
+    await buildIndex({ ...loadConfig(repo), embedImpl: fakeEmbed, minChars: 1 }, { rebuild: true });
+    await new Promise((r) => setTimeout(r, 1100));
+    rmSync(join(repo, "b.md"));
+    writeFileSync(join(repo, "b2.md"), `# B2\n\nbody\n`);   // rename b.md -> b2.md
+    await buildIndex({ ...loadConfig(repo), embedImpl: fakeEmbed, minChars: 1 }, { rebuild: false });
+    const link = (await openStore(loadConfig(repo)).then((s) => s.loadEdges())).find((e) => e.kind === "links" && e.from_path === "a.md");
+    assert.equal(link.conf, "external"); assert.equal(link.to_path, null);   // [[B]] no longer matches any note
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
+test("refresh: deleting an embedded note re-resolves inbound embeds (no stale resolved embed)", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-embeddel-"));
+  writeFileSync(join(repo, "a.md"), `# A\n\n![[B]]\n`);
+  writeFileSync(join(repo, "b.md"), `# B\n\nbody\n`);
+  try {
+    await buildIndex({ ...loadConfig(repo), embedImpl: fakeEmbed, minChars: 1 }, { rebuild: true });
+    let emb = (await openStore(loadConfig(repo)).then((s) => s.loadEdges())).find((e) => e.kind === "embeds" && e.from_path === "a.md");
+    assert.equal(emb.conf, "resolved"); assert.equal(emb.to_path, "b.md");
+    await new Promise((r) => setTimeout(r, 1100));
+    rmSync(join(repo, "b.md"));
+    await buildIndex({ ...loadConfig(repo), embedImpl: fakeEmbed, minChars: 1 }, { rebuild: false });
+    emb = (await openStore(loadConfig(repo)).then((s) => s.loadEdges())).find((e) => e.kind === "embeds" && e.from_path === "a.md");
+    assert.equal(emb.conf, "external"); assert.equal(emb.to_path, null);
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
 test("indexEdges resolves a Go method call by receiver type (cross-file)", async () => {
   const repo = mkdtempSync(join(tmpdir(), "gtir-go-"));
   try {
