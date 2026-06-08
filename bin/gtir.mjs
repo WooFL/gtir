@@ -350,7 +350,8 @@ export async function runOrphansEval({ repo, golden: goldenArg = null, baseline:
   const result = await orphansQuery(cfg);
   if (result.error) { process.stderr.write(`eval --orphans: ${result.error}\n`); return 2; }
   const metrics = evalOrphans(result, golden);
-  metrics.model = ((await (await openStore(cfg)).readMeta()) || {}).model || cfg.model;
+  const store = await openStore(cfg);
+  metrics.model = ((await store.readMeta()) || {}).model || cfg.model;
 
   printOrphansEval(metrics);
   if (json) process.stdout.write(JSON.stringify(metrics) + "\n");
