@@ -13,7 +13,7 @@ import { watchRepo, watcherLive } from "../src/watch.mjs";
 import { probeDim } from "../src/embed.mjs";
 import { runInit, ensureGitignore } from "../src/init.mjs";
 import { resolveIndexes, serveStdio, printConfig, startWatchers, preflightIndexes } from "../src/mcp.mjs";
-import { evalGolden, flattenMetrics, compareBaseline, compareTiers, evalEdgeExtraction, evalDisambiguation, rankDisambigOperatingPoint } from "../src/eval.mjs";
+import { evalGolden, flattenMetrics, compareBaseline, compareTiers, evalEdgeExtraction, evalDisambiguation, rankDisambigOperatingPoint, evalOrphans } from "../src/eval.mjs";
 import { disambiguateEdges } from "../src/disambiguate.mjs";
 import { declaredSymbols } from "../src/symbols.mjs";
 import { runDemo, formatDemo } from "../src/demo.mjs";
@@ -156,6 +156,7 @@ function parseArgs(argv) {
     else if (a === "--centrality") args.centrality = true;
     else if (a === "--edges") args.edges = true;
     else if (a === "--disambig") args.disambig = true;
+    else if (a === "--orphans") args.orphans = true;
     else args._.push(a);
   }
   return args;
@@ -326,6 +327,62 @@ function printEdgeEval(m) {
   }
   out.push(`  conf split: resolved=${m.split.resolved} inferred=${m.split.inferred} ambiguous=${m.split.ambiguous} external=${m.split.external}`);
   process.stderr.write(out.join("\n") + "\n");
+}
+
+// `gtir eval --orphans`: score orphans classification against a per-symbol-bucket golden over the
+// indexed corpus. Mirrors runEdgeEval's build/save/baseline/gate flow. Returns an exit code.
+export async function runOrphansEval({ repo, golden: goldenArg = null, baseline: baselineArg = null, noBuild = false, save = false, json = false } = {}) {
+  const root = repo || process.cwd();
+  const cfg = loadConfig(root);
+  const goldenPath = goldenArg || path.join(root, "eval", "orphans-golden.json");
+  if (!existsSync(goldenPath)) {
+    process.stderr.write(`eval --orphans: no golden file at ${goldenPath} — pass --golden <file>\n`); return 2;
+  }
+  let golden;
+  try { golden = JSON.parse(readFileSync(goldenPath, "utf8")); }
+  catch (e) { process.stderr.write(`eval --orphans: cannot parse ${goldenPath}: ${e.message}\n`); return 2; }
+  if (!Array.isArray(golden) || golden.length === 0) {
+    process.stderr.write("eval --orphans: golden set is empty\n"); return 2;
+  }
+
+  if (!noBuild) await buildIndex(cfg, { rebuild: false });
+
+  const result = await orphansQuery(cfg);
+  if (result.error) { process.stderr.write(`eval --orphans: ${result.error}\n`); return 2; }
+  const metrics = evalOrphans(result, golden);
+  metrics.model = ((await (await openStore(cfg)).readMeta()) || {}).model || cfg.model;
+
+  printOrphansEval(metrics);
+  if (json) process.stdout.write(JSON.stringify(metrics) + "\n");
+
+  const baselinePath = baselineArg || path.join(root, "eval", "orphans-baseline.json");
+  if (save) {
+    writeFileSync(baselinePath, JSON.stringify(metrics, null, 2) + "\n");
+    process.stderr.write(`eval --orphans: saved baseline → ${baselinePath} (n=${metrics.n}, model=${metrics.model})\n`);
+    return 0;
+  }
+  let base = null;
+  if (existsSync(baselinePath)) { try { base = JSON.parse(readFileSync(baselinePath, "utf8")); } catch { /* ignore */ } }
+  if (!base) { process.stderr.write("eval --orphans: no baseline to compare (run with --save to set one)\n"); return 0; }
+  if (base.model && base.model !== metrics.model) {
+    process.stderr.write(`eval --orphans: WARNING baseline model (${base.model}) != current (${metrics.model}) — cross-model comparison\n`);
+  }
+  if (typeof base.accuracy !== "number" || typeof base.false_dead !== "number") {
+    process.stderr.write("eval --orphans: baseline missing numeric accuracy/false_dead — re-save it with --save; skipping gate\n"); return 0;
+  }
+  const tol = 0.005;
+  const regressions = [];
+  if (metrics.accuracy < base.accuracy - tol) regressions.push(`accuracy ${base.accuracy} → ${metrics.accuracy}`);
+  if (metrics.false_dead > base.false_dead) regressions.push(`false_dead ${base.false_dead} → ${metrics.false_dead}`);
+  if (regressions.length) { for (const r of regressions) process.stderr.write(`eval --orphans: REGRESSION ${r}\n`); return 1; }
+  process.stderr.write("eval --orphans: no regressions\n");
+  return 0;
+}
+
+function printOrphansEval(m) {
+  process.stderr.write(
+    `orphans eval: n=${m.n} accuracy=${m.accuracy} correct=${m.correct} false_dead=${m.false_dead} `
+    + `false_entrypoint=${m.false_entrypoint} missing=${m.missing} model=${m.model ?? "?"}\n`);
 }
 
 // Read the disambiguator's inputs from a store built with cfg.disambiguate=false (raw ambiguous
@@ -689,6 +746,7 @@ async function main() {
       }
       case "eval": {
         if (args.disambig) process.exit(await runDisambigEval(args));
+        if (args.orphans) process.exit(await runOrphansEval({ repo: args.repo, golden: args.golden, baseline: args.baseline, noBuild: args.noBuild, save: args.save, json: args.json }));
         process.exit(await (args.edges ? runEdgeEval(args) : runEval(args)));
       }
       case "init": {

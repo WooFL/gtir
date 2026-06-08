@@ -1,0 +1,9 @@
+{
+  "n": 2,
+  "correct": 2,
+  "false_dead": 0,
+  "false_entrypoint": 0,
+  "missing": 0,
+  "accuracy": 1,
+  "model": "qwen3-embedding:0.6b"
+}

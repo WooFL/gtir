@@ -44,6 +44,7 @@
     "eval": "node bin/gtir.mjs eval --repo eval/corpus --golden eval/golden.json --baseline eval/baseline.json",
     "eval:edges": "node bin/gtir.mjs eval --edges --repo eval/corpus --golden eval/edges-golden.json --baseline eval/edges-baseline.json",
     "eval:disambig": "node bin/gtir.mjs eval --disambig --repo eval/corpus --golden eval/disambig-golden.json --baseline eval/disambig-baseline.json",
+    "eval:orphans": "node bin/gtir.mjs eval --orphans --repo eval/corpus --golden eval/orphans-golden.json --baseline eval/orphans-baseline.json",
     "build:shaders": "node scripts/build-shader-grammars.mjs",
     "prepack": "node scripts/bundle-grammars.mjs",
     "bundle:cosmos": "node scripts/bundle-cosmos.mjs"
