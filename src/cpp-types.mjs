@@ -432,31 +432,35 @@ function scanCppFieldBody(s, start, depth, cls, out, smartPtrs) {
   }
 }
 
-// Extract member-field declarations from a class body in `text`. Returns [{cls, field, type, smartPtr}].
+// Extract member-field declarations from class bodies in `text`. Returns [{cls, field, type, smartPtr}].
 // Brace-depth tracking ensures declarations inside inline method/ctor bodies are never emitted as fields.
-// Both modes share scanCppFieldBody: header mode scans from just after the body's opening `{` at interior
-// depth 1; scopeClass mode scans the whole text at interior depth 0 (a header-less chunk is typically an
-// out-of-class method body, so its `{ … }` locals must be skipped — not flushed as phantom fields).
-// scopeClass: fallback class name when the chunk has no `class/struct Name` header (chunk-robustness,
-// same rule as extractCppMethodDefs).
+// Multi-class: a chunk may hold several `class|struct Name { … }` headers (common in C++ headers); EVERY
+// one is indexed via a global-flag scan, not just the first (mirrors extractCppBases). For each header,
+// header mode scans from just after the body's opening `{` at interior depth 1; scanCppFieldBody stops at
+// that class's closing brace, so class A's fields never bleed into B. A forward decl (`class Encoder;`)
+// has no `{`/`:` so CPP_CLASS does not match it — it is never treated as a class with a body.
+// scopeClass mode (NO header anywhere): the whole text is treated as the class interior, scanned at depth
+// 0 (a header-less chunk is typically an out-of-class method body, so its `{ … }` locals must be skipped —
+// not flushed as phantom fields). scopeClass: fallback class name (chunk-robustness, same rule as
+// extractCppMethodDefs).
 export function extractCppFields(text, scopeClass = null, smartPtrs = DEFAULT_SMART_PTRS) {
   const s = String(text || "");
-  const cm = s.match(CPP_CLASS);
-  const cls = cm ? cm[1] : scopeClass;
-  if (!cls) return [];
-
   const out = [];
 
-  // scopeClass-only mode: no class header → whole text is the class interior, scanned at depth 0.
-  if (!cm) {
-    scanCppFieldBody(s, 0, 0, cls, out, smartPtrs);
-    return out;
+  // Header mode: scan every `class|struct Name {` header in the text, accumulating all classes' fields.
+  const headerRe = new RegExp(CPP_CLASS.source, "g");
+  let m, matched = false;
+  while ((m = headerRe.exec(s))) {
+    matched = true;
+    // find this class's body opening `{` (the match ends on `{` or `:`; search from there)
+    const bodyStart = s.indexOf("{", m.index + m[0].length - 1);
+    if (bodyStart === -1) continue;
+    scanCppFieldBody(s, bodyStart + 1, 1, m[1], out, smartPtrs);
   }
+  if (matched) return out;
 
-  // Header mode: find the opening `{` of the class body, scan its interior starting at depth 1.
-  const bodyStart = s.indexOf("{", cm.index + cm[0].length - 1);
-  if (bodyStart === -1) return [];
-  scanCppFieldBody(s, bodyStart + 1, 1, cls, out, smartPtrs);
+  // scopeClass-only mode: no class header anywhere → whole text is the class interior, scanned at depth 0.
+  if (scopeClass) scanCppFieldBody(s, 0, 0, scopeClass, out, smartPtrs);
   return out;
 }
 

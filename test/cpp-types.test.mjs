@@ -361,6 +361,38 @@ test("extractCppFields: non-allowlisted generic skipped", () => {
   assert.deepEqual(extractCppFields(`class C { vector<Foo> v; };`), []);
 });
 
+// Multi-class: a chunk holding several class/struct headers must index EVERY class, not just the first
+// (matches extractCppBases, which already loops). Single-match would silently drop B, C, ….
+test("extractCppFields: two sibling classes — fields from BOTH", () => {
+  const r = extractCppFields(`class A { Widget* a_; }; class B { Gadget* b_; };`);
+  assert.deepEqual(r, [
+    { cls: "A", field: "a_", type: "Widget", smartPtr: false },
+    { cls: "B", field: "b_", type: "Gadget", smartPtr: false },
+  ]);
+});
+test("extractCppFields: forward decl before a class → only the real class's field", () => {
+  // `class Encoder;` is a forward decl (no `{`/`:`) so CPP_CLASS does NOT match it; Pipeline's body
+  // must NOT be mis-attributed to Encoder, and there is no phantom Encoder entry.
+  const r = extractCppFields(`class Encoder;\nclass Pipeline { Encoder* enc_; };`);
+  assert.deepEqual(r, [{ cls: "Pipeline", field: "enc_", type: "Encoder", smartPtr: false }]);
+});
+test("extractCppFields: base-clause class among siblings → fields for both", () => {
+  // A has a base clause (`: public X`); B does not. Both bodies must be scanned (int is bare → emitted).
+  const r = extractCppFields(`class A : public X { int a_; }; class B { int b_; };`);
+  assert.deepEqual(r, [
+    { cls: "A", field: "a_", type: "int", smartPtr: false },
+    { cls: "B", field: "b_", type: "int", smartPtr: false },
+  ]);
+});
+test("extractCppFields: inline-method local does not leak across sibling classes", () => {
+  // depth discipline: A's inline run() local `g` is skipped; only the real fields of A and B remain.
+  const r = extractCppFields(`class A { Widget* a_; void run(){ Gadget* g; } }; class B { Sink* b_; };`);
+  assert.deepEqual(r, [
+    { cls: "A", field: "a_", type: "Widget", smartPtr: false },
+    { cls: "B", field: "b_", type: "Sink", smartPtr: false },
+  ]);
+});
+
 // ── lookupCppField ────────────────────────────────────────────────────────────
 
 test("lookupCppField: own field resolves directly", () => {
