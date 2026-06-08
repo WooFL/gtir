@@ -116,7 +116,7 @@ export function scoreEdgeGolden(edges, entry) {
 export function evalEdges(edges, golden) {
   const found = golden.filter((g) => scoreEdgeGolden(edges, g).found).length;
   const recall = golden.length ? round(found / golden.length) : 0;
-  const split = { resolved: 0, inferred: 0, ambiguous: 0, external: 0 };
+  const split = { resolved: 0, inferred: 0, dispatch: 0, ambiguous: 0, external: 0 };
   for (const e of edges) if (e.conf in split) split[e.conf]++;
   return { recall, n: golden.length, found, split };
 }
@@ -128,7 +128,9 @@ export function evalEdges(edges, golden) {
 export function scoreEdge(edges, g) {
   const produced = edges.filter((e) => e.kind === g.kind && e.from_path === g.from && e.ref_name === g.symbol);
   if (!produced.length) return "missing";
-  const hit = produced.some((e) => (g.to == null ? (e.conf === "external" || !e.to_path) : e.to_path === g.to));
+  const hit = produced.some((e) =>
+    g.to == null ? (e.conf === "external" || !e.to_path)
+    : (e.to_path === g.to || (e.conf === "dispatch" && Array.isArray(e.candidates) && e.candidates.includes(g.to))));
   return hit ? "correct" : "wrong";
 }
 
@@ -146,7 +148,7 @@ export function evalEdgeExtraction(edges, golden) {
     byLang[lang].n++;
   }
   const denom = golden.length || 1;
-  const split = { resolved: 0, inferred: 0, ambiguous: 0, external: 0 };
+  const split = { resolved: 0, inferred: 0, dispatch: 0, ambiguous: 0, external: 0 };
   for (const e of edges) if (e.conf in split) split[e.conf]++;
   return {
     n: golden.length,
