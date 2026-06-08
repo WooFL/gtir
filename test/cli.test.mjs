@@ -124,3 +124,24 @@ test("runEdgeEval errors (exit 2) when the golden file is missing", async () => 
   const code = await runEdgeEval({ repo, golden: join(repo, "nope.json"), noBuild: true });
   assert.equal(code, 2);
 });
+
+test("runEdgeEval returns exit 1 when recall regresses against the baseline", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-cli-ee3-"));
+  const cfg = loadConfig(repo);
+  const store = await openStore(cfg);
+  // Seed only the external edge — the golden expects a resolved a.mjs→b.mjs call too, so recall drops.
+  await store.upsertEdges([
+    { kind: "calls", conf: "external", from_path: "x.mjs", from_lines: "1", from_symbol: "h", to_path: null, to_lines: null, to_symbol: null, ref_name: "ext", candidates: [], content_hash: "h2" },
+  ]);
+  const goldenPath = join(repo, "edges-golden.json");
+  writeFileSync(goldenPath, JSON.stringify([
+    { from: "a.mjs", to: "b.mjs", symbol: "g", kind: "calls" },
+    { from: "x.mjs", to: null, symbol: "ext", kind: "calls" },
+  ]));
+  // Baseline with perfect recall; current edges only score 0.5 → regression beyond tol.
+  const basePath = join(repo, "edges-baseline.json");
+  writeFileSync(basePath, JSON.stringify({ n: 2, recall: 1, wrong_rate: 0, missing_rate: 0 }));
+
+  const code = await runEdgeEval({ repo, golden: goldenPath, baseline: basePath, noBuild: true });
+  assert.equal(code, 1);
+});

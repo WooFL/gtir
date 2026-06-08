@@ -304,7 +304,7 @@ export async function runEdgeEval({ repo, golden: goldenArg = null, baseline: ba
   if (metrics.wrong_rate > base.wrong_rate + tol) regressions.push(`wrong_rate ${base.wrong_rate} → ${metrics.wrong_rate}`);
   if (regressions.length) {
     for (const r of regressions) process.stderr.write(`eval --edges: REGRESSION ${r}\n`);
-    return 2;
+    return 1;
   }
   process.stderr.write("eval --edges: no regressions\n");
   return 0;
