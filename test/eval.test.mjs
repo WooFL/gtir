@@ -349,6 +349,7 @@ test("scoreDisambig: positive with no matching edge → fn", () => {
 });
 
 import { evalDisambiguation, rankDisambigOperatingPoint } from "../src/eval.mjs";
+import { evalOrphans } from "../src/eval.mjs";
 
 test("evalDisambiguation: precision-first metrics over a mixed golden", () => {
   const edges = [
@@ -410,4 +411,25 @@ test("rankDisambigOperatingPoint: equal precision/recall/threshold → lower mar
     { threshold: 0.5, margin: 0.05, precision: 1, recall: 1, promotions: 2 },
   ];
   assert.equal(rankDisambigOperatingPoint(rows)[0].margin, 0.03);
+});
+
+test("evalOrphans: tallies correct / false_dead / false_entrypoint / missing / accuracy", () => {
+  const result = {
+    likely_dead: [{ path: "u.cpp", symbol: "dead" }, { path: "p.cpp", symbol: "entry" }],
+    possible_entrypoint: [{ path: "a.cpp", symbol: "api" }, { path: "b.cpp", symbol: "notDead" }],
+  };
+  const golden = [
+    { path: "u.cpp", symbol: "dead", expect: "likely_dead" },           // correct
+    { path: "p.cpp", symbol: "entry", expect: "possible_entrypoint" },   // false_dead
+    { path: "a.cpp", symbol: "api", expect: "possible_entrypoint" },     // correct
+    { path: "b.cpp", symbol: "notDead", expect: "likely_dead" },         // false_entrypoint
+    { path: "z.cpp", symbol: "gone", expect: "likely_dead" },            // missing (in neither bucket)
+  ];
+  const m = evalOrphans(result, golden);
+  assert.equal(m.n, 5);
+  assert.equal(m.correct, 2);
+  assert.equal(m.false_dead, 1);
+  assert.equal(m.false_entrypoint, 1);
+  assert.equal(m.missing, 1);
+  assert.equal(m.accuracy, 0.4);
 });

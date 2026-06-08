@@ -216,3 +216,23 @@ export function rankDisambigOperatingPoint(rows) {
     return a.margin - b.margin;
   });
 }
+
+// Score orphans output against a golden of expected buckets. golden = [{ path, symbol, expect }],
+// expect ∈ {"likely_dead","possible_entrypoint"}. A golden symbol the tool placed in NEITHER bucket
+// (it had an inbound edge → not an orphan candidate) is "missing". false_dead (expected entrypoint,
+// reported dead) is the precision-first failure to gate on.
+export function evalOrphans(result, golden) {
+  const dead = new Set((result.likely_dead || []).map((d) => `${d.path}#${d.symbol}`));
+  const entry = new Set((result.possible_entrypoint || []).map((d) => `${d.path}#${d.symbol}`));
+  let correct = 0, false_dead = 0, false_entrypoint = 0, missing = 0;
+  for (const g of golden) {
+    const key = `${g.path}#${g.symbol}`;
+    const actual = dead.has(key) ? "likely_dead" : entry.has(key) ? "possible_entrypoint" : "missing";
+    if (actual === "missing") missing++;
+    else if (actual === g.expect) correct++;
+    else if (g.expect === "possible_entrypoint") false_dead++;   // expected entry, got dead
+    else false_entrypoint++;                                      // expected dead, got entry
+  }
+  const n = golden.length;
+  return { n, correct, false_dead, false_entrypoint, missing, accuracy: n ? round(correct / n) : 0 };
+}
