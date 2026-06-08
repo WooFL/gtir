@@ -22,13 +22,14 @@ import { indexEdges } from "../src/indexer.mjs";
 import { memberCallStats } from "../src/callstats.mjs";
 import { fetchGrammars } from "../src/fetch-grammars.mjs";
 import { buildGraph, renderHtml, renderMermaid } from "../src/graph.mjs";
-import { impactQuery, orphansQuery, cyclesQuery, graphForSearch } from "../src/graph-queries.mjs";
+import { impactQuery, orphansQuery, cyclesQuery, graphForSearch, buildSymbolInventory } from "../src/graph-queries.mjs";
 import {
   gtirMcpEntry, gtirHookEntry, gtirClaudeMdBody,
   addMcpServer, removeMcpServer, addPreToolUseHook, removePreToolUseHook,
   upsertMarkedSection, removeMarkedSection, hooknudge,
   GTIR_START, GTIR_END, HOOK_MATCH_KEY,
 } from "../src/install.mjs";
+import { pathBetween, buildGraph as buildEdgeGraph, nodeKey } from "../src/edge-graph.mjs";
 import { mkdirSync } from "node:fs";
 
 // --- programmatic entrypoints (used by tests and the dispatcher) ---
@@ -70,6 +71,36 @@ export async function runStatus({ repo } = {}) {
 
 export async function runImpact({ repo, symbol, path = null, downstream = false, depth, includeAmbiguous = false, limit } = {}) {
   return impactQuery(loadConfig(repo), { symbol, path, downstream, depth, includeAmbiguous, limit });
+}
+
+// Shortest call-path between two symbols. Mirrors runImpact: loads edges + buildEdgeGraph, resolves
+// symbol names to node keys using the same inventory mechanism impactQuery uses.
+// Returns { path: string[]|null } on success, or { error: string } for missing symbols/index.
+export async function runPath({ repo, from, to, fromPath = null, toPath = null, depth, includeAmbiguous = false } = {}) {
+  if (!from) return { error: "from symbol is required" };
+  if (!to) return { error: "to symbol is required" };
+  const cfg = loadConfig(repo);
+  const store = await openStore(cfg);
+  const { isNotesMode } = await import("../src/search.mjs");
+  const mode = isNotesMode(cfg) ? "notes" : "code";
+  const hasEdges = await store.hasEdges();
+  if (!hasEdges) return { error: "no edge index — run: gtir index" };
+  const edges = await store.loadEdges();
+  const graph = buildEdgeGraph(edges, { includeAmbiguous });
+  const inv = await buildSymbolInventory(store, mode);
+  // Resolve 'from' symbol — same mechanism as impactQuery
+  let fromSites = inv.byName.get(from) || [];
+  if (fromPath) fromSites = fromSites.filter((s) => s.path.includes(fromPath));
+  if (fromSites.length === 0) return { error: `symbol '${from}' not found` };
+  // Resolve 'to' symbol
+  let toSites = inv.byName.get(to) || [];
+  if (toPath) toSites = toSites.filter((s) => s.path.includes(toPath));
+  if (toSites.length === 0) return { error: `symbol '${to}' not found` };
+  const fromKeys = fromSites.map((s) => nodeKey(s.path, s.name || null));
+  const toKeys = new Set(toSites.map((s) => nodeKey(s.path, s.name || null)));
+  const maxDepth = Number.isFinite(depth) ? depth : Infinity;
+  const foundPath = pathBetween(graph, fromKeys, toKeys, { maxDepth });
+  return { from, to, path: foundPath };
 }
 export async function runOrphans({ repo } = {}) {
   return orphansQuery(loadConfig(repo));
@@ -287,6 +318,10 @@ function parseArgs(argv) {
     else if (a === "--include-ambiguous") args.includeAmbiguous = true;
     else if (a === "--path") args.path = argv[++i];
     else if (a === "--symbol") args.symbol = argv[++i];
+    else if (a === "--from") args.from = argv[++i];
+    else if (a === "--to") args.to = argv[++i];
+    else if (a === "--from-path") args.fromPath = argv[++i];
+    else if (a === "--to-path") args.toPath = argv[++i];
     else if (a === "--limit") { const v = Number(argv[++i]); if (Number.isFinite(v)) args.limit = v; }
     else if (a === "--centrality") args.centrality = true;
     else if (a === "--edges") args.edges = true;
@@ -952,6 +987,36 @@ async function main() {
         if (r.error) process.exitCode = 2;
         break;
       }
+      case "path": {
+        // positional: `gtir path <from> <to>` OR flag form `--from <sym> --to <sym>`
+        const fromSym = args.from ?? args._[0] ?? null;
+        const toSym = args.to ?? args._[1] ?? null;
+        if (!fromSym || !toSym) {
+          process.stderr.write("gtir path: usage: gtir path <from> <to> [--from-path P] [--to-path P] [--depth N] [--include-ambiguous]\n");
+          process.exitCode = 2;
+          break;
+        }
+        const r = await runPath({ repo, from: fromSym, to: toSym,
+          fromPath: args.fromPath ?? null, toPath: args.toPath ?? null,
+          depth: args.depth, includeAmbiguous: !!args.includeAmbiguous });
+        if (r.error) {
+          process.stderr.write(`gtir path: ${r.error}\n`);
+          process.exitCode = 0; // not a crash, just not found
+          break;
+        }
+        if (r.path === null) {
+          process.stderr.write(`gtir path: no path found from '${fromSym}' to '${toSym}'\n`);
+        } else {
+          // Format: symbol · file → symbol · file → …
+          const labels = r.path.map((key) => {
+            const h = key.indexOf("#");
+            if (h >= 0) return `${key.slice(h + 1)} · ${key.slice(0, h)}`;
+            return key;
+          });
+          process.stdout.write(labels.join(" → ") + "\n");
+        }
+        break;
+      }
       default:
         process.stderr.write([
           "usage: gtir <command> [options]",
@@ -974,6 +1039,7 @@ async function main() {
           "  gtir eval    --repo <project> --disambig [--tune] [--save] [--no-build]   # score ambiguous→inferred promotion",
           "  gtir graph   --repo <project> [--out FILE] [--format <html|mermaid>] [--focus SYM [--depth 2]] [--rollup] [--max-nodes 400] [--kind calls,imports] [--conf ambiguous] [--path-prefix P]",
           "  gtir callstats --repo <project> [--json] [--lang <id>]   # member-call resolution rate + unresolved-reason breakdown (deterministic, no Ollama at resolve time)",
+          "  gtir path    <from> <to> --repo <project> [--from-path P] [--to-path P] [--depth N] [--include-ambiguous]   # shortest call-path between two symbols",
         ].join("\n") + "\n");
         process.exit(cmd ? 1 : 0);
     }

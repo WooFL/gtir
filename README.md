@@ -486,6 +486,7 @@ stdout and exist as MCP tools (`impact_<label>`, `orphans_<label>`, `cycles_<lab
   Always counts ambiguous inbound as a reference (a method only called via `obj.method()` is not dead).
 - `gtir cycles` — circular dependencies: call cycles and import cycles (Tarjan SCC
   groups, each with one sample path). Self-recursion is excluded.
+- `gtir path <from> <to>` — shortest call-path between two symbols.
 
 `impact` and `cycles` traverse **resolved** (and embedding-`inferred`) edges by default (ambiguous
 edges are name-coincidence guesses); pass `--include-ambiguous` to widen. (`orphans` always counts
