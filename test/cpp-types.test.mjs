@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { extractCppMethodDefs, resolveCppMethods, extractCppReturnTypes } from "../src/cpp-types.mjs";
+import { extractCppMethodDefs, resolveCppMethods, extractCppReturnTypes, extractCppBases } from "../src/cpp-types.mjs";
 
 test("extractCppMethodDefs: out-of-class definition", () => {
   assert.deepEqual(extractCppMethodDefs(`int Foo::bar(int x) { return x; }`), [{ cls: "Foo", method: "bar" }]);
@@ -178,4 +178,20 @@ test("resolveCppMethods: receiverType wins when both receiverType and receiverFa
   const out = resolveCppMethods(rows, methodIdx, returnIdx);
   assert.equal(out[0].conf, "resolved");
   assert.equal(out[0].to_path, "a.cpp");   // resolved via Foo (receiverType), not Bar (factory)
+});
+
+test("extractCppBases: single public base", () => {
+  assert.deepEqual(extractCppBases(`class Derived : public Base { void m(); };`), [{ cls: "Derived", bases: ["Base"] }]);
+});
+test("extractCppBases: multiple bases, mixed access", () => {
+  assert.deepEqual(extractCppBases(`class D : public A, private B, protected C {};`), [{ cls: "D", bases: ["A", "B", "C"] }]);
+});
+test("extractCppBases: virtual + final + struct", () => {
+  assert.deepEqual(extractCppBases(`struct S final : virtual public Base {};`), [{ cls: "S", bases: ["Base"] }]);
+});
+test("extractCppBases: qualified/external base keeps the trailing identifier", () => {
+  assert.deepEqual(extractCppBases(`class E : public std::exception {};`), [{ cls: "E", bases: ["exception"] }]);
+});
+test("extractCppBases: a class with no base clause yields nothing", () => {
+  assert.deepEqual(extractCppBases(`class Plain { int x; };`), []);
 });

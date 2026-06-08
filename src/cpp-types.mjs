@@ -229,6 +229,28 @@ export function inferCppFactory(callNode, receiverName) {
   return null;
 }
 
+// A class/struct head with a base clause → { cls, bases:[...] }. Captures the base-clause text between
+// `:` and `{`, then pulls each base's trailing identifier, skipping access/virtual keywords. Qualified
+// bases (std::exception) keep the last segment; a class with no `:` clause yields no entry.
+const CPP_BASE_HEAD = /\b(?:class|struct)\s+([A-Za-z_]\w*)\s*(?:final\b\s*)?:\s*([^{};]+)\{/g;
+export function extractCppBases(text) {
+  const s = String(text || "");
+  const out = [];
+  CPP_BASE_HEAD.lastIndex = 0;
+  let m;
+  while ((m = CPP_BASE_HEAD.exec(s))) {
+    const bases = [];
+    for (const part of m[2].split(",")) {
+      // last identifier in the part (handles `public ns::Base`, `virtual public Base`)
+      const ids = part.match(/[A-Za-z_]\w*/g) || [];
+      const last = ids[ids.length - 1];
+      if (last && !["public", "private", "protected", "virtual"].includes(last)) bases.push(last);
+    }
+    if (bases.length) out.push({ cls: m[1], bases });
+  }
+  return out;
+}
+
 // C++ source-file extensions — used to gate resolveCppMethods to C++ callers only.
 const CPP_EXTS = /\.(cpp|cc|cxx|c|h|hpp|hh|hxx|metal)$/i;
 
