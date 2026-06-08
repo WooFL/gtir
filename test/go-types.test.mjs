@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { extractGoMethodDefs, resolveGoMethods, extractGoInterfaces } from "../src/go-types.mjs";
+import { extractGoMethodDefs, resolveGoMethods, extractGoInterfaces, resolveGoDispatch } from "../src/go-types.mjs";
 
 test("extractGoMethodDefs: pointer receiver", () => {
   assert.deepEqual(extractGoMethodDefs(`func (b *Batcher) Batch(x int) int { return x }`), [{ type: "Batcher", method: "Batch" }]);
@@ -68,4 +68,36 @@ test("extractGoInterfaces: ignores non-interface type and struct", () => {
 });
 test("extractGoInterfaces: empty interface yields no methods", () => {
   assert.deepEqual(extractGoInterfaces(`type Any interface {}`), [{ name: "Any", methods: [] }]);
+});
+
+const dMethodIdx = new Map([
+  ["Circle#Area", [{ path: "circle.go", line_start: 1, line_end: 3 }]],
+  ["Square#Area", [{ path: "square.go", line_start: 1, line_end: 3 }]],
+  ["Square#Perimeter", [{ path: "square.go", line_start: 5, line_end: 7 }]],
+]);
+const dIfaceIdx = new Map([["Shaper", new Set(["Area"])]]);
+const dTypeSets = new Map([["Circle", new Set(["Area"])], ["Square", new Set(["Area", "Perimeter"])]]);
+const dRow = (over = {}) => ({ kind: "calls", conf: "ambiguous", isMethod: true, ref_name: "Area",
+  from_path: "use.go", receiverType: "Shaper", to_path: null, to_symbol: null, candidates: [], ...over });
+test("resolveGoDispatch: interface receiver → dispatch over implementers", () => {
+  const [r] = resolveGoDispatch([dRow()], dMethodIdx, dIfaceIdx, dTypeSets);
+  assert.equal(r.conf, "dispatch");
+  assert.equal(r.to_symbol, "Area");
+  assert.deepEqual([...r.candidates].sort(), ["circle.go", "square.go"]);
+  assert.equal(r.to_path, null);
+});
+test("resolveGoDispatch: a type missing an interface method is not an implementer", () => {
+  const sets = new Map([["Circle", new Set(["Area"])], ["Square", new Set(["Perimeter"])]]);
+  const [r] = resolveGoDispatch([dRow()], dMethodIdx, dIfaceIdx, sets);
+  assert.deepEqual(r.candidates, ["circle.go"]);
+  assert.equal(r.conf, "dispatch");
+});
+test("resolveGoDispatch: no implementer defines the called method → stays ambiguous", () => {
+  assert.equal(resolveGoDispatch([dRow({ ref_name: "Ghost" })], dMethodIdx, dIfaceIdx, dTypeSets)[0].conf, "ambiguous");
+});
+test("resolveGoDispatch: non-interface receiverType untouched", () => {
+  assert.equal(resolveGoDispatch([dRow({ receiverType: "Circle" })], dMethodIdx, dIfaceIdx, dTypeSets)[0].conf, "ambiguous");
+});
+test("resolveGoDispatch: non-.go caller gated out", () => {
+  assert.equal(resolveGoDispatch([dRow({ from_path: "use.ts" })], dMethodIdx, dIfaceIdx, dTypeSets)[0].conf, "ambiguous");
 });

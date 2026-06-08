@@ -103,3 +103,25 @@ export function resolveGoMethods(rows, goMethodIndex) {
       to_lines: `${d.line_start}-${d.line_end}`, candidates: [] };
   });
 }
+
+// Upgrade an ambiguous Go method call on an INTERFACE-typed receiver to conf:"dispatch" — the set of
+// concrete implementers that satisfy the interface (name-based: methodSet(T) ⊇ interface method set)
+// and define the called method. Pure. Run AFTER resolveGoMethods (concrete receivers resolve first).
+export function resolveGoDispatch(rows, goMethodIndex, goInterfaceIndex, goTypeMethodSets) {
+  return rows.map((r) => {
+    if (r.kind !== "calls" || r.conf !== "ambiguous" || !r.isMethod || !r.receiverType) return r;
+    if (!/\.go$/.test(r.from_path ?? "")) return r;
+    const need = goInterfaceIndex.get(r.receiverType);
+    if (!need) return r;
+    const paths = new Set();
+    for (const [type, mset] of goTypeMethodSets) {
+      let satisfies = true;
+      for (const meth of need) if (!mset.has(meth)) { satisfies = false; break; }
+      if (!satisfies) continue;
+      const defs = goMethodIndex.get(`${type}#${r.ref_name}`);
+      if (defs) for (const d of defs) paths.add(d.path);
+    }
+    if (paths.size === 0) return r;
+    return { ...r, conf: "dispatch", to_path: null, to_symbol: r.ref_name, to_lines: null, candidates: [...paths] };
+  });
+}
