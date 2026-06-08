@@ -349,3 +349,10 @@ test("resolveEdges threads receiverType onto ambiguous calls rows", () => {
   assert.equal(r.conf, "ambiguous");
   assert.equal(r.receiverType, "Batcher");
 });
+
+test("extractCodeEdges (go): nested func-literal param does not shadow the outer receiver", async () => {
+  const src = `package p\nfunc (c *Client) Do() { f := func(c *Counter) {}; _ = f; c.Send() }`;
+  const edges = await edgesFor("go", src, "a.go");
+  const call = edges.find((e) => e.kind === "calls" && e.refName === "Send");
+  assert.equal(call.receiverType, "Client"); // outer receiver, NOT the closure's *Counter
+});

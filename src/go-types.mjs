@@ -39,13 +39,15 @@ function addBinding(decl, bindings) {
 }
 
 // Collect all explicit single-hop type bindings visible in a function/method node: its receiver and
-// parameters (parameter_declaration) and its body's `var` specs (var_spec). Best-effort: a nested
-// func literal's params are also visited (rare; a wrong binding simply won't match a real method).
+// parameters (parameter_declaration) and its body's `var` specs (var_spec). Nested func-literal
+// scopes are NOT descended into — a same-name closure param must not shadow an outer binding (that
+// would be a false-positive resolution, not just a miss).
 function collectGoBindings(fn) {
   const bindings = new Map();
   const stack = [fn];
   while (stack.length) {
     const n = stack.pop();
+    if (n !== fn && n.type === "func_literal") continue; // don't bleed nested-closure scopes
     if (n.type === "parameter_declaration" || n.type === "var_spec") addBinding(n, bindings);
     for (let i = 0; i < n.namedChildCount; i++) stack.push(n.namedChild(i));
   }
