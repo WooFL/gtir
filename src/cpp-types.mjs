@@ -30,3 +30,20 @@ export function extractCppMethodDefs(text) {
   }
   return out;
 }
+
+// Upgrade ambiguous C++ member-call rows to resolved when the receiver type pins a single target FILE.
+// Pure — new array; only touches kind:"calls" conf:"ambiguous" isMethod rows with a receiverType.
+// Unique-PATH (not unique-def): overloads (several defs in one file) resolve; the same class#method
+// in two files stays ambiguous (don't guess). Mirrors resolveGoMethods.
+export function resolveCppMethods(rows, cppMethodIndex) {
+  return rows.map((r) => {
+    if (r.kind !== "calls" || r.conf !== "ambiguous" || !r.isMethod || !r.receiverType) return r;
+    const defs = cppMethodIndex.get(`${r.receiverType}#${r.ref_name}`);
+    if (!defs || !defs.length) return r;
+    const paths = [...new Set(defs.map((d) => d.path))];
+    if (paths.length !== 1) return r;
+    const d = defs.find((x) => x.path === paths[0]);
+    return { ...r, conf: "resolved", to_path: paths[0], to_symbol: r.ref_name,
+      to_lines: `${d.line_start}-${d.line_end}`, candidates: [] };
+  });
+}
