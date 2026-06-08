@@ -18,6 +18,8 @@ import { disambiguateEdges } from "../src/disambiguate.mjs";
 import { declaredSymbols } from "../src/symbols.mjs";
 import { runDemo, formatDemo } from "../src/demo.mjs";
 import { runDoctor, preflight } from "../src/doctor.mjs";
+import { indexEdges } from "../src/indexer.mjs";
+import { memberCallStats } from "../src/callstats.mjs";
 import { fetchGrammars } from "../src/fetch-grammars.mjs";
 import { buildGraph, renderHtml } from "../src/graph.mjs";
 import { impactQuery, orphansQuery, cyclesQuery, graphForSearch } from "../src/graph-queries.mjs";
@@ -97,6 +99,46 @@ export async function runGraph({ repo, out = "gtir-graph.html", focus = null, de
   return { out, nodes: graph.nodes.length, edges: graph.edges.length, truncated: graph.truncated, dropped: graph.dropped };
 }
 
+// `gtir callstats --repo <path> [--json] [--lang <id>]`: report member-call resolution coverage over
+// a repo. Builds the index (Ollama needed for the chunk embeddings buildIndex writes), then runs the
+// indexEdges collect seam (full resolver chain, no disambiguate/embedding tier, no persist) and feeds
+// the in-memory rows + in-repo type/method sets to the pure memberCallStats classifier. Deterministic:
+// the resolution rate (resolved+dispatch / total member-calls) is exactly the receiver-type arc's reach.
+// Prints a readable table to stderr; --json writes the report object to stdout. Returns an exit code.
+export async function runCallstats({ repo, json = false, lang = null, embedImpl = null } = {}) {
+  const root = repo || process.cwd();
+  const cfg = loadConfig(root);
+  if (embedImpl) cfg.embedImpl = embedImpl;
+  // Build the index first: the collect seam reads the persisted chunks the resolver indexes need.
+  await buildIndex(cfg, { rebuild: true });
+  const { rows, sets } = await indexEdges(cfg, { rebuild: true, collect: true });
+  const report = memberCallStats(rows, { sets, lang: lang ?? undefined });
+  printCallstats(report, { repo: cfg.repo, lang });
+  if (json) process.stdout.write(JSON.stringify(report) + "\n");
+  return 0;
+}
+
+function printCallstats(r, { repo, lang } = {}) {
+  const pct = (x) => `${(x * 100).toFixed(1)}%`;
+  const out = [`callstats: ${repo}${lang ? ` (lang=${lang})` : ""}`];
+  out.push(`  member calls: ${r.total_member_calls}`);
+  out.push(`  resolved (resolved+dispatch): ${r.resolved}  rate=${pct(r.rate)}`);
+  out.push(`  external: ${r.external}   inferred: ${r.inferred}`);
+  out.push("  unresolved by reason:");
+  for (const [reason, n] of Object.entries(r.by_reason)) {
+    if (n > 0) out.push(`    ${reason.padEnd(20)} ${n}`);
+  }
+  const langs = Object.keys(r.by_lang).sort();
+  if (langs.length) {
+    out.push("  by lang:");
+    for (const l of langs) {
+      const b = r.by_lang[l];
+      out.push(`    ${l.padEnd(5)} n=${String(b.total_member_calls).padStart(5)} resolved=${String(b.resolved).padStart(5)} rate=${pct(b.rate)}`);
+    }
+  }
+  process.stderr.write(out.join("\n") + "\n");
+}
+
 // --- argv parsing ---
 
 function parseArgs(argv) {
@@ -124,6 +166,7 @@ function parseArgs(argv) {
     }
     else if (a === "--path-prefix") args.pathPrefix = argv[++i];
     else if (a === "--language") args.language = argv[++i];
+    else if (a === "--lang") args.lang = argv[++i];
     else if (a === "--remove") args.remove = true;
     else if (a === "--notes") args.notes = true;
     else if (a === "--code") args.code = true;
@@ -750,6 +793,9 @@ async function main() {
         if (args.orphans) process.exit(await runOrphansEval({ repo: args.repo, golden: args.golden, baseline: args.baseline, noBuild: args.noBuild, save: args.save, json: args.json }));
         process.exit(await (args.edges ? runEdgeEval(args) : runEval(args)));
       }
+      case "callstats": {
+        process.exit(await runCallstats({ repo, json: args.json, lang: args.lang ?? null }));
+      }
       case "init": {
         const mode = args.notes ? "notes" : args.code ? "code" : null;
         const r = await runInit({ repo, mode, index: !args.noIndex, hook: !args.noHook });
@@ -815,6 +861,7 @@ async function main() {
           "  gtir eval    --repo <project> --tune [\"ftsWeight=0,0.2;ftsWeightMixed=0,0.3\"]   # sweep fusion weights on the golden set",
           "  gtir eval    --repo <project> --disambig [--tune] [--save] [--no-build]   # score ambiguous→inferred promotion",
           "  gtir graph   --repo <project> [--out FILE] [--focus SYM [--depth 2]] [--rollup] [--max-nodes 400] [--kind calls,imports] [--conf ambiguous] [--path-prefix P]",
+          "  gtir callstats --repo <project> [--json] [--lang <id>]   # member-call resolution rate + unresolved-reason breakdown (deterministic, no Ollama at resolve time)",
         ].join("\n") + "\n");
         process.exit(cmd ? 1 : 0);
     }

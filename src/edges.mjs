@@ -286,7 +286,11 @@ export function resolveEdges(rawEdges, symbolIndex, noteIndex, opts = {}) {
     if (e.kind === "calls") {
       const cands = symbolIndex.get(e.refName) ?? [];
       const from = { path: e.fromPath, fromLine: e.fromLine, symbol: e.fromSymbol ?? null };
-      if (cands.length === 0) { out.push(row("calls", from, null, "external", [], contentHash, e.refName)); continue; }
+      // External: no in-repo def for this name. Carry the member metadata (isMethod/receiver/…) so the
+      // callstats benchmark can see external MEMBER calls (e.g. std::vector::push_back) as member calls.
+      // These fields are in-memory only (toEdgeRow strips them) and the resolver chain only touches
+      // ambiguous rows, so this is invisible to persistence and to every persisting caller.
+      if (cands.length === 0) { out.push(row("calls", from, null, "external", [], contentHash, e.refName, null, e.isMethod, e.receiverType, e.receiverFactory, e.enclosingClass, e.memberOp, e.receiver)); continue; }
       const stem = importByName.get(e.fromPath)?.get(e.refName);
       const scoped = stem ? cands.find((c) => stripExt(c.path) === stem) : null;
       if (scoped) { out.push(row("calls", from, { ...scoped, symbol: e.refName }, "resolved", [], contentHash, e.refName)); continue; }
