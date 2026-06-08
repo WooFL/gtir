@@ -188,6 +188,32 @@ export function inferCppReceiverType(callNode, receiverName, smartPtrs = DEFAULT
   return b.type;
 }
 
+// The free-function name whose return value initializes `receiverName`, when that local is declared
+// `auto x = freeFn(...)`, else null. Walks the call's enclosing function_definition (does not descend
+// into lambdas — scope-bleed guard). Member/qualified factory calls (obj.make(), ns::make()) → null.
+export function inferCppFactory(callNode, receiverName) {
+  if (!callNode || !receiverName) return null;
+  let fn = callNode.parent;
+  while (fn && fn.type !== "function_definition") fn = fn.parent;
+  if (!fn) return null;
+  const stack = [fn];
+  while (stack.length) {
+    const n = stack.pop();
+    if (n !== fn && n.type === "lambda_expression") continue;
+    if (n.type === "declaration"
+      && n.childForFieldName?.("type")?.type === "placeholder_type_specifier") {
+      const decl = n.childForFieldName?.("declarator");
+      if (decl?.type === "init_declarator" && declName(decl.childForFieldName?.("declarator")) === receiverName) {
+        const val = decl.childForFieldName?.("value");
+        const callee = val?.type === "call_expression" ? val.childForFieldName?.("function") : null;
+        return callee?.type === "identifier" ? callee.text : null;
+      }
+    }
+    for (let i = 0; i < n.namedChildCount; i++) stack.push(n.namedChild(i));
+  }
+  return null;
+}
+
 // C++ source-file extensions — used to gate resolveCppMethods to C++ callers only.
 const CPP_EXTS = /\.(cpp|cc|cxx|c|h|hpp|hh|hxx|metal)$/i;
 
