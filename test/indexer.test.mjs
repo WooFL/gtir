@@ -474,6 +474,37 @@ test("indexEdges resolves a C++ member call by receiver type (cross-file)", asyn
   }
 });
 
+test("indexEdges resolves a C++ member-field receiver cross-file (out-of-class def)", async () => {
+  // Holder::tick() calls w_->go(), where w_ is the member field `Widget* w_` of Holder. The
+  // receiver var has no local/param binding in tick()'s body, and the field decl lives in a
+  // different file (holder.h) than the call (holder.cpp) — so the receiver type can ONLY come
+  // from the cross-file field index (cppFieldIndex). A decoy Gizmo::go in gizmo.cpp makes `go`
+  // genuinely ambiguous: without the field typing, the call cannot pin Widget vs Gizmo.
+  const repo = mkdtempSync(join(tmpdir(), "gtir-cpp-field-"));
+  try {
+    // One class per header so extractCppFields (single-class-per-chunk) sees Holder's field w_.
+    writeFileSync(join(repo, "widget.h"), `class Widget { public: void go(); };\n`);
+    writeFileSync(join(repo, "gizmo.h"), `class Gizmo { public: void go(); };\n`);
+    writeFileSync(join(repo, "holder.h"),
+      `#include "widget.h"\nclass Holder { Widget* w_; public: void tick(); };\n`);
+    writeFileSync(join(repo, "widget.cpp"), `#include "widget.h"\nvoid Widget::go() {}\n`);
+    writeFileSync(join(repo, "gizmo.cpp"), `#include "gizmo.h"\nvoid Gizmo::go() {}\n`);
+    writeFileSync(join(repo, "holder.cpp"),
+      `#include "holder.h"\nvoid Holder::tick() { w_->go(); }\n`);
+    const cfg = loadConfig(repo);
+    cfg.embedImpl = (texts) => Promise.resolve(texts.map(() => [1, 0, 0]));
+    cfg.minChars = 1;
+    await buildIndex(cfg, { rebuild: true });
+    const edges = await (await openStore(cfg)).loadEdges();
+    const go = edges.find((e) => e.kind === "calls" && e.from_path === "holder.cpp" && e.ref_name === "go");
+    assert.ok(go, "expected a go call edge from holder.cpp");
+    assert.equal(go.conf, "resolved", "field receiver typed → no longer ambiguous");
+    assert.equal(go.to_path, "widget.cpp", "resolved to Widget::go (w_ is a Widget*), not Gizmo::go");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test("indexEdges resolves a C++ in-class method split into its own chunk (chunk-robust)", async () => {
   // A class big enough that the chunker drops the oversize class_specifier and surfaces each inline
   // method as its own chunk — the `class Encoder {` header then appears in NO chunk's text, only in
