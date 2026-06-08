@@ -28,3 +28,10 @@ test("extractCppMethodDefs: free function is not a method", () => {
 test("extractCppMethodDefs: empty", () => {
   assert.deepEqual(extractCppMethodDefs(``), []);
 });
+test("extractCppMethodDefs: a qualified call inside an if is not a def (regression)", () => {
+  assert.deepEqual(extractCppMethodDefs(`if (Foo::ok()) { go(); }`), []);
+});
+test("extractCppMethodDefs: a def with paren-containing params is a graceful miss (precision-first)", () => {
+  // function-pointer param contains (); excluded by [^;{}()] — we'd rather miss than false-positive.
+  assert.deepEqual(extractCppMethodDefs(`void Foo::set(void (*cb)(int)) { }`), []);
+});
