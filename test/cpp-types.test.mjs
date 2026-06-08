@@ -115,3 +115,33 @@ test("extractCppReturnTypes: NEGATIVES yield no entry", () => {
   assert.deepEqual(extractCppReturnTypes(`Vec<int> v(){ return {}; }`), []);      // non-smart-ptr generic
   assert.deepEqual(extractCppReturnTypes(`auto d(){ return 1; }`), []);           // deduced auto, no trailing
 });
+
+test("resolveCppMethods: factory path resolves via cppReturnIndex", () => {
+  const rows = [{ kind: "calls", conf: "ambiguous", isMethod: true, receiverType: null,
+    receiverFactory: "makeFoo", ref_name: "run", from_path: "use.cpp", candidates: ["a.cpp"] }];
+  const methodIdx = new Map([["Foo#run", [{ path: "a.cpp", line_start: 2, line_end: 4 }]]]);
+  const returnIdx = new Map([["makeFoo", new Set(["Foo"])]]);
+  const out = resolveCppMethods(rows, methodIdx, returnIdx);
+  assert.equal(out[0].conf, "resolved");
+  assert.equal(out[0].to_path, "a.cpp");
+  assert.equal(out[0].to_symbol, "run");
+});
+test("resolveCppMethods: factory with 2 return types stays ambiguous", () => {
+  const rows = [{ kind: "calls", conf: "ambiguous", isMethod: true, receiverType: null,
+    receiverFactory: "make", ref_name: "run", from_path: "use.cpp", candidates: ["a.cpp", "b.cpp"] }];
+  const methodIdx = new Map([["Foo#run", [{ path: "a.cpp", line_start: 1, line_end: 1 }]]]);
+  const returnIdx = new Map([["make", new Set(["Foo", "Bar"])]]);
+  assert.equal(resolveCppMethods(rows, methodIdx, returnIdx)[0].conf, "ambiguous");
+});
+test("resolveCppMethods: factory absent from return index stays ambiguous", () => {
+  const rows = [{ kind: "calls", conf: "ambiguous", isMethod: true, receiverType: null,
+    receiverFactory: "missing", ref_name: "run", from_path: "use.cpp", candidates: ["a.cpp"] }];
+  const methodIdx = new Map([["Foo#run", [{ path: "a.cpp", line_start: 1, line_end: 1 }]]]);
+  assert.equal(resolveCppMethods(rows, methodIdx, new Map())[0].conf, "ambiguous");
+});
+test("resolveCppMethods: existing receiverType path still works with the 3rd arg", () => {
+  const rows = [{ kind: "calls", conf: "ambiguous", isMethod: true, receiverType: "Foo",
+    ref_name: "run", from_path: "use.cpp", candidates: ["a.cpp"] }];
+  const methodIdx = new Map([["Foo#run", [{ path: "a.cpp", line_start: 2, line_end: 4 }]]]);
+  assert.equal(resolveCppMethods(rows, methodIdx, new Map())[0].conf, "resolved");
+});

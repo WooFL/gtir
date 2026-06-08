@@ -225,11 +225,17 @@ const CPP_EXTS = /\.(cpp|cc|cxx|c|h|hpp|hh|hxx|metal)$/i;
 // Pure — new array; only touches kind:"calls" conf:"ambiguous" isMethod rows with a receiverType.
 // Unique-PATH (not unique-def): overloads (several defs in one file) resolve; the same class#method
 // in two files stays ambiguous (don't guess). Mirrors resolveGoMethods.
-export function resolveCppMethods(rows, cppMethodIndex) {
+export function resolveCppMethods(rows, cppMethodIndex, cppReturnIndex = new Map()) {
   return rows.map((r) => {
-    if (r.kind !== "calls" || r.conf !== "ambiguous" || !r.isMethod || !r.receiverType) return r;
+    if (r.kind !== "calls" || r.conf !== "ambiguous" || !r.isMethod) return r;
     if (!CPP_EXTS.test(r.from_path ?? "")) return r;
-    const defs = cppMethodIndex.get(`${r.receiverType}#${r.ref_name}`);
+    let rt = r.receiverType;
+    if (!rt && r.receiverFactory) {                          // auto x = factory(); x.m()
+      const types = cppReturnIndex.get(r.receiverFactory);
+      if (types && types.size === 1) rt = [...types][0];     // unique return type only — don't guess
+    }
+    if (!rt) return r;
+    const defs = cppMethodIndex.get(`${rt}#${r.ref_name}`);
     if (!defs || !defs.length) return r;
     const paths = [...new Set(defs.map((d) => d.path))];
     if (paths.length !== 1) return r;
