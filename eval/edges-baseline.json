@@ -1,7 +1,7 @@
 {
-  "n": 15,
+  "n": 19,
   "tally": {
-    "correct": 15,
+    "correct": 19,
     "wrong": 0,
     "missing": 0
   },
@@ -29,13 +29,19 @@
       "wrong": 0,
       "missing": 0,
       "n": 1
+    },
+    "go": {
+      "correct": 4,
+      "wrong": 0,
+      "missing": 0,
+      "n": 4
     }
   },
   "split": {
-    "resolved": 32,
-    "inferred": 0,
-    "ambiguous": 43,
-    "external": 249
+    "resolved": 52,
+    "inferred": 2,
+    "ambiguous": 52,
+    "external": 266
   },
   "recall": 1,
   "wrong_rate": 0,
