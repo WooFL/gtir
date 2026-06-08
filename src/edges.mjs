@@ -249,7 +249,7 @@ function resolveSourceStem(fromPath, source) {
 // the basename, strip the .md/.mdx extension, lowercase.
 export const noteKey = (s) => basename(String(s).replace(/\\/g, "/")).replace(/\.(md|mdx)$/i, "").toLowerCase();
 
-function row(kind, from, to, conf, candidates, contentHash, refName, score = null, isMethod = false, receiverType = null, receiverFactory = null, enclosingClass = null, memberOp = null) {
+function row(kind, from, to, conf, candidates, contentHash, refName, score = null, isMethod = false, receiverType = null, receiverFactory = null, enclosingClass = null, memberOp = null, receiver = null) {
   return {
     kind, conf,
     from_path: from.path, from_lines: from.lines ?? `${from.fromLine}`, from_symbol: from.symbol ?? null,
@@ -264,6 +264,7 @@ function row(kind, from, to, conf, candidates, contentHash, refName, score = nul
     receiverFactory,
     enclosingClass,
     memberOp,
+    receiver,
   };
 }
 
@@ -295,10 +296,10 @@ export function resolveEdges(rawEdges, symbolIndex, noteIndex, opts = {}) {
       if (cands.length === 1) {
         const only = cands[0];
         if (only.path === e.fromPath) { out.push(row("calls", from, { ...only, symbol: e.refName }, "resolved", [], contentHash, e.refName)); continue; }
-        out.push(row("calls", from, null, "ambiguous", [only.path], contentHash, e.refName, null, e.isMethod, e.receiverType, e.receiverFactory, e.enclosingClass, e.memberOp));
+        out.push(row("calls", from, null, "ambiguous", [only.path], contentHash, e.refName, null, e.isMethod, e.receiverType, e.receiverFactory, e.enclosingClass, e.memberOp, e.receiver));
         continue;
       }
-      out.push(row("calls", from, null, "ambiguous", cands.map((c) => c.path), contentHash, e.refName, null, e.isMethod, e.receiverType, e.receiverFactory, e.enclosingClass, e.memberOp));
+      out.push(row("calls", from, null, "ambiguous", cands.map((c) => c.path), contentHash, e.refName, null, e.isMethod, e.receiverType, e.receiverFactory, e.enclosingClass, e.memberOp, e.receiver));
     } else if (e.kind === "imports") {
       const stem = resolveSourceStem(e.fromPath, e.source);
       const from = { path: e.fromPath, fromLine: e.fromLine };
