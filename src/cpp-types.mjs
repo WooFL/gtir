@@ -124,9 +124,10 @@ function memberOperator(callNode) {
 
 // The identifier a C++ declarator ultimately names, recursing through pointer/reference/init
 // declarators: `* f` → f, `& g` → g, `* p = …` → p, `h` → h.
+// field_identifier is the leaf node type for class/struct member names in tree-sitter-cpp.
 function declName(decl) {
   if (!decl) return null;
-  if (decl.type === "identifier") return decl.text;
+  if (decl.type === "identifier" || decl.type === "field_identifier") return decl.text;
   const inner = decl.childForFieldName?.("declarator") || decl.namedChild(0);
   return inner && inner !== decl ? declName(inner) : null;
 }
@@ -162,6 +163,34 @@ function collectCppBindings(fn, smartPtrs) {
   return bindings;
 }
 
+// The nearest enclosing class_specifier or struct_specifier of a node, or null.
+function enclosingClassSpecifier(node) {
+  for (let p = node.parent; p; p = p.parent) {
+    if (p.type === "class_specifier" || p.type === "struct_specifier") return p;
+  }
+  return null;
+}
+
+// The declared type of member field `name` in a class_specifier, as {type, smartPtr}, or null. Reads
+// the class body's field_declaration nodes (NOT method-local declarations) — precise, AST-based. A
+// bare type_identifier → plain; an allowlisted smart-pointer template → smartPtr binding (element type).
+function fieldBinding(classSpec, name, smartPtrs) {
+  const body = classSpec.childForFieldName?.("body");
+  if (!body) return null;
+  for (let i = 0; i < body.namedChildCount; i++) {
+    const fd = body.namedChild(i);
+    if (fd.type !== "field_declaration") continue;
+    if (declName(fd.childForFieldName?.("declarator")) !== name) continue;
+    const type = fd.childForFieldName?.("type");
+    if (!type) return null;
+    if (type.type === "type_identifier") return { type: type.text, smartPtr: false };
+    const elem = templateElement(type, smartPtrs);
+    if (elem) return { type: elem, smartPtr: true };
+    return null;
+  }
+  return null;
+}
+
 // The class name owning `this` at a call site: the enclosing out-of-class def's `Class::method`
 // scope, else the nearest enclosing class_specifier's name. Null if neither.
 function enclosingCppClass(callNode, fn) {
@@ -194,9 +223,16 @@ export function inferCppReceiverType(callNode, receiverName, smartPtrs = DEFAULT
   if (receiverName === "this") return enclosingCppClass(callNode, fn);
   if (!fn) return null;
   const b = collectCppBindings(fn, smartPtrs).get(receiverName);
-  if (!b) return null;
-  if (b.smartPtr && memberOperator(callNode) !== "->") return null;   // `.method()` is the wrapper's own
-  return b.type;
+  if (b) {
+    if (b.smartPtr && memberOperator(callNode) !== "->") return null;   // `.method()` is the wrapper's own
+    return b.type;
+  }
+  // Fallback: a member field of the enclosing class (e.g. `m_w->go()`). Locals/params (above) shadow it.
+  const cls = enclosingClassSpecifier(callNode);
+  const fb = cls ? fieldBinding(cls, receiverName, smartPtrs) : null;
+  if (!fb) return null;
+  if (fb.smartPtr && memberOperator(callNode) !== "->") return null;
+  return fb.type;
 }
 
 // The free-function name whose return value initializes `receiverName`, when that local is declared

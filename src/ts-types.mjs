@@ -77,6 +77,53 @@ function enclosingTsClass(callNode) {
   return null;
 }
 
+// The class node enclosing a call site (class_declaration | class), or null. Like enclosingTsClass but
+// returns the NODE so we can read its field definitions.
+function enclosingTsClassNode(callNode) {
+  for (let p = callNode.parent; p; p = p.parent) {
+    if (TS_THIS_REBINDERS.has(p.type)) return null;   // a regular function rebinds this → not the class
+    if (p.type === "class_declaration" || p.type === "class") return p;
+  }
+  return null;
+}
+
+// The declared type of `field` among a class node's public_field_definition members: its type_annotation
+// (bare type) or a `= new Ctor()` initializer's constructor identifier. Null otherwise.
+function tsFieldType(classNode, field) {
+  const body = classNode.childForFieldName?.("body");
+  if (!body) return null;
+  for (let i = 0; i < body.namedChildCount; i++) {
+    const m = body.namedChild(i);
+    if (m.type !== "public_field_definition") continue;
+    const nm = m.childForFieldName?.("name");
+    if (!nm || nm.text !== field) continue;
+    const ty = tsTypeName(m.childForFieldName?.("type"));
+    if (ty) return ty;
+    const val = m.childForFieldName?.("value");
+    if (val && val.type === "new_expression") {
+      const ctor = val.childForFieldName?.("constructor");
+      if (ctor && ctor.type === "identifier") return ctor.text;
+    }
+    return null;
+  }
+  return null;
+}
+
+// Infer the type of a `this.<field>.method()` receiver: the field's declared/initialized type, read from
+// the enclosing class body. Returns null unless the call's callee is `this.<field>.<method>(...)`.
+export function inferTsFieldReceiverType(callNode) {
+  const callee = callNode?.childForFieldName?.("function");
+  if (!callee || callee.type !== "member_expression") return null;
+  const obj = callee.childForFieldName?.("object");                  // the `this.<field>` part
+  if (!obj || obj.type !== "member_expression") return null;
+  const inner = obj.childForFieldName?.("object");
+  if (!inner || inner.type !== "this") return null;                  // require `this.<field>`
+  const fieldName = obj.childForFieldName?.("property");
+  if (!fieldName) return null;
+  const classNode = enclosingTsClassNode(callNode);
+  return classNode ? tsFieldType(classNode, fieldName.text) : null;
+}
+
 // Infer the type of `receiverName` at a call site. "this" → enclosing class; else the receiver's
 // binding in the nearest enclosing function scope (or the program root for a module-level call).
 export function inferTsReceiverType(callNode, receiverName) {
