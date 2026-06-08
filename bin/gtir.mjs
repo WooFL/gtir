@@ -442,6 +442,7 @@ function printDisambigEval(m) {
 // against the already-gathered inputs (one embed pass, many combos — like fusion --tune), score
 // precision/recall per cell, and recommend the precision-first operating point.
 function runDisambigTune({ cfg, golden, inputs, spec } = {}) {
+  // Default grid centered on the config defaults (threshold 0.55, margin 0.05).
   const axes = spec ? parseGridSpec(spec) : { disambigThreshold: [0.45, 0.5, 0.55, 0.6, 0.65], disambigMargin: [0.03, 0.05, 0.08] };
   const combos = gridCombos(axes);
   const rows = combos.map((w) => {
@@ -461,7 +462,7 @@ function runDisambigTune({ cfg, golden, inputs, spec } = {}) {
     `  ${"thr".padStart(6)}${"margin".padStart(8)}${"prec".padStart(8)}${"recall".padStart(8)}${"promo".padStart(8)}`];
   for (const r of rows) {
     const mark = (r === best) ? "→" : (cur(r.threshold, r.margin) ? "*" : " ");
-    out.push(`${mark} ${String(r.threshold).padStart(5)}${cell(r.margin)}${cell(r.precision)}${cell(r.recall)}${cell(r.promotions)}`);
+    out.push(`${mark} ${String(r.threshold).padStart(6)}${cell(r.margin)}${cell(r.precision)}${cell(r.recall)}${cell(r.promotions)}`);
   }
   out.push("  legend: → best (precision-first: max recall at precision 1)   * current config");
   out.push(`  → set in .gtir/config.json: "disambigThreshold": ${best.threshold}, "disambigMargin": ${best.margin}`);
