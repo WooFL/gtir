@@ -142,3 +142,24 @@ test("buildContext targets mode: a path:lines span resolves to that span", async
     rmSync(repo, { recursive: true, force: true });
   }
 });
+
+import { handleRequest, defaultContextFn } from "../src/mcp.mjs";
+
+test("MCP context_<label> returns the bundle via handleRequest", async () => {
+  const repo = codeRepo();
+  const cfg = { ...loadConfig(repo), ollamaUrl: "http://localhost:11434" };
+  try {
+    await buildIndex(cfg, { rebuild: true });
+    await indexEdges(cfg, { rebuild: true, collect: false });
+    const indexes = [{ label: "code", repo: cfg.repo, cfg }];
+    const ctx = { indexes, version: "test", contextFn: defaultContextFn(indexes) };
+    const res = await handleRequest(
+      { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "context_code", arguments: { query: "run the helper", k: 5 } } },
+      ctx,
+    );
+    assert.ok(Array.isArray(res.result.structuredContent.items), "items present");
+    assert.ok(["high", "medium", "low"].includes(res.result.structuredContent.retrieval_quality));
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});

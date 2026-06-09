@@ -10,6 +10,7 @@ import { watchRepo } from "./watch.mjs";
 import { buildAdjacency, callersOf, calleesOf, neighborsOf } from "./edges.mjs";
 import { impactQuery, orphansQuery, cyclesQuery, pathQuery, graphForSearch, clearGraphCache } from "./graph-queries.mjs";
 import { contextFor } from "./graph-retrieval.mjs";
+import { buildContext } from "./context.mjs";
 
 export function sanitizeLabel(s) {
   return String(s).toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "index";
@@ -49,6 +50,22 @@ export function buildTools(indexes) {
   const tools = [];
   for (const ix of indexes) {
     const at = `the ${ix.label} index at ${ix.repo}`;
+    tools.push({
+      name: `context_${ix.label}`,
+      description: `Task-shaped: get complete context for ${at} in ONE call. Pass a "query" (searches, then ` +
+        `attaches each top hit's source + callers/callees) OR "targets" (symbol names and/or "path:lines" spans, ` +
+        `each returned with source + callers/callees + siblings). Includes a retrieval_quality (high/medium/low) ` +
+        `and best_guesses flag. Prefer this over separate search+read+callers calls — it saves round-trips.`,
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "natural-language query (query mode)" },
+          targets: { type: "array", items: { type: "string" }, description: 'symbol names or "path:lines" spans (targets mode)' },
+          k: { type: "integer", description: "query-mode result count (default 5)" },
+          context: { type: "integer", description: "extra source lines around each span (0-50)" },
+        },
+      },
+    });
     tools.push({
       name: `search_${ix.label}`,
       description: `Hybrid semantic + lexical (vector + BM25 + RRF) search over ${at}. Returns ranked chunks.`,
@@ -268,7 +285,7 @@ function formatFind(results, symbol, kind) {
   }).join("\n\n");
 }
 
-const TOOL_VERBS = ["search", "read", "outline", "similar", "find", "callers", "callees", "neighbors", "backlinks", "links", "impact", "orphans", "cycles", "path"];
+const TOOL_VERBS = ["search", "read", "outline", "similar", "find", "callers", "callees", "neighbors", "backlinks", "links", "impact", "orphans", "cycles", "path", "context"];
 
 // "search_my_wiki" -> { verb: "search", label: "my_wiki" } (labels may contain underscores).
 export function parseToolName(name) {
@@ -281,7 +298,7 @@ export function parseToolName(name) {
 const stripSnippet = (results) => results.map(({ snippet, ...rest }) => rest);
 
 async function dispatchToolCall(params, ctx) {
-  const { indexes, searchFn, statusFn, readFn, outlineFn, similarFn, findFn, callersFn, calleesFn, neighborsFn, impactFn, orphansFn, cyclesFn, pathFn } = ctx;
+  const { indexes, searchFn, statusFn, readFn, outlineFn, similarFn, findFn, callersFn, calleesFn, neighborsFn, impactFn, orphansFn, cyclesFn, pathFn, contextFn } = ctx;
   const name = params.name;
   const args = params.arguments ?? {};
   const reply = (text, structured) => ({ content: [{ type: "text", text }], structuredContent: structured });
@@ -300,6 +317,10 @@ async function dispatchToolCall(params, ctx) {
         let results = await searchFn(label, { query: args.query, k: args.k, pathPrefix: args.path_prefix, language: args.language, centrality: !!args.centrality, edges: !!args.edges });
         if (args.compact) results = stripSnippet(results);
         return reply(args.compact ? formatCompact(results) : formatHits(results), { results });
+      }
+      if (verb === "context") {
+        const out = await contextFn(label, { query: args.query, targets: args.targets, k: args.k, context: args.context });
+        return reply(JSON.stringify(out, null, 2), out);
       }
       if (verb === "read") {
         const out = await readFn(label, { path: args.path, lines: args.lines, context: args.context, edges: !!args.edges });
@@ -558,6 +579,14 @@ export function defaultPathFn(indexes) {
   };
 }
 
+export function defaultContextFn(indexes) {
+  return async (label, args) => {
+    const ix = indexes.find((i) => i.label === label);
+    if (!ix) throw new Error(`unknown index: ${label}`);
+    return buildContext(ix.cfg, { query: args.query, targets: args.targets, k: args.k, contextLines: args.context });
+  };
+}
+
 // Gate each served index on a readiness probe before serving. A broken/unready index is dropped
 // with a logged note (stderr) — the healthy ones still serve, matching defaultStatusFn's per-index
 // tolerance. The server must not refuse to start because one index's daemon/model is unready.
@@ -584,6 +613,7 @@ export function serveStdio(indexes, { version } = {}) {
     neighborsFn: defaultNeighborsFn(indexes),
     impactFn: defaultImpactFn(indexes), orphansFn: defaultOrphansFn(indexes), cyclesFn: defaultCyclesFn(indexes),
     pathFn: defaultPathFn(indexes),
+    contextFn: defaultContextFn(indexes),
   };
   let buf = "";
   process.stdin.setEncoding("utf8");
