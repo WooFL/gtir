@@ -25,6 +25,7 @@ import { scipCrossCheck } from "../src/scip-eval.mjs";
 import { fetchGrammars } from "../src/fetch-grammars.mjs";
 import { buildGraph, renderHtml, renderMermaid } from "../src/graph.mjs";
 import { impactQuery, orphansQuery, cyclesQuery, pathQuery, graphForSearch } from "../src/graph-queries.mjs";
+import { cochangeQuery, hotspotsQuery } from "../src/git-metrics-run.mjs";
 import {
   gtirMcpEntry, gtirHookEntry, gtirClaudeMdBody,
   addMcpServer, removeMcpServer, addPreToolUseHook, removePreToolUseHook,
@@ -83,6 +84,12 @@ export async function runOrphans({ repo } = {}) {
 }
 export async function runCycles({ repo, includeAmbiguous = false } = {}) {
   return cyclesQuery(loadConfig(repo), { includeAmbiguous });
+}
+export async function runCochange({ repo, window, minSupport }) {
+  return cochangeQuery(loadConfig(repo), { window, minSupport });
+}
+export async function runHotspots({ repo, window, top }) {
+  return hotspotsQuery(loadConfig(repo), { window, top });
 }
 
 export async function runSetup({ repo } = {}) {
@@ -387,6 +394,9 @@ function parseArgs(argv) {
     else if (a === "--orphans") args.orphans = true;
     else if (a === "--target") { (args.targets ??= []).push(argv[++i]); }
     else if (a === "--context") { const v = Number(argv[++i]); if (Number.isFinite(v)) args.context = v; }
+    else if (a === "--window") { const v = Number(argv[++i]); if (Number.isInteger(v) && v > 0) args.window = v; }
+    else if (a === "--min-support") { const v = Number(argv[++i]); if (Number.isInteger(v) && v > 0) args.minSupport = v; }
+    else if (a === "--top") { const v = Number(argv[++i]); if (Number.isInteger(v) && v > 0) args.top = v; }
     else args._.push(a);
   }
   return args;
@@ -1069,6 +1079,25 @@ async function main() {
         if (r.error) process.exitCode = 2;
         break;
       }
+      case "cochange": {
+        const r = await runCochange({ repo, window: args.window, minSupport: args.minSupport });
+        if (r.error) { process.stderr.write(`gtir cochange: ${r.error}\n`); process.exitCode = 2; break; }
+        if (args.json) { process.stdout.write(JSON.stringify(r, null, 2) + "\n"); break; }
+        process.stderr.write(`gtir cochange: ${r.commitsScanned} commits scanned, ${r.skippedLargeCommits} large commits skipped, ${r.pairs.length} coupled pairs\n`);
+        for (const p of r.pairs) {
+          const tag = p.callEdge === false ? "  NO CALL EDGE" : (p.callEdge === null ? "  (no index)" : "");
+          process.stdout.write(`${p.a}  <->  ${p.b}  co=${p.count} conf=${p.confidence}${tag}\n`);
+        }
+        break;
+      }
+      case "hotspots": {
+        const r = await runHotspots({ repo, window: args.window, top: args.top });
+        if (r.error) { process.stderr.write(`gtir hotspots: ${r.error}\n`); process.exitCode = 2; break; }
+        if (args.json) { process.stdout.write(JSON.stringify(r, null, 2) + "\n"); break; }
+        process.stderr.write(`gtir hotspots: ${r.commitsScanned} commits scanned, top ${r.files.length} by revisions x LOC\n`);
+        for (const f of r.files) process.stdout.write(`${f.file}  rev=${f.revisions} loc=${f.loc} score=${f.score}\n`);
+        break;
+      }
       case "path": {
         // positional: `gtir path <from> <to>` OR flag form `--from <sym> --to <sym>`
         const fromSym = args.from ?? args._[0] ?? null;
@@ -1138,6 +1167,8 @@ async function main() {
           "  gtir callstats --repo <project> [--json] [--lang <id>]   # member-call resolution rate + unresolved-reason breakdown (deterministic, no Ollama at resolve time)",
           "  gtir scip-eval --repo <r> --scip <index.scip> [--json] [--sample N]  cross-check resolved member-call edges vs scip-typescript",
           "  gtir path    <from> <to> --repo <project> [--from-path P] [--to-path P] [--depth N] [--include-ambiguous]   # shortest call-path between two symbols",
+          "  gtir cochange  [--repo .] [--window 1000] [--min-support 3] [--json]   files that change together (flags pairs with no resolved/dispatch call edge = hidden coupling)",
+          "  gtir hotspots  [--repo .] [--window 1000] [--top 20] [--json]          churn x LOC refactoring targets",
         ].join("\n") + "\n");
         process.exit(cmd ? 1 : 0);
     }
