@@ -93,3 +93,36 @@ export function bestTerm(text, terms) {
   }
   return best;
 }
+
+// Pure fusion. RRF over the semantic and lexical ranks (equal weight), then a bounded
+// link-graph multiplier (<= 1 + connGraphWeight). A candidate with no graph proximity keeps
+// multiplier 1 — the graph re-ranks, it never promotes a no-basis result. Emits why-tags.
+export function fuseConnections(entries, proximity, cfg = {}) {
+  const gw = cfg.connGraphWeight ?? 0.25;
+  const out = (entries || []).map((e) => {
+    let rrf = 0;
+    if (e.sem) rrf += 1 / (RRF_K + e.sem.rank);
+    if (e.lex) rrf += 1 / (RRF_K + e.lex.rank);
+    const prox = proximity.get(e.path) || null;
+    const mult = 1 + gw * (prox ? proximityScore(prox) : 0);
+    const repr = e.sem || e.lex;
+    const why = [];
+    if (e.sem) why.push("semantic");
+    if (e.lex) why.push(e.lex.term ? `term:${e.lex.term}` : "lexical");
+    if (prox) {
+      if (prox.hop === 1) why.push("link:1hop");
+      else if (prox.hop === 2) why.push("link:2hop");
+      if (prox.coCite > 0) why.push(`link:co-cited×${prox.coCite}`);
+    }
+    return {
+      path: e.path,
+      score: Number((rrf * mult).toFixed(4)),
+      section: sectionOf(repr.text),
+      snippet: snippetOf(repr.text),
+      lines: `${repr.lineStart}-${repr.lineEnd}`,
+      why,
+    };
+  });
+  out.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
+  return out;
+}

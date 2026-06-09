@@ -38,7 +38,7 @@ test("proximityScore: direct link dominates, bounded to [0,1]", () => {
   assert.ok(proximityScore({ hop: null, coCite: 9 }) <= 1);
 });
 
-import { sectionOf, snippetOf, lexicalQuery, queryTermsOf, bestTerm } from "../src/connections.mjs";
+import { sectionOf, snippetOf, lexicalQuery, queryTermsOf, bestTerm, fuseConnections } from "../src/connections.mjs";
 
 test("sectionOf returns the first heading text", () => {
   assert.equal(sectionOf("## Edge confidence tiers\nbody text"), "Edge confidence tiers");
@@ -65,4 +65,33 @@ test("queryTermsOf + bestTerm pick a shared salient term", () => {
   assert.ok(!terms.includes("the")); // too short
   assert.equal(bestTerm("the promotion was inferred here", terms), "promotion"); // longest present
   assert.equal(bestTerm("nothing matches", terms), null);
+});
+
+test("fuseConnections ranks, bounds the graph boost, and tags why", () => {
+  const entries = [
+    { path: "edges.md", sem: { rank: 1, sim: 0.7, lineStart: 12, lineEnd: 40, text: "## Edge tiers\nresolved vs inferred" }, lex: null },
+    { path: "fusion.md", sem: null, lex: { rank: 1, lineStart: 5, lineEnd: 22, text: "## RRF\nreciprocal rank fusion", term: "fusion" } },
+  ];
+  const proximity = new Map([["edges.md", { hop: 2, coCite: 0 }], ["fusion.md", { hop: null, coCite: 0 }]]);
+  const out = fuseConnections(entries, proximity, { connGraphWeight: 0.25 });
+
+  const edges = out.find((r) => r.path === "edges.md");
+  const fusion = out.find((r) => r.path === "fusion.md");
+  assert.deepEqual(edges.why, ["semantic", "link:2hop"]);
+  assert.deepEqual(fusion.why, ["term:fusion"]);
+  assert.equal(edges.section, "Edge tiers");
+  assert.equal(edges.lines, "12-40");
+  // graph multiplier is bounded: edges' score <= base_rrf * (1 + 0.25)
+  const baseEdges = 1 / (60 + 1);
+  assert.ok(edges.score <= Number((baseEdges * 1.25).toFixed(4)) + 1e-9);
+  // results are sorted by score descending
+  assert.deepEqual(out.map((r) => r.path), [...out].sort((a, b) => b.score - a.score).map((r) => r.path));
+});
+
+test("fuseConnections: a result with no graph proximity gets multiplier 1 (no invented boost)", () => {
+  const entries = [{ path: "x.md", sem: { rank: 1, sim: 0.5, lineStart: 1, lineEnd: 3, text: "body only" }, lex: null }];
+  const out = fuseConnections(entries, new Map(), { connGraphWeight: 0.25 });
+  assert.equal(out[0].score, Number((1 / 61).toFixed(4)));
+  assert.deepEqual(out[0].why, ["semantic"]);
+  assert.equal(out[0].section, ""); // no heading
 });
