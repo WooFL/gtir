@@ -187,7 +187,9 @@ export async function runScipEval({ repo, scip, json = false, sampleN = 10, _edg
   }
 
   const root = loadScipRoot();
-  const buffer = readFileSync(scip);
+  let buffer;
+  try { buffer = readFileSync(scip); }
+  catch (e) { process.stderr.write(`gtir scip-eval: cannot read ${scip}: ${e.message}\n`); return { error: "cannot-read-scip" }; }
   const oracle = buildOracle(parseScipIndex(buffer, root));
   const res = scipCrossCheck(edges, oracle, { sampleN });
 
@@ -994,7 +996,7 @@ async function main() {
         process.exit(await runCallstats({ repo, json: args.json, lang: args.lang ?? null }));
       }
       case "scip-eval": {
-        const res = await runScipEval({ repo, scip: args.scip, json: args.json, sampleN: args.sample ?? 10 });
+        const res = await runScipEval({ repo, scip: args.scip, json: args.json, sampleN: args.sample });
         process.exit(res && res.error ? 2 : 0);
       }
       case "init": {

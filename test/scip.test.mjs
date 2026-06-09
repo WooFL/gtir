@@ -160,3 +160,8 @@ test("runScipEval reads a .scip file and cross-checks injected edges", async () 
   assert.equal(res.recall, 1);
   assert.equal(res.resolvableTotal, 1);
 });
+
+test("runScipEval returns a clean error for a missing .scip file", async () => {
+  const res = await runScipEval({ repo: "unused", scip: "G:/no/such/index.scip", _edges: [] });
+  assert.equal(res.error, "cannot-read-scip");
+});
