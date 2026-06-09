@@ -27,3 +27,41 @@ export function parseScipIndex(buffer, root) {
     })),
   };
 }
+
+const DEFINITION = 0x1; // SymbolRole.Definition bit
+const METHOD_RE = /([A-Za-z0-9_$]+)\(\)\.\s*$/; // captures the method name before "()."
+
+// Build the oracle from a parsed index:
+//   defOf:      Map<symbol, { file, startLine }>  (first Definition occurrence per symbol)
+//   memberRefs: [{ file, line(1-based), method, symbol, defTarget|null }] for instance-member
+//               call references (symbol contains '#', ends '().', not a local, not a definition).
+//   defTarget !== null  ⟺  the call points to an in-repo definition (the recall denominator).
+export function buildOracle(index) {
+  const defOf = new Map();
+  for (const doc of index.documents) {
+    for (const occ of doc.occurrences) {
+      if (occ.symbol && (occ.roles & DEFINITION) === DEFINITION && !defOf.has(occ.symbol)) {
+        defOf.set(occ.symbol, { file: doc.path, startLine: occ.range?.[0] ?? 0 });
+      }
+    }
+  }
+  const memberRefs = [];
+  for (const doc of index.documents) {
+    for (const occ of doc.occurrences) {
+      const sym = occ.symbol;
+      if (!sym || sym.startsWith("local ")) continue;
+      if ((occ.roles & DEFINITION) === DEFINITION) continue;
+      if (!sym.includes("#")) continue;
+      const m = sym.match(METHOD_RE);
+      if (!m) continue;
+      memberRefs.push({
+        file: doc.path,
+        line: (occ.range?.[0] ?? 0) + 1,
+        method: m[1],
+        symbol: sym,
+        defTarget: defOf.get(sym) ?? null,
+      });
+    }
+  }
+  return { defOf, memberRefs };
+}
