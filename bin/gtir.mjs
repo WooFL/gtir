@@ -26,6 +26,7 @@ import { fetchGrammars } from "../src/fetch-grammars.mjs";
 import { buildGraph, renderHtml, renderMermaid } from "../src/graph.mjs";
 import { impactQuery, orphansQuery, cyclesQuery, pathQuery, graphForSearch } from "../src/graph-queries.mjs";
 import { cochangeQuery, hotspotsQuery } from "../src/git-metrics-run.mjs";
+import { communitiesQuery } from "../src/communities-run.mjs";
 import {
   gtirMcpEntry, gtirHookEntry, gtirClaudeMdBody,
   addMcpServer, removeMcpServer, addPreToolUseHook, removePreToolUseHook,
@@ -90,6 +91,9 @@ export async function runCochange({ repo, window, minSupport }) {
 }
 export async function runHotspots({ repo, window, top }) {
   return hotspotsQuery(loadConfig(repo), { window, top });
+}
+export async function runCommunities({ repo, symbolLevel, includeAmbiguous, minSize }) {
+  return communitiesQuery(loadConfig(repo), { level: symbolLevel ? "symbol" : "file", includeAmbiguous, minSize: minSize ?? 1 });
 }
 
 export async function runSetup({ repo } = {}) {
@@ -397,6 +401,8 @@ function parseArgs(argv) {
     else if (a === "--window") { const v = Number(argv[++i]); if (Number.isInteger(v) && v > 0) args.window = v; }
     else if (a === "--min-support") { const v = Number(argv[++i]); if (Number.isInteger(v) && v > 0) args.minSupport = v; }
     else if (a === "--top") { const v = Number(argv[++i]); if (Number.isInteger(v) && v > 0) args.top = v; }
+    else if (a === "--symbol-level") args.symbolLevel = true;
+    else if (a === "--min-size") { const v = Number(argv[++i]); if (Number.isInteger(v) && v > 0) args.minSize = v; }
     else args._.push(a);
   }
   return args;
@@ -1079,6 +1085,28 @@ async function main() {
         if (r.error) process.exitCode = 2;
         break;
       }
+      case "communities": {
+        const r = await runCommunities({ repo, symbolLevel: !!args.symbolLevel, includeAmbiguous: !!args.includeAmbiguous, minSize: args.minSize });
+        if (r.error) { process.stderr.write(`gtir communities: ${r.error}\n`); process.exitCode = 2; break; }
+        if (args.json) { process.stdout.write(JSON.stringify(r, null, 2) + "\n"); break; }
+        if (r.communityCount === 0) { process.stderr.write("gtir communities: no call edges to cluster\n"); break; }
+        const shownNote = r.communities.length < r.communityCount ? ` (showing ${r.communities.length} with ≥ min-size members)` : "";
+        process.stderr.write(`gtir communities: ${r.nodeCount} nodes, ${r.communityCount} communities, modularity=${r.modularity}${shownNote}\n`);
+        for (const c of r.communities) {
+          const shown = c.members.slice(0, 8).join(", ");
+          const more = c.members.length > 8 ? `, +${c.members.length - 8} more` : "";
+          process.stdout.write(`[${c.id}] ${c.label}  (${c.size})  ${shown}${more}\n`);
+        }
+        if (r.godNodes.length) {
+          process.stdout.write(`\nGod nodes (bridge the most communities):\n`);
+          for (const g of r.godNodes) process.stdout.write(`  ${g.node}  -> ${g.communities} communities\n`);
+        }
+        if (r.bridges.length) {
+          process.stdout.write(`\nBridges (cross-module edges):\n`);
+          for (const b of r.bridges) process.stdout.write(`  ${b.a}  <->  ${b.b}  (w=${b.weight})\n`);
+        }
+        break;
+      }
       case "cochange": {
         const r = await runCochange({ repo, window: args.window, minSupport: args.minSupport });
         if (r.error) { process.stderr.write(`gtir cochange: ${r.error}\n`); process.exitCode = 2; break; }
@@ -1169,6 +1197,7 @@ async function main() {
           "  gtir path    <from> <to> --repo <project> [--from-path P] [--to-path P] [--depth N] [--include-ambiguous]   # shortest call-path between two symbols",
           "  gtir cochange  [--repo .] [--window 1000] [--min-support 3] [--json]   files that change together (flags pairs with no resolved/dispatch call edge = hidden coupling)",
           "  gtir hotspots  [--repo .] [--window 1000] [--top 20] [--json]          churn x LOC refactoring targets",
+          "  gtir communities [--repo .] [--symbol-level] [--include-ambiguous] [--min-size N] [--json]   cluster the call-graph into modules (Leiden); flags god-nodes + cross-module bridges",
         ].join("\n") + "\n");
         process.exit(cmd ? 1 : 0);
     }
