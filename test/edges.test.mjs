@@ -665,3 +665,17 @@ function go() {
   assert.equal(call.to_symbol, "scalar");
 });
 
+test("extractCodeEdges does not set localTarget for a class-instance receiver", async () => {
+  const src = `class Engine { start() {} }
+function go() {
+  const e = new Engine();
+  e.start();
+}`;
+  const parser = await getParser("typescript");
+  const tree = parser.parse(src);
+  const edges = extractCodeEdges(tree, "typescript", "a.ts");
+  const call = edges.find((e) => e.kind === "calls" && e.refName === "start");
+  assert.ok(call, "start call edge exists");
+  assert.equal(call.receiverType, "Engine", "class receiver still typed via the existing path");
+  assert.equal(call.localTarget ?? null, null, "no object-literal target for a class instance");
+});
