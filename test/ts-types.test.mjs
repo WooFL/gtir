@@ -1,6 +1,21 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { extractTsClassNames, resolveTsMethods, extractTsImplements, resolveTsDispatch } from "../src/ts-types.mjs";
+import { getParser } from "../src/parser.mjs";
+import { extractTsClassNames, resolveTsMethods, extractTsImplements, resolveTsDispatch, inferTsObjectLiteralTarget } from "../src/ts-types.mjs";
+
+// Parse `src`, return the FIRST call_expression node in source order.
+async function firstCall(src) {
+  const parser = await getParser("typescript");
+  const tree = parser.parse(src);
+  let found = null;
+  const walk = (n) => {
+    if (found) return;
+    if (n.type === "call_expression") { found = n; return; }
+    for (let i = 0; i < n.namedChildCount; i++) walk(n.namedChild(i));
+  };
+  walk(tree.rootNode);
+  return found;
+}
 
 test("extractTsClassNames: class / export class / multiple", () => {
   assert.deepEqual(extractTsClassNames(`class Foo {}`), ["Foo"]);
@@ -179,4 +194,112 @@ test("resolveTsDispatch: no receiverType → row unchanged", () => {
   const row = dispatchRow({ receiverType: null });
   const [r] = resolveTsDispatch([row], tsImplementers, tsClassFiles, tsCallableFiles);
   assert.equal(r.conf, "ambiguous");
+});
+
+// ── inferTsObjectLiteralTarget ────────────────────────────────────────────────
+
+test("inferTsObjectLiteralTarget resolves a shorthand method on an object-literal local", async () => {
+  const src = `function go() {
+  const chop = { scalar() { return 1; } };
+  chop.scalar();
+}`;
+  const call = await firstCall(src);
+  const t = inferTsObjectLiteralTarget(call, "chop", "scalar");
+  assert.deepEqual(t, { line_start: 2, line_end: 2 });
+});
+
+test("inferTsObjectLiteralTarget resolves an arrow-function property", async () => {
+  const src = `function go() {
+  const o = { vec: () => 2 };
+  o.vec();
+}`;
+  const call = await firstCall(src);
+  assert.deepEqual(inferTsObjectLiteralTarget(call, "o", "vec"), { line_start: 2, line_end: 2 });
+});
+
+test("inferTsObjectLiteralTarget resolves a function-expression property", async () => {
+  const src = `function go() {
+  const o = { fn: function () { return 3; } };
+  o.fn();
+}`;
+  const call = await firstCall(src);
+  assert.deepEqual(inferTsObjectLiteralTarget(call, "o", "fn"), { line_start: 2, line_end: 2 });
+});
+
+test("inferTsObjectLiteralTarget returns null when the literal lacks the method", async () => {
+  const src = `function go() {
+  const o = { scalar() {} };
+  o.missing();
+}`;
+  const call = await firstCall(src);
+  assert.equal(inferTsObjectLiteralTarget(call, "o", "missing"), null);
+});
+
+test("inferTsObjectLiteralTarget returns null for a class-instance receiver (new Ctor)", async () => {
+  const src = `function go() {
+  const e = new Engine();
+  e.start();
+}`;
+  const call = await firstCall(src);
+  assert.equal(inferTsObjectLiteralTarget(call, "e", "start"), null);
+});
+
+test("inferTsObjectLiteralTarget returns null for a non-function member", async () => {
+  const src = `function go() {
+  const o = { x: 1 };
+  o.x();
+}`;
+  const call = await firstCall(src);
+  assert.equal(inferTsObjectLiteralTarget(call, "o", "x"), null);
+});
+
+test("inferTsObjectLiteralTarget returns null when the receiver has no binding", async () => {
+  const src = `function go(p) {
+  p.run();
+}`;
+  const call = await firstCall(src);
+  assert.equal(inferTsObjectLiteralTarget(call, "p", "run"), null);
+});
+
+test("inferTsObjectLiteralTarget does not descend into an inner-closure binding when resolving an outer-scope call", async () => {
+  const src = `function go() {
+  const chop = { a() {} };
+  const inner = () => {
+    const chop = { b() {} };
+    return chop;
+  };
+  chop.a();
+  chop.b();
+}`;
+  const parser = await getParser("typescript");
+  const tree = parser.parse(src);
+  const calls = [];
+  const walk = (n) => { if (n.type === "call_expression") calls.push(n); for (let i = 0; i < n.namedChildCount; i++) walk(n.namedChild(i)); };
+  walk(tree.rootNode);
+  const aCall = calls.find((c) => c.text.startsWith("chop.a"));
+  const bCall = calls.find((c) => c.text.startsWith("chop.b"));
+  assert.deepEqual(inferTsObjectLiteralTarget(aCall, "chop", "a"), { line_start: 2, line_end: 2 });
+  assert.equal(inferTsObjectLiteralTarget(bCall, "chop", "b"), null);
+});
+
+test("inferTsObjectLiteralTarget resolves a module-level binding", async () => {
+  const src = `const h = { run() { return 1; } };\nh.run();`;
+  const call = await firstCall(src);
+  assert.deepEqual(inferTsObjectLiteralTarget(call, "h", "run"), { line_start: 1, line_end: 1 });
+});
+
+test("inferTsObjectLiteralTarget is flow-insensitive — a reassigned var still resolves to the literal", async () => {
+  // Documents the binding-based contract (matches inferTsReceiverType): reassignment is NOT tracked.
+  const src = `function go() {
+  let o = { a() { return 1; } };
+  o = factory();
+  o.a();
+}`;
+  const parser = await getParser("typescript");
+  const tree = parser.parse(src);
+  let call = null;
+  const walk = (n) => { if (n.type === "call_expression" && n.text.startsWith("o.a")) call = n; for (let i = 0; i < n.namedChildCount; i++) walk(n.namedChild(i)); };
+  walk(tree.rootNode);
+  // The call is to the LAST o.a() — binding-based inference still points at the literal's method.
+  assert.deepEqual(inferTsObjectLiteralTarget(call, "o", "a"), { line_start: 2, line_end: 2 });
 });

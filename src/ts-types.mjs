@@ -129,10 +129,59 @@ export function inferTsFieldReceiverType(callNode) {
 export function inferTsReceiverType(callNode, receiverName) {
   if (!callNode || !receiverName) return null;
   if (receiverName === "this") return enclosingTsClass(callNode);
-  let scope = callNode.parent;
-  while (scope && !TS_FN_SCOPES.has(scope.type) && scope.parent) scope = scope.parent;
+  const scope = enclosingTsScope(callNode);
   if (!scope) return null;
   return collectTsBindings(scope).get(receiverName) ?? null;
+}
+
+// Find the nearest enclosing function scope of `callNode` (or the program root for a module-level call).
+function enclosingTsScope(callNode) {
+  let scope = callNode.parent;
+  while (scope && !TS_FN_SCOPES.has(scope.type) && scope.parent) scope = scope.parent;
+  return scope ?? null;
+}
+
+// The span of a function-valued member named `method` inside an `object` literal node, or null.
+// Accepts shorthand methods (`m(){}`) and function-valued properties (`m: ()=>{}` / `m: function(){}`).
+// Identifier keys only; string-literal keys ({"run": …}) are not matched.
+function objectLiteralMethodSpan(objNode, method) {
+  for (let i = 0; i < objNode.namedChildCount; i++) {
+    const m = objNode.namedChild(i);
+    if (m.type === "method_definition") {
+      const nm = m.childForFieldName?.("name");
+      if (nm && nm.text === method) return { line_start: m.startPosition.row + 1, line_end: m.endPosition.row + 1 };
+    } else if (m.type === "pair") {
+      const key = m.childForFieldName?.("key");
+      const val = m.childForFieldName?.("value");
+      if (key && key.text === method && val && (val.type === "arrow_function" || val.type === "function_expression"))
+        return { line_start: m.startPosition.row + 1, line_end: m.endPosition.row + 1 };
+    }
+  }
+  return null;
+}
+
+// If `receiver` is a local bound to an object literal in the call's enclosing scope, return the span of
+// its function-valued member named `refName`; else null. Same nested-scope guard as collectTsBindings:
+// an inner function scope's binding of the same name must not shadow the outer one being resolved.
+// Flow-insensitive (binding-based, like inferTsReceiverType): a later reassignment of the var is not tracked.
+export function inferTsObjectLiteralTarget(callNode, receiver, refName) {
+  if (!callNode || !receiver || !refName) return null;
+  const scope = enclosingTsScope(callNode);
+  if (!scope) return null;
+  const stack = [scope];
+  while (stack.length) {
+    const n = stack.pop();
+    if (n !== scope && TS_FN_SCOPES.has(n.type)) continue; // don't descend into nested fn scopes
+    if (n.type === "variable_declarator") {
+      const nm = n.childForFieldName?.("name");
+      const val = n.childForFieldName?.("value");
+      if (nm && nm.type === "identifier" && nm.text === receiver && val && val.type === "object") {
+        return objectLiteralMethodSpan(val, refName);
+      }
+    }
+    for (let i = 0; i < n.namedChildCount; i++) stack.push(n.namedChild(i));
+  }
+  return null;
 }
 
 // [{cls, bases}] for each class head in `text`. `bases` = extends base (≤1) then implements interfaces,

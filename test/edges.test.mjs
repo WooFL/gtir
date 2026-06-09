@@ -631,3 +631,83 @@ test("extractCodeEdges (ts): non-cpp member call → enclosingClass null + membe
   assert.equal(call.enclosingClass, null);
   assert.equal(call.memberOp, null);
 });
+
+test("extractCodeEdges carries localTarget for an object-literal member call", async () => {
+  const src = `function go() {
+  const chop = { scalar() { return 1; } };
+  chop.scalar();
+}`;
+  const parser = await getParser("typescript");
+  const tree = parser.parse(src);
+  const edges = extractCodeEdges(tree, "typescript", "a.ts");
+  const call = edges.find((e) => e.kind === "calls" && e.refName === "scalar");
+  assert.ok(call, "scalar call edge exists");
+  assert.deepEqual(call.localTarget, { line_start: 2, line_end: 2 });
+  assert.equal(call.receiverType, null, "object-literal receiver has no type name");
+});
+
+test("resolveEdges resolves an object-literal call to the literal, beating a same-name free function", async () => {
+  const src = `function scalar() { return 99; }
+function go() {
+  const chop = { scalar() { return 1; } };
+  chop.scalar();
+}`;
+  const parser = await getParser("typescript");
+  const tree = parser.parse(src);
+  const raw = extractCodeEdges(tree, "typescript", "a.ts");
+  const symbolIndex = new Map([["scalar", [{ path: "a.ts", line_start: 1, line_end: 1 }]]]);
+  const rows = resolveEdges(raw, symbolIndex, new Map());
+  const call = rows.find((r) => r.kind === "calls" && r.ref_name === "scalar" && r.isMethod);
+  assert.ok(call, "object-literal scalar call row exists");
+  assert.equal(call.conf, "resolved");
+  assert.equal(call.to_path, "a.ts");
+  assert.equal(call.to_lines, "3-3");
+  assert.equal(call.to_symbol, "scalar");
+});
+
+test("extractCodeEdges does not set localTarget for a class-instance receiver", async () => {
+  const src = `class Engine { start() {} }
+function go() {
+  const e = new Engine();
+  e.start();
+}`;
+  const parser = await getParser("typescript");
+  const tree = parser.parse(src);
+  const edges = extractCodeEdges(tree, "typescript", "a.ts");
+  const call = edges.find((e) => e.kind === "calls" && e.refName === "start");
+  assert.ok(call, "start call edge exists");
+  assert.equal(call.receiverType, "Engine", "class receiver still typed via the existing path");
+  assert.equal(call.localTarget ?? null, null, "no object-literal target for a class instance");
+});
+
+test("resolveEdges does not resolve computed member access o['a']() via localTarget", async () => {
+  const src = `function go() {
+  const o = { a() { return 1; } };
+  o["a"]();
+}`;
+  const parser = await getParser("typescript");
+  const tree = parser.parse(src);
+  const raw = extractCodeEdges(tree, "typescript", "a.ts");
+  // computed subscript callee → no member-property name → either no calls edge for `a`, or no localTarget.
+  const aEdge = raw.find((e) => e.kind === "calls" && e.refName === "a");
+  if (aEdge) assert.equal(aEdge.localTarget ?? null, null, "computed access must not get a localTarget");
+  // else: no edge at all is also acceptable (subscript callee yields no refName).
+});
+
+test("resolveEdges resolves an object-literal call when no same-name symbol exists", async () => {
+  const src = `function go() {
+  const o = { run() { return 1; } };
+  o.run();
+}`;
+  const parser = await getParser("typescript");
+  const tree = parser.parse(src);
+  const raw = extractCodeEdges(tree, "typescript", "a.ts");
+  // symbolIndex has NO entry for `run` — without localTarget this would be `external`.
+  const rows = resolveEdges(raw, new Map(), new Map());
+  const call = rows.find((r) => r.kind === "calls" && r.ref_name === "run" && r.isMethod);
+  assert.ok(call, "run call row exists");
+  assert.equal(call.conf, "resolved");
+  assert.equal(call.to_path, "a.ts");
+  assert.equal(call.to_lines, "2-2");
+  assert.equal(call.to_symbol, "run");
+});
