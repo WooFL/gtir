@@ -126,6 +126,16 @@ test("zero egress: gtir serve /connections only contacts configured loopback hos
     }).then((r) => r.json());
     assert.ok(Array.isArray(conn.results), "serve /connections returned results");
 
+    // /search embeds the query through the engine's embedder — a SERVE-originated outbound call.
+    const sr = await realFetch(`${base}/search`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ query: "validate a session token", k: 5 }),
+    }).then((r) => r.json());
+    assert.ok(Array.isArray(sr.results), "serve /search returned results");
+
+    // Non-vacuous: the build + the serve query-embed must have made at least one recorded fetch.
+    assert.ok(recordedHosts.length > 0, "the serve flow made at least one fetch (guard isn't vacuous)");
+
     // The engine work (embedding the query path) went through GLOBAL fetch -> recordedHosts.
     const allowed = configuredHosts(cfg);
     for (const h of recordedHosts) {

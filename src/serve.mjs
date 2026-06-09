@@ -81,7 +81,7 @@ export function startServer(cfg, { host = "127.0.0.1", port = 7411, token = null
     server.on("error", reject);
     server.listen(port, host, () => {
       process.stderr.write(`gtir serve: http://${host}:${server.address().port} (repo ${cfg.repo})\n`);
-      if (watch) startWatch(cfg);   // defined in Task 8; no-op stub until then
+      if (watch) startWatch(cfg);   // start the file watcher (refreshes the index on vault edits)
       resolve(server);
     });
   });
