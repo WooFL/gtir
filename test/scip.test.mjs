@@ -105,3 +105,23 @@ test("scipCrossCheck computes precision, recall, and buckets", () => {
   const missedMethods = res.samples.missed.map((x) => x.method).sort();
   assert.deepEqual(missedMethods, ["p", "q"]);
 });
+
+test("scipCrossCheck disambiguates same-basename files by caller path", () => {
+  // Two different index.ts files, same method `get` at the same line 42.
+  const oracle = {
+    defOf: new Map(),
+    memberRefs: [
+      { file: "src/routes/index.ts", line: 42, method: "get", symbol: "Routes#get", defTarget: { file: "src/routes/store.ts", startLine: 9 } },
+      { file: "src/utils/index.ts",  line: 42, method: "get", symbol: "Utils#get",  defTarget: { file: "src/utils/cache.ts",  startLine: 4 } },
+    ],
+  };
+  // gtir edge is from routes/index.ts and correctly resolves to routes/store.ts.
+  const edges = [
+    { conf: "resolved", from_path: "packages/x/src/routes/index.ts", from_lines: "42", ref_name: "get", to_path: "packages/x/src/routes/store.ts", to_lines: "9-20" },
+  ];
+  const res = scipCrossCheck(edges, oracle, { sampleN: 10 });
+  assert.equal(res.correct, 1);   // must bind to Routes#get, not Utils#get
+  assert.equal(res.wrong, 0);
+  assert.equal(res.unaligned, 0);
+  assert.equal(res.missedTotal, 1); // Utils#get was resolvable but never attempted
+});

@@ -53,7 +53,7 @@ export function scipCrossCheck(gtirEdges, oracle, { sampleN = 10 } = {}) {
     const cands = refIndex.get(key) ?? [];
     const ref = callerLine == null
       ? undefined
-      : cands.find((r) => Math.abs(callerLine - r.line) <= 1);
+      : cands.find((r) => Math.abs(callerLine - r.line) <= 1 && pathsMatch(e.from_path, r.file));
 
     if (!ref) {
       unaligned++;
@@ -101,6 +101,7 @@ export function scipCrossCheck(gtirEdges, oracle, { sampleN = 10 } = {}) {
     recall: resolvableTotal ? correct / resolvableTotal : null,
     correct, wrong, external, unaligned,
     resolvableTotal,
+    missedTotal: resolvableTotal - correct,
     gtirResolvedTotal: gtirEdges.length,
     samples,
   };
