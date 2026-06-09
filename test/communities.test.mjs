@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { modularity } from "../src/communities.mjs";
+import { modularity, leiden } from "../src/communities.mjs";
 
 function adjFrom(edges) { // edges: [a,b] (weight 1) or [a,b,w]
   const adj = new Map();
@@ -21,4 +21,46 @@ test("modularity: the 2-community split scores higher than all-in-one", () => {
 
 test("modularity: empty graph is 0 (no divide-by-zero)", () => {
   assert.equal(modularity(new Map(), new Map()), 0);
+});
+
+test("leiden: two triangles + bridge → exactly 2 communities, abc together, def together", () => {
+  const r = leiden(twoTriangles);
+  const sc = (x, y) => r.community.get(x) === r.community.get(y);
+  assert.equal(new Set(r.community.values()).size, 2);
+  assert.ok(sc("a","b") && sc("b","c"), "abc together");
+  assert.ok(sc("d","e") && sc("e","f"), "def together");
+  assert.notEqual(r.community.get("a"), r.community.get("d"), "abc != def");
+  assert.ok(Math.abs(r.modularity - 0.3571) < 0.01, `Q ~0.357, got ${r.modularity}`);
+});
+
+test("leiden: a single triangle → 1 community", () => {
+  const tri = adjFrom([["a","b"],["b","c"],["a","c"]]);
+  assert.equal(new Set(leiden(tri).community.values()).size, 1);
+});
+
+test("leiden: two disconnected edges → 2 communities", () => {
+  const g = adjFrom([["a","b"],["c","d"]]);
+  const r = leiden(g);
+  assert.equal(new Set(r.community.values()).size, 2);
+  assert.equal(r.community.get("a"), r.community.get("b"));
+  assert.notEqual(r.community.get("a"), r.community.get("c"));
+});
+
+test("leiden: weight, not just topology, decides the split", () => {
+  const g = adjFrom([["a","b",10],["b","c",1],["c","d",10]]);
+  const r = leiden(g);
+  assert.equal(r.community.get("a"), r.community.get("b"));
+  assert.equal(r.community.get("c"), r.community.get("d"));
+  assert.notEqual(r.community.get("a"), r.community.get("c"));
+});
+
+test("leiden: deterministic (same input → identical partition)", () => {
+  const a = leiden(twoTriangles).community, b = leiden(twoTriangles).community;
+  assert.deepEqual([...a].sort(), [...b].sort());
+});
+
+test("leiden: empty graph → empty partition, modularity 0", () => {
+  const r = leiden(new Map());
+  assert.equal(r.community.size, 0);
+  assert.equal(r.modularity, 0);
 });
