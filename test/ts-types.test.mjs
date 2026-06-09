@@ -207,3 +207,21 @@ test("inferTsObjectLiteralTarget resolves a shorthand method on an object-litera
   const t = inferTsObjectLiteralTarget(call, "chop", "scalar");
   assert.deepEqual(t, { line_start: 2, line_end: 2 });
 });
+
+test("inferTsObjectLiteralTarget resolves an arrow-function property", async () => {
+  const src = `function go() {
+  const o = { vec: () => 2 };
+  o.vec();
+}`;
+  const call = await firstCall(src);
+  assert.deepEqual(inferTsObjectLiteralTarget(call, "o", "vec"), { line_start: 2, line_end: 2 });
+});
+
+test("inferTsObjectLiteralTarget resolves a function-expression property", async () => {
+  const src = `function go() {
+  const o = { fn: function () { return 3; } };
+  o.fn();
+}`;
+  const call = await firstCall(src);
+  assert.deepEqual(inferTsObjectLiteralTarget(call, "o", "fn"), { line_start: 2, line_end: 2 });
+});
