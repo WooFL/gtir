@@ -120,6 +120,7 @@ test("zero egress: gtir serve /connections only contacts configured loopback hos
     const base = `http://127.0.0.1:${server.address().port}`;
     const health = await realFetch(`${base}/health`).then((r) => r.json());
     assert.equal(health.ok, true);
+    assert.ok(Array.isArray(health.routes) && health.routes.includes("/graph"), "/health advertises its routes (capability detection)");
     const conn = await realFetch(`${base}/connections`, {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ path: "auth.ts", k: 5 }),

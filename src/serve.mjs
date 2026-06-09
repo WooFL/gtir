@@ -9,6 +9,7 @@ import { watchRepo as startWatcher } from "./watch.mjs";
 
 const POST_ROUTES = new Set(["/connections", "/search", "/graph"]);
 const GET_ROUTES = new Set(["/health"]);
+const SERVE_ROUTES = [...GET_ROUTES, ...POST_ROUTES]; // advertised by /health for capability detection
 
 // Pure routing: choose status + JSON. Enforces the optional token, method, and required args.
 export async function route(handlers, { method, path, token, configuredToken, body }) {
@@ -44,7 +45,9 @@ export function makeHandlers(cfg) {
           try { count = (await tbl.query().toArray()).length; } catch { count = 0; }
         }
       }
-      return { ok: true, repo: cfg.repo, model: cfg.model, dim: meta.dim ? Number(meta.dim) : null, count };
+      // `routes` advertises this server's capabilities so a client can tell a current daemon from a
+      // stale one (e.g. an older process that predates an endpoint) and refuse to adopt the stale one.
+      return { ok: true, repo: cfg.repo, model: cfg.model, dim: meta.dim ? Number(meta.dim) : null, count, routes: SERVE_ROUTES };
     },
     "/connections": async (body) => computeConnections(cfg, { path: body.path, k: body.k }),
     "/graph": async (body) => graphNeighborhood(cfg, { path: body.path, k: body.k, hops: body.hops, max: body.max }),
