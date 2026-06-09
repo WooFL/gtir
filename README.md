@@ -427,6 +427,31 @@ git operations).
 
 Every result carries `file:line`, so each call feeds the next.
 
+## 🛰️ Serve (local HTTP API for the Obsidian plugin)
+
+`gtir serve` runs a localhost HTTP server that holds the index warm and answers related-notes
+queries — the engine behind the gtir-obsidian Connections pane.
+
+```bash
+gtir serve --repo <vault> [--port 7411] [--host 127.0.0.1] [--token <t>] [--watch]
+```
+
+Endpoints (JSON; bind is loopback-only):
+
+- `GET /health` → `{ ok, repo, model, dim, count }`
+- `POST /connections { path, k? }` → `{ note, results: [{ path, score, section, snippet, lines, why }] }`
+  — notes related to `path`, ranked by **vector ⊕ BM25 ⊕ wikilink-graph proximity**; each `why`
+  explains the match (`semantic`, `term:<word>`, `link:1hop` / `link:2hop` / `link:co-cited×N`).
+- `POST /search { query, k? }` → `{ results }` — the same hybrid search as the CLI/MCP.
+
+`--token <t>` requires callers to send `X-Gtir-Token: <t>` (the plugin generates one). `--watch`
+live-refreshes the index on vault edits (reuses `gtir watch`). Like every gtir command, `serve`
+makes outbound requests only to your configured Ollama endpoint — it *listens* on localhost and
+calls nothing else (asserted by `test/no-egress.test.mjs`).
+
+Tunables (`.gtir/config.json`): `connK` (12), `connGraphWeight` (0.25), `connGraphHops` (2),
+`connFusion` (true — set false for vector+BM25 only).
+
 ## 🕸️ Edges — how things connect
 
 Beyond finding a span, gtir tracks the edges between spans — locally, no LLM. Code gets `calls` and
