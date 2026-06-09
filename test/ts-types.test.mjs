@@ -260,3 +260,24 @@ test("inferTsObjectLiteralTarget returns null when the receiver has no binding",
   const call = await firstCall(src);
   assert.equal(inferTsObjectLiteralTarget(call, "p", "run"), null);
 });
+
+test("inferTsObjectLiteralTarget does not pick an inner-closure binding of the same name", async () => {
+  const src = `function go() {
+  const chop = { a() {} };
+  const inner = () => {
+    const chop = { b() {} };
+    return chop;
+  };
+  chop.a();
+  chop.b();
+}`;
+  const parser = await getParser("typescript");
+  const tree = parser.parse(src);
+  const calls = [];
+  const walk = (n) => { if (n.type === "call_expression") calls.push(n); for (let i = 0; i < n.namedChildCount; i++) walk(n.namedChild(i)); };
+  walk(tree.rootNode);
+  const aCall = calls.find((c) => c.text.startsWith("chop.a"));
+  const bCall = calls.find((c) => c.text.startsWith("chop.b"));
+  assert.deepEqual(inferTsObjectLiteralTarget(aCall, "chop", "a"), { line_start: 2, line_end: 2 });
+  assert.equal(inferTsObjectLiteralTarget(bCall, "chop", "b"), null);
+});
