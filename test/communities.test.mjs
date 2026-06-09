@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { modularity, leiden } from "../src/communities.mjs";
+import { modularity, leiden, refinePartition } from "../src/communities.mjs";
 
 function adjFrom(edges) { // edges: [a,b] (weight 1) or [a,b,w]
   const adj = new Map();
@@ -63,4 +63,20 @@ test("leiden: empty graph → empty partition, modularity 0", () => {
   const r = leiden(new Map());
   assert.equal(r.community.size, 0);
   assert.equal(r.modularity, 0);
+});
+
+test("refinePartition splits an internally-disconnected community into connected sub-communities", () => {
+  const adj = adjFrom([["x","y"],["z","w"]]);
+  const community = new Map([["x",0],["y",0],["z",0],["w",0]]);
+  const refined = refinePartition(adj, community);
+  assert.equal(new Set(refined.values()).size, 2, "split into 2 connected sub-communities");
+  assert.equal(refined.get("x"), refined.get("y"), "x,y together");
+  assert.equal(refined.get("z"), refined.get("w"), "z,w together");
+  assert.notEqual(refined.get("x"), refined.get("z"), "the two halves separated");
+});
+
+test("refinePartition leaves an already-connected community intact (1 sub-community)", () => {
+  const adj = adjFrom([["a","b"],["b","c"],["a","c"]]);
+  const community = new Map([["a",0],["b",0],["c",0]]);
+  assert.equal(new Set(refinePartition(adj, community).values()).size, 1);
 });

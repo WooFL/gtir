@@ -145,3 +145,20 @@ export function leiden(adj, { maxLevels = 20 } = {}) {
   for (const [n, c] of finalC) community.set(n, relabel.get(c));
   return { community, modularity: modularity(adj, community) };
 }
+
+// Public seam over the Leiden refinement: split each community of `community` into internally-connected
+// sub-communities (singleton-start constrained local move). Returns Map<node, refinedId> with dense
+// relabelled ids. This is the guarantee Louvain lacks; also useful standalone.
+export function refinePartition(adj, community) {
+  const g = toGraph(adj);
+  const nbr = buildNbr(g), { k, m2 } = degrees(g);
+  if (m2 === 0) return new Map(community);
+  const refined = refine(g, nbr, k, m2, community);
+  const firstKey = new Map();
+  for (const n of g.nodes) { const c = refined.get(n); if (!firstKey.has(c)) firstKey.set(c, n); }
+  const order = [...firstKey.keys()].sort((a, b) => (firstKey.get(a) < firstKey.get(b) ? -1 : 1));
+  const relabel = new Map(order.map((c, i) => [c, i]));
+  const out = new Map();
+  for (const n of g.nodes) out.set(n, relabel.get(refined.get(n)));
+  return out;
+}
