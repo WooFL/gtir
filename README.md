@@ -466,6 +466,19 @@ calls nothing else (asserted by `test/no-egress.test.mjs`).
 Tunables (`.gtir/config.json`): `connK` (12), `connGraphWeight` (0.25), `connGraphHops` (2),
 `connFusion` (true — set false for vector+BM25 only).
 
+### Cross-corpus linking (note → code)
+
+`gtir serve --repo <vault> --link-repo <codeRepo>` links a code index to a notes vault. `/connections`
+then returns a `code: [...]` array and `/graph` adds `kind:"code"` nodes — the code a note **references**,
+resolved by a deterministic mention-bridge: code-shaped identifiers and file paths in the note that match
+a *defined* symbol or *existing* file in the code index (the index is the precision filter, so prose like
+"React" or "ADR-0004" never false-links). No embedding, no re-index — it sidesteps the two indexes using
+different models. Inspect from the CLI:
+
+```bash
+gtir crosslinks --repo <vault> --link-repo <codeRepo> --path <note.md>
+```
+
 ## 🕸️ Edges — how things connect
 
 Beyond finding a span, gtir tracks the edges between spans — locally, no LLM. Code gets `calls` and
