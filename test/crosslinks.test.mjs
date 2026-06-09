@@ -117,3 +117,29 @@ test("augmentGraphWithCode with no links returns the graph unchanged", () => {
   const graph = { center: "a.md", nodes: [{ path: "a.md", label: "a", group: "", weight: 1, center: true }], edges: [] };
   assert.equal(augmentGraphWithCode(graph, []).nodes.length, 1);
 });
+
+import { makeHandlers } from "../src/serve.mjs";
+
+test("serve makeHandlers augments /connections + /graph with code when linkCfg is set", async () => {
+  const code = codeRepo(), wiki = wikiRepo();
+  const codeCfg = { ...loadConfig(code), model: "qwen3-embedding:0.6b", ollamaUrl: "http://localhost:11434" };
+  const wikiCfg = { ...loadConfig(wiki), model: "nomic-embed-text", ollamaUrl: "http://localhost:11434" };
+  try {
+    await buildIndex(codeCfg, { rebuild: true }); await indexEdges(codeCfg, { rebuild: true, collect: false });
+    await buildIndex(wikiCfg, { rebuild: true }); await indexEdges(wikiCfg, { rebuild: true, collect: false });
+
+    const handlers = makeHandlers(wikiCfg, { linkCfg: codeCfg });
+    const conn = await handlers["/connections"]({ path: "design.md" });
+    assert.ok(Array.isArray(conn.code), "/connections has a code array");
+    assert.ok(conn.code.some((l) => l.symbol === "WidgetRegistry"), "WidgetRegistry in code links");
+
+    const g = await handlers["/graph"]({ path: "design.md" });
+    assert.ok(g.nodes.some((n) => n.kind === "code"), "/graph has a code node");
+
+    const plain = makeHandlers(wikiCfg, {});
+    const conn2 = await plain["/connections"]({ path: "design.md" });
+    assert.equal(conn2.code, undefined);
+  } finally {
+    rmSync(code, { recursive: true, force: true }); rmSync(wiki, { recursive: true, force: true });
+  }
+});

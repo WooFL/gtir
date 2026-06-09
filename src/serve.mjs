@@ -5,6 +5,7 @@ import { createServer } from "node:http";
 import { openStore } from "./store.mjs";
 import { computeConnections, graphNeighborhood } from "./connections.mjs";
 import { search } from "./search.mjs";
+import { codeLinksFor, augmentGraphWithCode } from "./crosslinks.mjs";
 import { watchRepo as startWatcher } from "./watch.mjs";
 
 const POST_ROUTES = new Set(["/connections", "/search", "/graph"]);
@@ -28,7 +29,7 @@ export async function route(handlers, { method, path, token, configuredToken, bo
 }
 
 // Bind handlers to a config. /health reports model + dim + row count; the others delegate.
-export function makeHandlers(cfg) {
+export function makeHandlers(cfg, { linkCfg = null } = {}) {
   return {
     "/health": async () => {
       const store = await openStore(cfg);
@@ -49,8 +50,22 @@ export function makeHandlers(cfg) {
       // stale one (e.g. an older process that predates an endpoint) and refuse to adopt the stale one.
       return { ok: true, repo: cfg.repo, model: cfg.model, dim: meta.dim ? Number(meta.dim) : null, count, routes: SERVE_ROUTES };
     },
-    "/connections": async (body) => computeConnections(cfg, { path: body.path, k: body.k }),
-    "/graph": async (body) => graphNeighborhood(cfg, { path: body.path, k: body.k, hops: body.hops, max: body.max }),
+    "/connections": async (body) => {
+      const res = await computeConnections(cfg, { path: body.path, k: body.k });
+      if (linkCfg && body.path && !res.error) {
+        try { res.code = await codeLinksFor(cfg, linkCfg, body.path); }
+        catch (e) { process.stderr.write(`gtir serve: cross-links failed: ${e.message}\n`); }
+      }
+      return res;
+    },
+    "/graph": async (body) => {
+      let g = await graphNeighborhood(cfg, { path: body.path, k: body.k, hops: body.hops, max: body.max });
+      if (linkCfg && body.path && !g.error && Array.isArray(g.nodes) && g.nodes.length) {
+        try { g = augmentGraphWithCode(g, await codeLinksFor(cfg, linkCfg, body.path)); }
+        catch (e) { process.stderr.write(`gtir serve: cross-links failed: ${e.message}\n`); }
+      }
+      return g;
+    },
     "/search": async (body) => ({ results: await search(String(body.query), cfg, { k: body.k ?? 8 }) }),
   };
 }
@@ -65,8 +80,8 @@ function readBody(req) {
 }
 
 // Start the HTTP server. Resolves once listening. host defaults to loopback.
-export function startServer(cfg, { host = "127.0.0.1", port = 7411, token = null, watch = false } = {}) {
-  const handlers = makeHandlers(cfg);
+export function startServer(cfg, { host = "127.0.0.1", port = 7411, token = null, watch = false, linkCfg = null } = {}) {
+  const handlers = makeHandlers(cfg, { linkCfg });
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, `http://${host}`);
     const body = req.method === "POST" ? await readBody(req) : {};
