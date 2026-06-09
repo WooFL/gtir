@@ -59,3 +59,30 @@ export function crossLinks(codeInv, codeFiles, noteText, { cap = 15 } = {}) {
   links.sort((a, b) => b._rank - a._rank);
   return links.slice(0, Math.max(0, cap)).map(({ _rank, ...l }) => l);
 }
+
+const _codeCache = new Map(); // indexDir -> { inv, files }
+
+// Build (once per code index) the symbol inventory + file set the resolver needs. Heavy on a big
+// repo, so cached for the process lifetime (mirrors graphForSearch's cache).
+export async function codeIndexFor(codeCfg) {
+  const key = codeCfg.indexDir;
+  if (_codeCache.has(key)) return _codeCache.get(key);
+  const store = await openStore(codeCfg);
+  const inv = await buildSymbolInventory(store, "code");
+  const man = await store.loadManifest();
+  const entry = { inv, files: new Set(Object.keys(man)) };
+  _codeCache.set(key, entry);
+  return entry;
+}
+export function clearCodeCache(indexDir) { indexDir ? _codeCache.delete(indexDir) : _codeCache.clear(); }
+
+// Read a note's chunk text from the wiki index, resolve its code references against the code index.
+export async function codeLinksFor(wikiCfg, codeCfg, notePath, { cap } = {}) {
+  if (!notePath) return [];
+  const wikiStore = await openStore(wikiCfg);
+  const rows = await wikiStore.chunksByPath(notePath);
+  if (!rows.length) return [];
+  const noteText = rows.map((r) => r.text).join("\n");
+  const { inv, files } = await codeIndexFor(codeCfg);
+  return crossLinks(inv, files, noteText, { cap: cap ?? wikiCfg.crossLinkCap ?? 15 });
+}
