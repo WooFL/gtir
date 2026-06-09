@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parseGitLog } from "../src/git-metrics.mjs";
+import { DEFAULTS } from "../src/config.mjs";
 
 test("parseGitLog splits commits and collects their files", () => {
   const text = "\x01aaa\nsrc/a.ts\nsrc/b.ts\n\n\x01bbb\nsrc/b.ts\n\n\x01ccc\n\n";
@@ -104,4 +105,10 @@ test("coChange annotates callEdge from the supplied edgePairs set and sorts hidd
   assert.equal(ab.callEdge, true);
   assert.equal(mn.callEdge, false);
   assert.equal(r.pairs[0].a, "m.ts");
+});
+
+test("config has git-metrics defaults", () => {
+  assert.equal(DEFAULTS.metricsWindow, 1000);
+  assert.equal(DEFAULTS.cochangeMinSupport, 3);
+  assert.equal(DEFAULTS.metricsMaxCommitFiles, 25);
 });
