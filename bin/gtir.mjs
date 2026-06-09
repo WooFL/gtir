@@ -384,6 +384,8 @@ function parseArgs(argv) {
     else if (a === "--edges") args.edges = true;
     else if (a === "--disambig") args.disambig = true;
     else if (a === "--orphans") args.orphans = true;
+    else if (a === "--target") { (args.targets ??= []).push(argv[++i]); }
+    else if (a === "--context") { const v = Number(argv[++i]); if (Number.isFinite(v)) args.context = v; }
     else args._.push(a);
   }
   return args;
@@ -909,6 +911,14 @@ async function main() {
         process.stdout.write(JSON.stringify(hits, null, 2) + "\n");
         break;
       }
+      case "context": {
+        const { buildContext } = await import("../src/context.mjs");
+        const cfg = loadConfig(repo);
+        const query = args._.length ? args._.join(" ") : null;
+        const out = await buildContext(cfg, { query, targets: args.targets, k: args.k, contextLines: args.context });
+        process.stdout.write(JSON.stringify(out, null, 2) + "\n");
+        break;
+      }
       case "status": {
         process.stdout.write(JSON.stringify(await runStatus({ repo }), null, 2) + "\n");
         break;
@@ -1100,6 +1110,7 @@ async function main() {
           "  gtir refresh --repo <project> [--no-cache]",
           "  gtir watch   --repo <project> [--debounce 1500] [--sweep 300]   # live-refresh as files change (uncommitted edits)",
           "  gtir search  --repo <project> <query> [-k N] [--path-prefix P] [--language L]",
+          "  gtir context \"<query>\" --repo <project> [-k N]   |   context --repo <project> --target <SYM|path:lines> [--target ...]   # one-call bundled context",
           "  gtir demo    [--repo <project>] [--query <q>]   # see meaning-match vs grep, on a sample corpus",
           "  gtir status  --repo <project>",
           "  gtir doctor  [--repo <project>] [--no-pull]   # check Ollama, pull the model, verify readiness",

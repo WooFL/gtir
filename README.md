@@ -427,6 +427,20 @@ git operations).
 
 Every result carries `file:line`, so each call feeds the next.
 
+### Task-shaped context (`context`)
+
+`context` bundles what an agent otherwise does in 3–4 calls — search → read → callers → callees — into one:
+
+```bash
+gtir context "where do we verify a JWT" --repo .          # query mode: top hits + each one's neighbors
+gtir context --repo . --target verifyToken --target src/auth/mw.ts:12-40   # targets mode
+```
+
+Returns `{ retrieval_quality, best_guesses, items }` where each item carries `source` + `callers` + `callees`
+(+ `siblings` in targets mode). `retrieval_quality` (high/medium/low) is a heuristic from the search margin
+(query mode) or resolution success (targets mode); `best_guesses` is set on low confidence. Exposed over MCP
+as `context_<label>`.
+
 ## 🛰️ Serve (local HTTP API for the Obsidian plugin)
 
 `gtir serve` runs a localhost HTTP server that holds the index warm and answers related-notes
