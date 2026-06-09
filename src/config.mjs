@@ -45,6 +45,10 @@ export const DEFAULTS = {
   connGraphWeight: 0.25,   // ceiling of the link-graph proximity multiplier (1 -> 1.25)
   connGraphHops: 2,        // max BFS hop distance counted as "near" in the link graph
   connFusion: true,        // fold wikilink-graph proximity into the ranking (false = vector+BM25 only)
+  // `context` task-shaped tool: bundle size + confidence thresholds.
+  contextK: 5,              // query-mode result count
+  contextMarginHigh: 0.30,  // relative top-vs-#2 margin -> retrieval_quality "high"
+  contextMarginLow: 0.08,   // below this (near-tied) -> "low" + best_guesses
   disambiguate: true,        // promote ambiguous call edges to conf:"inferred" via embedding similarity
   disambigThreshold: 0.55,   // min cosine(call-site, candidate def) to promote (precision-first)
   disambigMargin: 0.05,      // min lead of the best candidate over the runner-up to promote
