@@ -1,7 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { loadScipRoot, parseScipIndex } from "../src/scip.mjs";
-import { buildOracle } from "../src/scip.mjs";
+import { loadScipRoot, parseScipIndex, buildOracle } from "../src/scip.mjs";
 import { scipCrossCheck, normPath } from "../src/scip-eval.mjs";
 
 test("parseScipIndex decodes an encoded Index into a plain shape", () => {
@@ -164,4 +163,23 @@ test("runScipEval reads a .scip file and cross-checks injected edges", async () 
 test("runScipEval returns a clean error for a missing .scip file", async () => {
   const res = await runScipEval({ repo: "unused", scip: "G:/no/such/index.scip", _edges: [] });
   assert.equal(res.error, "cannot-read-scip");
+});
+
+test("scipCrossCheck accepts a dispatch edge when SCIP def is among its candidates", () => {
+  // A dispatch-tier edge resolves to no single file but lists candidate impls.
+  // It counts correct iff the SCIP definition file suffix-matches one candidate.
+  const oracle = {
+    defOf: new Map(),
+    memberRefs: [
+      { file: "src/use.ts", line: 5, method: "run", symbol: "I#run", defTarget: { file: "src/impl-b.ts", startLine: 2 } },
+    ],
+  };
+  const edges = [
+    { conf: "dispatch", from_path: "packages/x/src/use.ts", from_lines: "5", ref_name: "run",
+      to_path: null, to_lines: null, candidates: ["packages/x/src/impl-a.ts", "packages/x/src/impl-b.ts"] },
+  ];
+  const res = scipCrossCheck(edges, oracle, { sampleN: 10 });
+  assert.equal(res.correct, 1); // impl-b candidate suffix-matches the SCIP def file
+  assert.equal(res.wrong, 0);
+  assert.equal(res.recall, 1);
 });
