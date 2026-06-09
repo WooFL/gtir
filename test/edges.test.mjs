@@ -631,3 +631,18 @@ test("extractCodeEdges (ts): non-cpp member call → enclosingClass null + membe
   assert.equal(call.enclosingClass, null);
   assert.equal(call.memberOp, null);
 });
+
+test("extractCodeEdges carries localTarget for an object-literal member call", async () => {
+  const src = `function go() {
+  const chop = { scalar() { return 1; } };
+  chop.scalar();
+}`;
+  const parser = await getParser("typescript");
+  const tree = parser.parse(src);
+  const edges = extractCodeEdges(tree, "typescript", "a.ts");
+  const call = edges.find((e) => e.kind === "calls" && e.refName === "scalar");
+  assert.ok(call, "scalar call edge exists");
+  assert.deepEqual(call.localTarget, { line_start: 2, line_end: 2 });
+  assert.equal(call.receiverType, null, "object-literal receiver has no type name");
+});
+

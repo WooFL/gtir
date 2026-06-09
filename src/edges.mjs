@@ -2,7 +2,7 @@ import { dirname, join, basename } from "node:path";
 import { edgeTypes, targetTypes } from "./languages.mjs";
 import { inferReceiverType } from "./go-types.mjs";
 import { inferCppReceiverType, inferCppFactory, DEFAULT_SMART_PTRS, cppEnclosingClass, memberOperator } from "./cpp-types.mjs";
-import { inferTsReceiverType, inferTsFieldReceiverType } from "./ts-types.mjs";
+import { inferTsReceiverType, inferTsFieldReceiverType, inferTsObjectLiteralTarget } from "./ts-types.mjs";
 
 // Walk every named node depth-first, calling visit(node). Iterative (no recursion depth limit),
 // mirrors chunker.collectNodes' traversal.
@@ -401,7 +401,10 @@ export function extractCodeEdges(tree, langId, relPath, opts = {}) {
           const receiverFactory = (receiver && !receiverType && langId === "cpp") ? inferCppFactory(n, receiver) : null;
           const enclosingClass = (langId === "cpp" && isMethod) ? cppEnclosingClass(n) : null;
           const memberOp = (langId === "cpp" && isMethod) ? memberOperator(n) : null;
-          edges.push({ kind: "calls", refName: name, fromPath: relPath, fromLine: n.startPosition.row + 1, fromSymbol, isMethod, receiver, receiverType, receiverFactory, enclosingClass, memberOp });
+          const localTarget = (receiver && !receiverType && isTs)
+            ? inferTsObjectLiteralTarget(n, receiver, name)
+            : null;
+          edges.push({ kind: "calls", refName: name, fromPath: relPath, fromLine: n.startPosition.row + 1, fromSymbol, isMethod, receiver, receiverType, receiverFactory, enclosingClass, memberOp, localTarget });
         }
       }
     } else if (importSet.has(n.type)) {
