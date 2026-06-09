@@ -225,3 +225,38 @@ test("inferTsObjectLiteralTarget resolves a function-expression property", async
   const call = await firstCall(src);
   assert.deepEqual(inferTsObjectLiteralTarget(call, "o", "fn"), { line_start: 2, line_end: 2 });
 });
+
+test("inferTsObjectLiteralTarget returns null when the literal lacks the method", async () => {
+  const src = `function go() {
+  const o = { scalar() {} };
+  o.missing();
+}`;
+  const call = await firstCall(src);
+  assert.equal(inferTsObjectLiteralTarget(call, "o", "missing"), null);
+});
+
+test("inferTsObjectLiteralTarget returns null for a class-instance receiver (new Ctor)", async () => {
+  const src = `function go() {
+  const e = new Engine();
+  e.start();
+}`;
+  const call = await firstCall(src);
+  assert.equal(inferTsObjectLiteralTarget(call, "e", "start"), null);
+});
+
+test("inferTsObjectLiteralTarget returns null for a non-function member", async () => {
+  const src = `function go() {
+  const o = { x: 1 };
+  o.x();
+}`;
+  const call = await firstCall(src);
+  assert.equal(inferTsObjectLiteralTarget(call, "o", "x"), null);
+});
+
+test("inferTsObjectLiteralTarget returns null when the receiver has no binding", async () => {
+  const src = `function go(p) {
+  p.run();
+}`;
+  const call = await firstCall(src);
+  assert.equal(inferTsObjectLiteralTarget(call, "p", "run"), null);
+});
