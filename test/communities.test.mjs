@@ -141,3 +141,20 @@ test("assembleReport honours minSize", () => {
   const r = assembleReport(adj, { minSize: 3 });
   assert.ok(r.communities.every((c) => c.size >= 3), "size-2 community filtered out");
 });
+
+test("assembleReport labels a src+tests community by its src dir, not 'test'", () => {
+  const adj = new Map();
+  const add = (a, b, w = 1) => { if (!adj.has(a)) adj.set(a, new Map()); adj.get(a).set(b, w); if (!adj.has(b)) adj.set(b, new Map()); adj.get(b).set(a, w); };
+  // one community: src/config.mjs + two tests, densely connected
+  for (const [a, b] of [["src/config.mjs","test/config.test.mjs"],["src/config.mjs","test/extra.test.mjs"],["test/config.test.mjs","test/extra.test.mjs"]]) add(a, b);
+  const r = assembleReport(adj, { minSize: 1 });
+  assert.equal(r.communities[0].label, "src", "labelled by src, not test");
+});
+
+test("assembleReport labels an all-tests community 'test' (fallback)", () => {
+  const adj = new Map();
+  const add = (a, b, w = 1) => { if (!adj.has(a)) adj.set(a, new Map()); adj.get(a).set(b, w); if (!adj.has(b)) adj.set(b, new Map()); adj.get(b).set(a, w); };
+  for (const [a, b] of [["test/a.test.mjs","test/b.test.mjs"],["test/b.test.mjs","test/c.test.mjs"],["test/a.test.mjs","test/c.test.mjs"]]) add(a, b);
+  const r = assembleReport(adj, { minSize: 1 });
+  assert.equal(r.communities[0].label, "test");
+});

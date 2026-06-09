@@ -25,8 +25,11 @@ export function buildUndirected(edgeGraph, { level = "file" } = {}) {
   return { adj };
 }
 
-// Most-common top-2-segment directory among a community's members (a readable label). "" for root files.
+// Most-common top-2-segment directory among a community's members (a readable label) — but a test
+// directory (test/ tests/ spec/ __tests__/) only wins when EVERY member is under one, since gtir's tests
+// co-cluster with the src they exercise and would otherwise drown out the real module name.
 function dirLabel(members) {
+  const isTest = (d) => /^(tests?|spec|__tests__)(\/|$)/i.test(d);
   const counts = new Map();
   for (const m of members) {
     const parts = String(m).split(/[\\/]/).filter(Boolean);
@@ -34,8 +37,12 @@ function dirLabel(members) {
     const d = parts.slice(0, 2).join("/") || "(root)";
     counts.set(d, (counts.get(d) ?? 0) + 1);
   }
-  let best = "(root)", n = -1;
-  for (const [d, c] of [...counts].sort((a, b) => (a[0] < b[0] ? -1 : 1))) if (c > n) { best = d; n = c; }
+  // Rank non-test dirs above test dirs; within a tier, higher count wins; ties broken alphabetically.
+  let best = "(root)", n = -1, bestTest = true;
+  for (const [d, c] of [...counts].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+    const t = isTest(d);
+    if ((bestTest && !t) || (bestTest === t && c > n)) { best = d; n = c; bestTest = t; }
+  }
   return best;
 }
 
@@ -46,7 +53,7 @@ export function assembleReport(adj, { minSize = 1, godLimit = 15, bridgeLimit = 
   const byComm = new Map();
   for (const [n, c] of community) { if (!byComm.has(c)) byComm.set(c, []); byComm.get(c).push(n); }
   const communities = [...byComm.entries()]
-    .map(([id, members]) => ({ id, size: members.length, label: dirLabel(members), members: members.sort() }))
+    .map(([id, members]) => ({ id, size: members.length, label: dirLabel(members), members: members.slice().sort() }))
     .filter((c) => c.size >= minSize)
     .sort((a, b) => b.size - a.size || a.id - b.id);
 
