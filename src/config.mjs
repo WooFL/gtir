@@ -40,6 +40,11 @@ export const DEFAULTS = {
   centralityK: 8,           // half-saturation degree for the centrality multiplier
   centralityTieEps: 0.000001, // `--centrality` is tiebreaker-only: reorder hits only within this RRF-score band. Must be << the inter-rank RRF gap (~2.6e-4) so only genuine ties move; larger values demote exact matches (measured: 0.001 cost 25pp recall@1, a score-multiplier cost ~4.5pp).
   contextCap: 5,            // `--edges`/edges:true: max callers + max callees attached per hit
+  // Connections pane (gtir serve /connections): note-to-note related-notes ranking.
+  connK: 12,               // results returned per active note
+  connGraphWeight: 0.25,   // ceiling of the link-graph proximity multiplier (1 -> 1.25)
+  connGraphHops: 2,        // max BFS hop distance counted as "near" in the link graph
+  connFusion: true,        // fold wikilink-graph proximity into the ranking (false = vector+BM25 only)
   disambiguate: true,        // promote ambiguous call edges to conf:"inferred" via embedding similarity
   disambigThreshold: 0.55,   // min cosine(call-site, candidate def) to promote (precision-first)
   disambigMargin: 0.05,      // min lead of the best candidate over the runner-up to promote
