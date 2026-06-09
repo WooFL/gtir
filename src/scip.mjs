@@ -45,6 +45,13 @@ export function buildOracle(index) {
       }
     }
   }
+  // memberRefs = instance-method CALL references only (symbol has '#', ends '().').
+  // This deliberately matches gtir's call graph, which tracks method calls — NOT
+  // property reads. So symbols like `Foo#bar.` (no parens) are excluded by design.
+  // Caveat: getter/setter symbols (`Foo#get bar().`) DO end in '().' and so are
+  // included here even though their source access has no parens; if engine-core
+  // uses many accessors they may surface as `missed` in the cross-check (gtir has
+  // no call edge for them) — inspect the `missed` samples rather than assuming a bug.
   const memberRefs = [];
   for (const doc of index.documents) {
     for (const occ of doc.occurrences) {
