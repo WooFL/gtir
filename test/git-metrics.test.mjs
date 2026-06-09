@@ -148,3 +148,41 @@ test("locLinesOf counts lines of text (newline-terminated and not)", () => {
   assert.equal(locLinesOf("a\nb\nc"), 3);
   assert.equal(locLinesOf(""), 0);
 });
+
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { cochangeQuery, hotspotsQuery } from "../src/git-metrics-run.mjs";
+
+function gitAvailable() { try { execFileSync("git", ["--version"], { stdio: "ignore" }); return true; } catch { return false; } }
+
+test("cochange/hotspots over a real temp git repo", { skip: !gitAvailable() }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), "gtir-gm-"));
+  const git = (...a) => execFileSync("git", ["-C", dir, ...a], { stdio: "ignore" });
+  try {
+    git("init"); git("config", "user.email", "t@t"); git("config", "user.name", "t");
+    mkdirSync(join(dir, "src"));
+    writeFileSync(join(dir, "src", "a.ts"), "line1\nline2\n");
+    writeFileSync(join(dir, "src", "b.ts"), "x\ny\nz\n");
+    git("add", "-A"); git("commit", "-m", "c1");
+    writeFileSync(join(dir, "src", "a.ts"), "line1\nline2\nline3\n");
+    writeFileSync(join(dir, "src", "b.ts"), "x\ny\nz\nw\n");
+    git("add", "-A"); git("commit", "-m", "c2");
+    writeFileSync(join(dir, "src", "a.ts"), "line1\n");
+    writeFileSync(join(dir, "src", "b.ts"), "x\n");
+    git("add", "-A"); git("commit", "-m", "c3");
+
+    const cfg = { repo: dir, metricsWindow: 100, cochangeMinSupport: 2, metricsMaxCommitFiles: 25 };
+    const cc = await cochangeQuery(cfg, {});
+    const ab = cc.pairs.find((p) => p.a.endsWith("a.ts") && p.b.endsWith("b.ts"));
+    assert.ok(ab, "a.ts/b.ts coupled");
+    assert.equal(ab.count, 3);
+    assert.equal(ab.callEdge, null);
+
+    const hs = await hotspotsQuery(cfg, { top: 5 });
+    assert.ok(hs.files.some((f) => f.file.endsWith("a.ts")), "a.ts is a hotspot");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
