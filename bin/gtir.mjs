@@ -1167,7 +1167,7 @@ async function main() {
           "  gtir callstats --repo <project> [--json] [--lang <id>]   # member-call resolution rate + unresolved-reason breakdown (deterministic, no Ollama at resolve time)",
           "  gtir scip-eval --repo <r> --scip <index.scip> [--json] [--sample N]  cross-check resolved member-call edges vs scip-typescript",
           "  gtir path    <from> <to> --repo <project> [--from-path P] [--to-path P] [--depth N] [--include-ambiguous]   # shortest call-path between two symbols",
-          "  gtir cochange  [--repo .] [--window 1000] [--min-support 3] [--json]   files that change together (flags hidden coupling: no call edge)",
+          "  gtir cochange  [--repo .] [--window 1000] [--min-support 3] [--json]   files that change together (flags pairs with no resolved/dispatch call edge = hidden coupling)",
           "  gtir hotspots  [--repo .] [--window 1000] [--top 20] [--json]          churn x LOC refactoring targets",
         ].join("\n") + "\n");
         process.exit(cmd ? 1 : 0);

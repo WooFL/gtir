@@ -129,18 +129,19 @@ import { edgePairsFromEdges, locLinesOf } from "../src/git-metrics-run.mjs";
 test("edgePairsFromEdges builds order-independent pair keys from resolved call edges only", () => {
   const edges = [
     { kind: "calls", conf: "resolved", from_path: "b.ts", to_path: "a.ts" },
-    { kind: "calls", conf: "dispatch", from_path: "a.ts", to_path: "c.ts" },
+    { kind: "calls", conf: "dispatch", from_path: "a.ts", to_path: null, candidates: ["c.ts", "e.ts"] },
     { kind: "calls", conf: "ambiguous", from_path: "a.ts", to_path: "z.ts" },
     { kind: "calls", conf: "external", from_path: "a.ts", to_path: null },
     { kind: "imports", conf: "resolved", from_path: "a.ts", to_path: "d.ts" },
     { kind: "calls", conf: "resolved", from_path: "s.ts", to_path: "s.ts" },
   ];
   const set = edgePairsFromEdges(edges);
-  assert.ok(set.has("a.ts\x00b.ts"));
-  assert.ok(set.has("a.ts\x00c.ts"));
-  assert.ok(!set.has("a.ts\x00z.ts"));
-  assert.ok(!set.has("a.ts\x00d.ts"));
-  assert.equal(set.size, 2);
+  assert.ok(set.has("a.ts\x00b.ts"));   // resolved (from b.ts -> a.ts)
+  assert.ok(set.has("a.ts\x00c.ts"));   // dispatch candidate
+  assert.ok(set.has("a.ts\x00e.ts"));   // dispatch candidate
+  assert.ok(!set.has("a.ts\x00z.ts"));  // ambiguous excluded
+  assert.ok(!set.has("a.ts\x00d.ts"));  // import excluded
+  assert.equal(set.size, 3);
 });
 
 test("locLinesOf counts lines of text (newline-terminated and not)", () => {

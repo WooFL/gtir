@@ -9,15 +9,18 @@ import { parseGitLog, coChange, hotspots } from "./git-metrics.mjs";
 // Sorted, order-independent pair key — must match git-metrics.mjs pairKey.
 const pk = (a, b) => (a < b ? `${a}\x00${b}` : `${b}\x00${a}`);
 
-// File pairs that have an in-repo call edge between two DIFFERENT files. Only resolved/dispatch/inferred
-// calls with a real target count (ambiguous/external are too weak to claim a relationship). Returns a Set.
+// File pairs that have an in-repo call edge between two DIFFERENT files. Counts resolved/dispatch/inferred
+// calls; ambiguous/external are too weak to claim a relationship. Dispatch edges carry no to_path — their
+// target files live in `candidates[]` — so pull those too (else dispatch-coupled pairs look uncoupled).
 export function edgePairsFromEdges(edges) {
   const set = new Set();
   for (const e of edges) {
     if (e.kind !== "calls") continue;
     if (!(e.conf === "resolved" || e.conf === "dispatch" || e.conf === "inferred")) continue;
-    if (!e.from_path || !e.to_path || e.from_path === e.to_path) continue;
-    set.add(pk(e.from_path, e.to_path));
+    if (!e.from_path) continue;
+    if (e.to_path && e.to_path !== e.from_path) set.add(pk(e.from_path, e.to_path));
+    if (Array.isArray(e.candidates))
+      for (const c of e.candidates) if (c && c !== e.from_path) set.add(pk(e.from_path, c));
   }
   return set;
 }
