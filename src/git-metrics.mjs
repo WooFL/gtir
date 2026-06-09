@@ -5,7 +5,7 @@
 // changed-file lines (no blank line between), commits separated by a blank line. Returns [{hash, files}].
 export function parseGitLog(text) {
   const out = [];
-  for (const chunk of String(text || "").split("\x01")) {
+  for (const chunk of String(text ?? "").split("\x01")) {
     if (!chunk) continue;
     const lines = chunk.split("\n");
     const hash = lines[0].trim();
@@ -42,7 +42,7 @@ export function coChange(commits, edgePairs, { minSupport = 3, maxCommitFiles = 
   for (const [k, count] of co) {
     if (count < minSupport) continue;
     const [a, b] = k.split("\x00");
-    const confidence = Math.round((count / Math.min(freq.get(a), freq.get(b))) * 100) / 100;
+    const confidence = Math.round((count / Math.min(freq.get(a) ?? 1, freq.get(b) ?? 1)) * 100) / 100;
     const callEdge = edgePairs ? edgePairs.has(k) : null;
     pairs.push({ a, b, count, confidence, callEdge });
   }

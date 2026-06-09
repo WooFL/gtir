@@ -58,6 +58,16 @@ test("coChange skips mega-commits over maxCommitFiles", () => {
   assert.equal(r.pairs.length, 0);
 });
 
+test("coChange dedupes a file repeated within one commit", () => {
+  const r = coChange([
+    { hash: "1", files: ["a.ts", "a.ts", "b.ts"] },
+    { hash: "2", files: ["a.ts", "b.ts"] },
+  ], null, { minSupport: 2 });
+  const ab = r.pairs.find((p) => p.a === "a.ts" && p.b === "b.ts");
+  assert.equal(ab.count, 2);            // 2 commits, not 3 (the repeat didn't double-count)
+  assert.equal(ab.confidence, 1);       // freq(a)=2, freq(b)=2
+});
+
 import { hotspots } from "../src/git-metrics.mjs";
 
 test("hotspots scores revisions x loc and ranks desc", () => {
@@ -89,6 +99,7 @@ test("hotspots skips mega-commits", () => {
   const big = { hash: "b", files: ["a.ts", "b.ts", "c.ts", "d.ts"] };
   const r = hotspots([big], new Map([["a.ts", 10]]), { top: 5, maxCommitFiles: 3 });
   assert.equal(r.files.length, 0);
+  assert.equal(r.commitsScanned, 0);    // the only commit was a skipped mega-commit
 });
 
 test("coChange annotates callEdge from the supplied edgePairs set and sorts hidden coupling first", () => {
