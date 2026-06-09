@@ -20,6 +20,8 @@ import { runDemo, formatDemo } from "../src/demo.mjs";
 import { runDoctor, preflight } from "../src/doctor.mjs";
 import { indexEdges } from "../src/indexer.mjs";
 import { memberCallStats } from "../src/callstats.mjs";
+import { loadScipRoot, parseScipIndex, buildOracle } from "../src/scip.mjs";
+import { scipCrossCheck } from "../src/scip-eval.mjs";
 import { fetchGrammars } from "../src/fetch-grammars.mjs";
 import { buildGraph, renderHtml, renderMermaid } from "../src/graph.mjs";
 import { impactQuery, orphansQuery, cyclesQuery, pathQuery, graphForSearch } from "../src/graph-queries.mjs";
@@ -164,6 +166,42 @@ function printCallstats(r, { repo, lang } = {}) {
     }
   }
   process.stderr.write(out.join("\n") + "\n");
+}
+
+// `gtir scip-eval --repo <repo> --scip <index.scip> [--json] [--sample N]`
+// Cross-checks gtir's resolved TS member-call edges (collect seam) against a
+// pre-produced scip-typescript index. Prints precision + true recall + buckets.
+// `_edges` (tests only) bypasses the collect seam with a fixed edge list.
+export async function runScipEval({ repo, scip, json = false, sampleN = 10, _edges = null } = {}) {
+  if (!scip) { process.stderr.write("gtir scip-eval: --scip <index.scip> is required\n"); return { error: "missing --scip" }; }
+
+  let edges = _edges;
+  if (!edges) {
+    const cfg = loadConfig(repo || process.cwd());
+    const { rows } = await indexEdges(cfg, { rebuild: true, collect: true });
+    const TS = /\.[cm]?[jt]sx?$/i;
+    edges = rows.filter((r) =>
+      r.kind === "calls" && r.isMethod &&
+      (r.conf === "resolved" || r.conf === "dispatch") &&
+      TS.test(r.from_path ?? ""));
+  }
+
+  const root = loadScipRoot();
+  const buffer = readFileSync(scip);
+  const oracle = buildOracle(parseScipIndex(buffer, root));
+  const res = scipCrossCheck(edges, oracle, { sampleN });
+
+  const pct = (x) => (x == null ? "n/a" : `${(x * 100).toFixed(1)}%`);
+  const out = [`scip-eval: ${scip}`];
+  out.push(`  gtir resolved TS member-calls: ${res.gtirResolvedTotal}`);
+  out.push(`  precision: ${pct(res.precision)}  (correct ${res.correct} / wrong ${res.wrong})`);
+  out.push(`  recall:    ${pct(res.recall)}  (correct ${res.correct} / in-repo-resolvable ${res.resolvableTotal})`);
+  out.push(`  buckets: external ${res.external}  unaligned ${res.unaligned}`);
+  if (res.samples.wrong.length) out.push(`  sample WRONG: ${JSON.stringify(res.samples.wrong[0])}`);
+  if (res.samples.missed.length) out.push(`  sample MISSED: ${JSON.stringify(res.samples.missed[0])}`);
+  process.stderr.write(out.join("\n") + "\n");
+  if (json) process.stdout.write(JSON.stringify(res) + "\n");
+  return res;
 }
 
 // `gtir install [--repo <path>] [--uninstall] [--force]`: wire a repo so Claude Code (main
@@ -317,6 +355,8 @@ function parseArgs(argv) {
     else if (a === "--json") args.json = true;
     else if (a === "--rerank") args.rerank = true;
     else if (a === "--golden") args.golden = argv[++i];
+    else if (a === "--scip") args.scip = argv[++i];
+    else if (a === "--sample") { const v = Number(argv[++i]); if (Number.isFinite(v)) args.sample = v; }
     else if (a === "--baseline") args.baseline = argv[++i];
     else if (a === "--out") args.out = argv[++i];
     else if (a === "--focus") args.focus = argv[++i];
@@ -953,6 +993,10 @@ async function main() {
       case "callstats": {
         process.exit(await runCallstats({ repo, json: args.json, lang: args.lang ?? null }));
       }
+      case "scip-eval": {
+        const res = await runScipEval({ repo, scip: args.scip, json: args.json, sampleN: args.sample ?? 10 });
+        process.exit(res && res.error ? 2 : 0);
+      }
       case "init": {
         const mode = args.notes ? "notes" : args.code ? "code" : null;
         const r = await runInit({ repo, mode, index: !args.noIndex, hook: !args.noHook });
@@ -1053,6 +1097,7 @@ async function main() {
           "  gtir eval    --repo <project> --disambig [--tune] [--save] [--no-build]   # score ambiguous→inferred promotion",
           "  gtir graph   --repo <project> [--out FILE] [--format <html|mermaid>] [--focus SYM [--depth 2]] [--rollup] [--max-nodes 400] [--kind calls,imports] [--conf ambiguous] [--path-prefix P]",
           "  gtir callstats --repo <project> [--json] [--lang <id>]   # member-call resolution rate + unresolved-reason breakdown (deterministic, no Ollama at resolve time)",
+          "  gtir scip-eval --repo <r> --scip <index.scip> [--json] [--sample N]  cross-check resolved member-call edges vs scip-typescript",
           "  gtir path    <from> <to> --repo <project> [--from-path P] [--to-path P] [--depth N] [--include-ambiguous]   # shortest call-path between two symbols",
         ].join("\n") + "\n");
         process.exit(cmd ? 1 : 0);

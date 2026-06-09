@@ -364,6 +364,20 @@ npm run eval:disambig -- --save  # set the current metrics as the new baseline
 npm run eval:disambig -- --tune  # sweep disambigThreshold × disambigMargin
 ```
 
+### SCIP cross-check (dev)
+
+Measure resolved member-call edges for precision + true recall against
+scip-typescript ground truth. Produce an index for one package, then run:
+
+```bash
+cd packages/engine-core && npx -y @sourcegraph/scip-typescript index --output index.scip
+gtir scip-eval --repo <repo-root> --scip packages/engine-core/index.scip --json
+```
+
+Precision = correct / (correct + wrong); recall = correct / in-repo-resolvable
+calls (the honest denominator — external/stdlib calls are excluded). The parser
+is dir-agnostic: point `--scip` at any package's index to widen coverage.
+
 ## 🥇 Reranking (optional)
 
 gtir can rerank the top hybrid candidates with a cross-encoder before returning them. Off by default;

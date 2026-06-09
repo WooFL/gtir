@@ -125,3 +125,38 @@ test("scipCrossCheck disambiguates same-basename files by caller path", () => {
   assert.equal(res.unaligned, 0);
   assert.equal(res.missedTotal, 1); // Utils#get was resolvable but never attempted
 });
+
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { runScipEval } from "../bin/gtir.mjs";
+
+test("runScipEval reads a .scip file and cross-checks injected edges", async () => {
+  // Encode a tiny real .scip with one def + one ref of A#m().
+  const root = loadScipRoot();
+  const Index = root.lookupType("scip.Index");
+  const buf = Index.encode(Index.fromObject({
+    documents: [{
+      relativePath: "src/a.ts",
+      occurrences: [
+        { range: [4, 2, 4, 8], symbol: "pkg A#m().", symbolRoles: 1 },
+        { range: [9, 2, 9, 8], symbol: "pkg A#m().", symbolRoles: 0 },
+      ],
+    }],
+  })).finish();
+  const dir = mkdtempSync(join(tmpdir(), "scip-"));
+  const scipPath = join(dir, "index.scip");
+  writeFileSync(scipPath, Buffer.from(buf));
+
+  const edges = [
+    { conf: "resolved", isMethod: true, kind: "calls",
+      from_path: "packages/x/src/a.ts", from_lines: "10", ref_name: "m",
+      to_path: "packages/x/src/a.ts", to_lines: "5-8" },
+  ];
+
+  const res = await runScipEval({ repo: "unused", scip: scipPath, _edges: edges });
+  assert.equal(res.correct, 1);
+  assert.equal(res.precision, 1);
+  assert.equal(res.recall, 1);
+  assert.equal(res.resolvableTotal, 1);
+});
