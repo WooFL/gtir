@@ -123,3 +123,28 @@ test("config has git-metrics defaults", () => {
   assert.equal(DEFAULTS.cochangeMinSupport, 3);
   assert.equal(DEFAULTS.metricsMaxCommitFiles, 25);
 });
+
+import { edgePairsFromEdges, locLinesOf } from "../src/git-metrics-run.mjs";
+
+test("edgePairsFromEdges builds order-independent pair keys from resolved call edges only", () => {
+  const edges = [
+    { kind: "calls", conf: "resolved", from_path: "b.ts", to_path: "a.ts" },
+    { kind: "calls", conf: "dispatch", from_path: "a.ts", to_path: "c.ts" },
+    { kind: "calls", conf: "ambiguous", from_path: "a.ts", to_path: "z.ts" },
+    { kind: "calls", conf: "external", from_path: "a.ts", to_path: null },
+    { kind: "imports", conf: "resolved", from_path: "a.ts", to_path: "d.ts" },
+    { kind: "calls", conf: "resolved", from_path: "s.ts", to_path: "s.ts" },
+  ];
+  const set = edgePairsFromEdges(edges);
+  assert.ok(set.has("a.ts\x00b.ts"));
+  assert.ok(set.has("a.ts\x00c.ts"));
+  assert.ok(!set.has("a.ts\x00z.ts"));
+  assert.ok(!set.has("a.ts\x00d.ts"));
+  assert.equal(set.size, 2);
+});
+
+test("locLinesOf counts lines of text (newline-terminated and not)", () => {
+  assert.equal(locLinesOf("a\nb\nc\n"), 3);
+  assert.equal(locLinesOf("a\nb\nc"), 3);
+  assert.equal(locLinesOf(""), 0);
+});
