@@ -285,8 +285,10 @@ export function resolveEdges(rawEdges, symbolIndex, noteIndex, opts = {}) {
   for (const e of rawEdges) {
     if (e.kind === "calls") {
       const from = { path: e.fromPath, fromLine: e.fromLine, symbol: e.fromSymbol ?? null };
-      // Object-literal local: the extractor already pinned the in-file target span (same file as the
-      // call). Trust it over any coincidental same-name symbol elsewhere — the literal is ground truth.
+      // Object-literal local: the extractor already pinned the in-file target span — to_path is the
+      // call's own file (the literal lives there). Trust it over any coincidental same-name symbol
+      // elsewhere; the literal is ground truth. Carry isMethod:true so callstats/scip-eval credit this
+      // as a resolved MEMBER call (the other resolved paths predate that need and default it to false).
       if (e.localTarget) {
         out.push(row("calls", from,
           { path: e.fromPath, line_start: e.localTarget.line_start, line_end: e.localTarget.line_end, symbol: e.refName },

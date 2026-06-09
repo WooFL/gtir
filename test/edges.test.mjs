@@ -679,3 +679,21 @@ function go() {
   assert.equal(call.receiverType, "Engine", "class receiver still typed via the existing path");
   assert.equal(call.localTarget ?? null, null, "no object-literal target for a class instance");
 });
+
+test("resolveEdges resolves an object-literal call when no same-name symbol exists", async () => {
+  const src = `function go() {
+  const o = { run() { return 1; } };
+  o.run();
+}`;
+  const parser = await getParser("typescript");
+  const tree = parser.parse(src);
+  const raw = extractCodeEdges(tree, "typescript", "a.ts");
+  // symbolIndex has NO entry for `run` — without localTarget this would be `external`.
+  const rows = resolveEdges(raw, new Map(), new Map());
+  const call = rows.find((r) => r.kind === "calls" && r.ref_name === "run" && r.isMethod);
+  assert.ok(call, "run call row exists");
+  assert.equal(call.conf, "resolved");
+  assert.equal(call.to_path, "a.ts");
+  assert.equal(call.to_lines, "2-2");
+  assert.equal(call.to_symbol, "run");
+});
