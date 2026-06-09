@@ -95,3 +95,85 @@ test("fuseConnections: a result with no graph proximity gets multiplier 1 (no in
   assert.deepEqual(out[0].why, ["semantic"]);
   assert.equal(out[0].section, ""); // no heading
 });
+
+import { before as _before, after as _after } from "node:test";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { loadConfig } from "../src/config.mjs";
+import { buildIndex, indexEdges } from "../src/indexer.mjs";
+import { openStore } from "../src/store.mjs";
+import { computeConnections } from "../src/connections.mjs";
+
+const DIM = 16;
+// Deterministic embed shaped like Ollama /api/embed (one vector per input), same as no-egress test.
+const evec = (t) => { const v = Array(DIM).fill(0.01); for (let i = 0; i < t.length; i++) v[i % DIM] += t.charCodeAt(i) % 5; return v; };
+let _realFetch;
+_before(() => {
+  _realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts = {}) => {
+    const u = new URL(String(url));
+    if (u.pathname === "/api/embed") {
+      const input = JSON.parse(opts.body || "{}").input;
+      const arr = Array.isArray(input) ? input : [input];
+      return { ok: true, status: 200, json: async () => ({ embeddings: arr.map(evec) }), text: async () => "" };
+    }
+    if (u.pathname === "/api/version") return { ok: true, status: 200, json: async () => ({ version: "stub" }), text: async () => "" };
+    if (u.pathname === "/api/tags") return { ok: true, status: 200, json: async () => ({ models: [] }), text: async () => "" };
+    return { ok: false, status: 404, json: async () => ({}), text: async () => "not found" };
+  };
+});
+_after(() => { globalThis.fetch = _realFetch; });
+
+function notesVault() {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-conn-"));
+  // alpha links to beta; gamma is about the same topic but not linked.
+  writeFileSync(join(repo, "alpha.md"),
+    "# Alpha\n\nThis note covers retrieval fusion and reciprocal rank fusion.\nSee [[beta]] for the edge details.\n");
+  writeFileSync(join(repo, "beta.md"),
+    "# Beta\n\n## Edge confidence tiers\nResolved versus inferred edges and how promotion works.\n");
+  writeFileSync(join(repo, "gamma.md"),
+    "# Gamma\n\n## Reciprocal rank fusion\nReciprocal rank fusion blends vector and lexical retrieval.\n");
+  return repo;
+}
+
+test("computeConnections returns related notes with a link-graph why-tag", async () => {
+  const repo = notesVault();
+  // Force notes mode so the edge layer emits links/embeds. nomic model name -> isNotesMode true.
+  const cfg = { ...loadConfig(repo), model: "nomic-embed-text", ollamaUrl: "http://localhost:11434" };
+  try {
+    await buildIndex(cfg, { rebuild: true });
+    await indexEdges(cfg, { rebuild: true, collect: false });
+    const store = await openStore(cfg);
+    assert.equal(await store.hasEdges(), true, "fixture built link edges");
+
+    const res = await computeConnections(cfg, { path: "alpha.md", k: 5 });
+    assert.equal(res.note, "alpha.md");
+    assert.ok(res.results.length >= 1, "returned at least one related note");
+    // beta is directly linked from alpha -> must appear with a link: why-tag.
+    const beta = res.results.find((r) => r.path === "beta.md");
+    assert.ok(beta, "beta.md is among results");
+    assert.ok(beta.why.some((w) => w.startsWith("link:")), `beta carries a link tag: ${beta.why.join(",")}`);
+    // every result has the response shape.
+    for (const r of res.results) {
+      assert.equal(typeof r.score, "number");
+      assert.match(r.lines, /^\d+-\d+$/);
+      assert.ok(Array.isArray(r.why));
+    }
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("computeConnections errors cleanly on a missing path arg and an unindexed note", async () => {
+  const repo = notesVault();
+  const cfg = { ...loadConfig(repo), model: "nomic-embed-text" };
+  try {
+    assert.equal((await computeConnections(cfg, {})).error, "path is required");
+    await buildIndex(cfg, { rebuild: true });
+    const r = await computeConnections(cfg, { path: "does-not-exist.md", k: 5 });
+    assert.deepEqual([r.note, r.status, r.results], ["does-not-exist.md", "not-indexed", []]);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});

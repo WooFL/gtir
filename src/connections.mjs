@@ -97,6 +97,7 @@ export function bestTerm(text, terms) {
 // Pure fusion. RRF over the semantic and lexical ranks (equal weight), then a bounded
 // link-graph multiplier (<= 1 + connGraphWeight). A candidate with no graph proximity keeps
 // multiplier 1 — the graph re-ranks, it never promotes a no-basis result. Emits why-tags.
+// (exported first so computeConnections below can call it)
 export function fuseConnections(entries, proximity, cfg = {}) {
   const gw = cfg.connGraphWeight ?? 0.25;
   const out = (entries || []).map((e) => {
@@ -125,4 +126,71 @@ export function fuseConnections(entries, proximity, cfg = {}) {
   });
   out.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
   return out;
+}
+
+const sqlStr = (s) => `'${String(s).replace(/'/g, "''")}'`;
+
+// Rank notes related to the note at `path`. Reuses stored chunk embeddings (no re-embed) for the
+// semantic branch, an FTS query built from the note's title+headings for the lexical branch, and
+// the wikilink graph for proximity. Returns { note, results } (or { error } / { note, results:[],
+// status } for the empty cases).
+export async function computeConnections(cfg, { path, k } = {}) {
+  if (!path) return { error: "path is required" };
+  const limit = Math.max(1, Math.min(50, (k ?? cfg.connK ?? 12) | 0 || 12));
+  const store = await openStore(cfg);
+  const tbl = await store.chunksTable();
+  if (!tbl) return { error: "no index — run: gtir index" };
+
+  const own = (await tbl.query().where(`path = ${sqlStr(path)}`).toArray())
+    .sort((a, b) => Number(a.line_start) - Number(b.line_start));
+  if (own.length === 0) return { note: path, results: [], status: "not-indexed" };
+
+  const fanout = Math.max(limit * 3, 16);
+
+  // 1. SEMANTIC — vector NN per own chunk; keep the best (highest-sim) chunk per candidate note.
+  const sem = new Map(); // candPath -> { sim, lineStart, lineEnd, text }
+  for (const c of own) {
+    if (!c.embedding) continue;
+    const rows = await tbl.search(Array.from(c.embedding)).distanceType("cosine").limit(fanout + 4).toArray();
+    for (const r of rows) {
+      if (r.path === path) continue;
+      const sim = 1 - Number(r._distance);
+      const prev = sem.get(r.path);
+      if (!prev || sim > prev.sim) sem.set(r.path, { sim, lineStart: Number(r.line_start), lineEnd: Number(r.line_end), text: r.text });
+    }
+  }
+
+  // 2. LEXICAL — FTS over a query built from N's title + headings; first hit per candidate note.
+  const queryText = lexicalQuery(path, own);
+  const qTerms = queryTermsOf(queryText);
+  const lex = new Map(); // candPath -> { lineStart, lineEnd, text, term }
+  if (queryText.trim()) {
+    let rows = [];
+    try { rows = await tbl.query().nearestToText(queryText, ["fts_text"]).limit(fanout).toArray(); }
+    catch { try { rows = await tbl.query().nearestToText(queryText).limit(fanout).toArray(); } catch { rows = []; } }
+    for (const r of rows) {
+      if (r.path === path || lex.has(r.path)) continue;
+      lex.set(r.path, { lineStart: Number(r.line_start), lineEnd: Number(r.line_end), text: r.text, term: bestTerm(r.text, qTerms) });
+    }
+  }
+
+  // ranks (1-based; sorted best-first)
+  const semRank = new Map([...sem.entries()].sort((a, b) => b[1].sim - a[1].sim).map(([p], i) => [p, i + 1]));
+  const lexRank = new Map([...lex.keys()].map((p, i) => [p, i + 1]));
+
+  // 3. GRAPH proximity (optional)
+  let proximity = new Map();
+  if (cfg.connFusion !== false && (await store.hasEdges())) {
+    const graph = buildGraph(await store.loadEdges());
+    const cands = [...new Set([...sem.keys(), ...lex.keys()])];
+    proximity = linkProximity(graph, path, cands, { hops: cfg.connGraphHops ?? 2 });
+  }
+
+  // 4. FUSE
+  const entries = [...new Set([...sem.keys(), ...lex.keys()])].map((p) => ({
+    path: p,
+    sem: sem.has(p) ? { rank: semRank.get(p), ...sem.get(p) } : null,
+    lex: lex.has(p) ? { rank: lexRank.get(p), ...lex.get(p) } : null,
+  }));
+  return { note: path, results: fuseConnections(entries, proximity, cfg).slice(0, limit) };
 }
