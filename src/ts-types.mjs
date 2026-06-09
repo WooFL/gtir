@@ -163,6 +163,7 @@ function objectLiteralMethodSpan(objNode, method) {
 // If `receiver` is a local bound to an object literal in the call's enclosing scope, return the span of
 // its function-valued member named `refName`; else null. Same nested-scope guard as collectTsBindings:
 // an inner function scope's binding of the same name must not shadow the outer one being resolved.
+// Flow-insensitive (binding-based, like inferTsReceiverType): a later reassignment of the var is not tracked.
 export function inferTsObjectLiteralTarget(callNode, receiver, refName) {
   if (!callNode || !receiver || !refName) return null;
   const scope = enclosingTsScope(callNode);

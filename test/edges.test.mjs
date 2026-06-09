@@ -680,6 +680,20 @@ function go() {
   assert.equal(call.localTarget ?? null, null, "no object-literal target for a class instance");
 });
 
+test("resolveEdges does not resolve computed member access o['a']() via localTarget", async () => {
+  const src = `function go() {
+  const o = { a() { return 1; } };
+  o["a"]();
+}`;
+  const parser = await getParser("typescript");
+  const tree = parser.parse(src);
+  const raw = extractCodeEdges(tree, "typescript", "a.ts");
+  // computed subscript callee → no member-property name → either no calls edge for `a`, or no localTarget.
+  const aEdge = raw.find((e) => e.kind === "calls" && e.refName === "a");
+  if (aEdge) assert.equal(aEdge.localTarget ?? null, null, "computed access must not get a localTarget");
+  // else: no edge at all is also acceptable (subscript callee yields no refName).
+});
+
 test("resolveEdges resolves an object-literal call when no same-name symbol exists", async () => {
   const src = `function go() {
   const o = { run() { return 1; } };

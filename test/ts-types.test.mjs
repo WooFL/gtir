@@ -287,3 +287,19 @@ test("inferTsObjectLiteralTarget resolves a module-level binding", async () => {
   const call = await firstCall(src);
   assert.deepEqual(inferTsObjectLiteralTarget(call, "h", "run"), { line_start: 1, line_end: 1 });
 });
+
+test("inferTsObjectLiteralTarget is flow-insensitive — a reassigned var still resolves to the literal", async () => {
+  // Documents the binding-based contract (matches inferTsReceiverType): reassignment is NOT tracked.
+  const src = `function go() {
+  let o = { a() { return 1; } };
+  o = factory();
+  o.a();
+}`;
+  const parser = await getParser("typescript");
+  const tree = parser.parse(src);
+  let call = null;
+  const walk = (n) => { if (n.type === "call_expression" && n.text.startsWith("o.a")) call = n; for (let i = 0; i < n.namedChildCount; i++) walk(n.namedChild(i)); };
+  walk(tree.rootNode);
+  // The call is to the LAST o.a() — binding-based inference still points at the literal's method.
+  assert.deepEqual(inferTsObjectLiteralTarget(call, "o", "a"), { line_start: 2, line_end: 2 });
+});
