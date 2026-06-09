@@ -343,7 +343,8 @@ function parseArgs(argv) {
     else if (a === "--uninstall") args.uninstall = true;
     else if (a === "--force") args.force = true;
     else if (a === "--notes") args.notes = true;
-    else if (a === "--code") args.code = true;
+    else if (a === "--code") args.code = argv[++i];
+    else if (a === "--link-repo") args.linkRepo = argv[++i];
     else if (a === "--no-cache") args.noCache = true;
     else if (a === "--no-index") args.noIndex = true;
     else if (a === "--no-hook") args.noHook = true;
@@ -919,6 +920,15 @@ async function main() {
         process.stdout.write(JSON.stringify(out, null, 2) + "\n");
         break;
       }
+      case "crosslinks": {
+        const { codeLinksFor } = await import("../src/crosslinks.mjs");
+        const cfg = loadConfig(args.repo || ".");
+        if (!args.code) { process.stderr.write("gtir crosslinks: --code <codeRepo> is required\n"); process.exitCode = 2; break; }
+        const codeCfg = loadConfig(args.code);
+        const out = await codeLinksFor(cfg, codeCfg, args.path);
+        process.stdout.write(JSON.stringify(out, null, 2) + "\n");
+        break;
+      }
       case "status": {
         process.stdout.write(JSON.stringify(await runStatus({ repo }), null, 2) + "\n");
         break;
@@ -1092,12 +1102,11 @@ async function main() {
       }
       case "serve": {
         const cfg = loadConfig(args.repo || ".");
+        const linkCfg = args.linkRepo ? loadConfig(args.linkRepo) : null;
         const { startServer } = await import("../src/serve.mjs");
         await startServer(cfg, {
-          host: args.host || "127.0.0.1",
-          port: args.port || 7411,
-          token: args.token || null,
-          watch: !!args.watch,
+          host: args.host || "127.0.0.1", port: args.port || 7411,
+          token: args.token || null, watch: !!args.watch, linkCfg,
         });
         // keep the process alive; the http server holds the event loop open.
         break;
@@ -1119,7 +1128,8 @@ async function main() {
           "  gtir install --repo <project> [--uninstall] [--force]   # wire Claude Code (.mcp.json + PreToolUse hook + CLAUDE.md); preserves existing gtir MCP entry unless --force",
           "  gtir hooknudge   # PreToolUse hook: reads stdin, nudges agents toward gtir's MCP tools on Grep/Glob (internal)",
           "  gtir fetch-grammars   # download prebuilt shader grammars (HLSL/GLSL, ~5MB, no toolchain)",
-          "  gtir serve   --repo <project> [--port 7411] [--host 127.0.0.1] [--token <t>] [--watch]   # local HTTP API for the Obsidian plugin",
+          "  gtir serve   --repo <project> [--port 7411] [--host 127.0.0.1] [--token <t>] [--watch] [--link-repo <codeRepo>]   # local HTTP API for the Obsidian plugin; link a code index for note->code cross-links",
+          "  gtir crosslinks --repo <vault> --code <codeRepo> --path <note.md>   # a note's code references (JSON)",
           "  gtir mcp     --repo <project> [--label name:<repo>] [--watch [--debounce 1500]] [--print-config]",
           "  gtir eval    --repo <project> [--golden <f>] [-k 10] [--save] [--no-build] [--json]",
           "  gtir eval    --repo <project> --tune [\"ftsWeight=0,0.2;ftsWeightMixed=0,0.3\"]   # sweep fusion weights on the golden set",
