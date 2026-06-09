@@ -37,3 +37,32 @@ test("proximityScore: direct link dominates, bounded to [0,1]", () => {
   assert.ok(proximityScore({ hop: 2, coCite: 0 }) > 0 && proximityScore({ hop: 2, coCite: 0 }) < 1);
   assert.ok(proximityScore({ hop: null, coCite: 9 }) <= 1);
 });
+
+import { sectionOf, snippetOf, lexicalQuery, queryTermsOf, bestTerm } from "../src/connections.mjs";
+
+test("sectionOf returns the first heading text", () => {
+  assert.equal(sectionOf("## Edge confidence tiers\nbody text"), "Edge confidence tiers");
+  assert.equal(sectionOf("no heading here"), "");
+});
+
+test("snippetOf strips headings and trims to a short body excerpt", () => {
+  const s = snippetOf("# Title\n\nThe resolved tier never lies. ".repeat(20));
+  assert.ok(!s.startsWith("# Title"));
+  assert.ok(s.length <= 200);
+  assert.ok(s.includes("resolved tier"));
+});
+
+test("lexicalQuery joins de-slugified title and headings", () => {
+  const q = lexicalQuery("notes/edge-confidence.md", [{ text: "## Resolved tier\nbody\n### Inferred" }]);
+  assert.ok(q.includes("edge confidence"));
+  assert.ok(q.includes("Resolved tier"));
+  assert.ok(q.includes("Inferred"));
+});
+
+test("queryTermsOf + bestTerm pick a shared salient term", () => {
+  const terms = queryTermsOf("Resolved tier inferred promotion");
+  assert.ok(terms.includes("resolved"));
+  assert.ok(!terms.includes("the")); // too short
+  assert.equal(bestTerm("the promotion was inferred here", terms), "promotion"); // longest present
+  assert.equal(bestTerm("nothing matches", terms), null);
+});

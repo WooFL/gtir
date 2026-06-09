@@ -42,3 +42,54 @@ export function proximityScore({ hop, coCite } = {}) {
   const citePart = 0.5 * (Math.min(coCite || 0, 3) / 3);
   return Math.min(1, Math.max(hopPart, citePart));
 }
+
+const HEADING_LINE = /^#{1,6}\s+(.+?)\s*#*$/;
+
+// First markdown heading's text, anywhere in the chunk; "" if none.
+export function sectionOf(text) {
+  for (const line of String(text || "").split("\n")) {
+    const m = HEADING_LINE.exec(line.trim());
+    if (m) return m[1];
+  }
+  return "";
+}
+
+// First ~200 chars of body, with heading lines and blank lines removed, whitespace collapsed.
+export function snippetOf(text) {
+  const body = String(text || "").split("\n")
+    .filter((l) => l.trim() && !HEADING_LINE.test(l.trim()))
+    .join(" ").replace(/\s+/g, " ").trim();
+  return body.length > 200 ? body.slice(0, 200).trimEnd() : body;
+}
+
+// Lexical query for note N: its de-slugified title plus every heading it contains.
+export function lexicalQuery(path, ownChunks) {
+  const title = basename(String(path)).replace(/\.(md|mdx)$/i, "").replace(/[-_]+/g, " ");
+  const headings = [];
+  for (const c of ownChunks || []) {
+    for (const line of String(c.text || "").split("\n")) {
+      const m = HEADING_LINE.exec(line.trim());
+      if (m) headings.push(m[1]);
+    }
+  }
+  return [title, ...headings].join("\n");
+}
+
+// Unique lowercase tokens of length >= 4 (drops stopword-ish short words).
+export function queryTermsOf(text) {
+  const seen = new Set();
+  for (const t of String(text || "").toLowerCase().match(/[a-z0-9]+/g) || []) {
+    if (t.length >= 4) seen.add(t);
+  }
+  return [...seen];
+}
+
+// The longest query term that appears in `text` (case-insensitive); null if none.
+export function bestTerm(text, terms) {
+  const hay = String(text || "").toLowerCase();
+  let best = null;
+  for (const t of terms || []) {
+    if (hay.includes(t) && (best === null || t.length > best.length)) best = t;
+  }
+  return best;
+}
