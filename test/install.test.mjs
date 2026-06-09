@@ -409,3 +409,119 @@ test("runInstall: written hook command path exists on disk and parses inside JSO
   assert.ok(m, "command shape is: node \"<abs>\" hooknudge");
   assert.ok(existsSync(m[1]), "the resolved bin path exists");
 });
+
+// --- addMcpServer no-clobber (force flag) ------------------------------------
+
+const RICHER_GTIR = { command: "node", args: [BIN, "mcp", "--repo", "A", "--repo", "B"] };
+
+test("addMcpServer force:false — existing gtir entry preserved unchanged (returns input)", () => {
+  const input = { mcpServers: { gtir: RICHER_GTIR } };
+  const snapshot = JSON.parse(JSON.stringify(input));
+  const out = addMcpServer(input, "gtir", gtirMcpEntry(BIN), { force: false });
+  // Must be byte-identical: both repos intact
+  assert.deepEqual(out, snapshot);
+  assert.deepEqual(out.mcpServers.gtir.args, [BIN, "mcp", "--repo", "A", "--repo", "B"]);
+});
+
+test("addMcpServer force:true — existing gtir entry overwritten with new default entry", () => {
+  const input = { mcpServers: { gtir: RICHER_GTIR } };
+  const defaultEntry = gtirMcpEntry(BIN);
+  const out = addMcpServer(input, "gtir", defaultEntry, { force: true });
+  assert.deepEqual(out.mcpServers.gtir, defaultEntry);
+});
+
+test("addMcpServer force:false — absent gtir key gets written (force not needed for new entry)", () => {
+  const input = { mcpServers: { playwright: { command: "npx", args: ["playwright"] } } };
+  const defaultEntry = gtirMcpEntry(BIN);
+  const out = addMcpServer(input, "gtir", defaultEntry, { force: false });
+  assert.deepEqual(out.mcpServers.gtir, defaultEntry);
+  // Unrelated server still present
+  assert.deepEqual(out.mcpServers.playwright, { command: "npx", args: ["playwright"] });
+});
+
+test("addMcpServer force:false — a DIFFERENT server name is always preserved", () => {
+  const input = { mcpServers: { gtir: RICHER_GTIR, playwright: { command: "npx", args: ["playwright"] } } };
+  const out = addMcpServer(input, "gtir", gtirMcpEntry(BIN), { force: false });
+  // gtir untouched (no force), playwright still there
+  assert.deepEqual(out.mcpServers.gtir, RICHER_GTIR);
+  assert.deepEqual(out.mcpServers.playwright, { command: "npx", args: ["playwright"] });
+});
+
+test("addMcpServer no opts (backward compat) — behaves like force:false: absent key written, existing preserved", () => {
+  // Absent key: still written (same as old behavior)
+  const fresh = addMcpServer({}, "gtir", gtirMcpEntry(BIN));
+  assert.deepEqual(fresh.mcpServers.gtir, gtirMcpEntry(BIN));
+  // Existing key: now PRESERVED (changed behavior — no-clobber by default)
+  const existing = addMcpServer({ mcpServers: { gtir: RICHER_GTIR } }, "gtir", gtirMcpEntry(BIN));
+  assert.deepEqual(existing.mcpServers.gtir, RICHER_GTIR);
+});
+
+// --- runInstall no-clobber integration (mkdtemp repo) ------------------------
+
+function seedRepoWithRicherGtir() {
+  const repo = tmp();
+  // Pre-seed .mcp.json with a richer gtir entry (2 repos)
+  writeFileSync(join(repo, ".mcp.json"), JSON.stringify({
+    mcpServers: { gtir: RICHER_GTIR, other: { command: "x", args: ["y"] } },
+  }, null, 2) + "\n");
+  // No .claude/ or CLAUDE.md yet — install should create those regardless
+  return repo;
+}
+
+test("runInstall no-force: richer gtir in .mcp.json is preserved; hook+CLAUDE.md still written", () => {
+  const repo = seedRepoWithRicherGtir();
+  const mcpBefore = readFileSync(join(repo, ".mcp.json"), "utf8");
+
+  const msgs = [];
+  runInstall({ repo, log: (m) => msgs.push(m) });
+
+  // .mcp.json must be byte-identical (richer entry preserved)
+  const mcpAfter = readFileSync(join(repo, ".mcp.json"), "utf8");
+  assert.equal(mcpAfter, mcpBefore, ".mcp.json must be byte-identical (richer gtir preserved)");
+
+  // The richer entry's repos are still intact
+  const mcp = JSON.parse(mcpAfter);
+  assert.deepEqual(mcp.mcpServers.gtir.args, [BIN, "mcp", "--repo", "A", "--repo", "B"]);
+
+  // hook was written
+  assert.ok(existsSync(join(repo, ".claude", "settings.json")), "settings.json created");
+  const settings = JSON.parse(readFileSync(join(repo, ".claude", "settings.json"), "utf8"));
+  assert.ok(settings.hooks.PreToolUse.some((e) => e.hooks.some((h) => /hooknudge/.test(h.command))), "gtir hook written");
+
+  // CLAUDE.md was written
+  assert.ok(existsSync(join(repo, "CLAUDE.md")), "CLAUDE.md created");
+  const md = readFileSync(join(repo, "CLAUDE.md"), "utf8");
+  assert.match(md, new RegExp(GTIR_START));
+  assert.match(md, /mcp__gtir__search_code/);
+
+  // Log mentions the skip
+  assert.ok(msgs.some((m) => /left existing gtir/i.test(m) || /existing/i.test(m)), "log mentions preserved/skipped .mcp.json");
+});
+
+test("runInstall --force: richer gtir in .mcp.json is replaced with default entry", () => {
+  const repo = seedRepoWithRicherGtir();
+  const msgs = [];
+  runInstall({ repo, force: true, log: (m) => msgs.push(m) });
+
+  const mcp = JSON.parse(readFileSync(join(repo, ".mcp.json"), "utf8"));
+  // Default entry: single --repo . --watch
+  assert.deepEqual(mcp.mcpServers.gtir, gtirMcpEntry(BIN));
+  // Other server preserved
+  assert.deepEqual(mcp.mcpServers.other, { command: "x", args: ["y"] });
+});
+
+test("runInstall on fresh repo (no .mcp.json) writes the default gtir entry as before", () => {
+  const repo = tmp();
+  runInstall({ repo });
+  const mcp = JSON.parse(readFileSync(join(repo, ".mcp.json"), "utf8"));
+  assert.deepEqual(mcp.mcpServers.gtir, gtirMcpEntry(BIN));
+});
+
+test("runInstall idempotency with richer gtir: install twice => no change to .mcp.json", () => {
+  const repo = seedRepoWithRicherGtir();
+  runInstall({ repo });
+  const after1 = readFileSync(join(repo, ".mcp.json"), "utf8");
+  runInstall({ repo });
+  const after2 = readFileSync(join(repo, ".mcp.json"), "utf8");
+  assert.equal(after2, after1, ".mcp.json unchanged on second install");
+});

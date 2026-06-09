@@ -60,12 +60,23 @@ const asObject = (v) => (v && typeof v === "object" && !Array.isArray(v)) ? v : 
 
 // --- mcpServers merge --------------------------------------------------------
 
-// Add (or overwrite) `mcpServers[name]`, preserving every other server. Idempotent:
-// re-adding the same entry yields a deep-equal object.
-export function addMcpServer(json, name, entry) {
-  const out = { ...asObject(json) };
-  out.mcpServers = { ...asObject(out.mcpServers) };
-  out.mcpServers[name] = entry;
+// Add `mcpServers[name]`, preserving every other server. Idempotent.
+// When `force` is false (the default) AND `name` already exists in mcpServers, the
+// existing entry is left untouched — this prevents silently downgrading a richer config
+// (e.g. a multi-repo entry) to a plain default. Pass `force: true` to overwrite.
+// When the name is absent, `entry` is always written regardless of `force`.
+// Returns a new object on change; may return the input unchanged when preserving.
+export function addMcpServer(json, name, entry, { force = false } = {}) {
+  const normalized = asObject(json);
+  const servers = asObject(normalized.mcpServers);
+  // Preserve an existing entry when not forced: return the (possibly already-object-spread)
+  // input as-is so the caller can detect no-change without a deep-equal comparison.
+  if (!force && name in servers) {
+    // Still return a fresh outer object in case callers spread it, but keep mcpServers intact.
+    return { ...normalized, mcpServers: servers };
+  }
+  const out = { ...normalized };
+  out.mcpServers = { ...servers, [name]: entry };
   return out;
 }
 

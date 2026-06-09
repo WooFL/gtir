@@ -166,15 +166,25 @@ function printCallstats(r, { repo, lang } = {}) {
   process.stderr.write(out.join("\n") + "\n");
 }
 
-// `gtir install [--repo <path>] [--uninstall]`: wire a repo so Claude Code (main agent
-// AND subagents) prefers gtir's MCP tools over raw Grep/Glob. Writes three merge-preserving,
-// idempotent targets via the pure helpers in src/install.mjs:
+// `gtir install [--repo <path>] [--uninstall] [--force]`: wire a repo so Claude Code (main
+// agent AND subagents) prefers gtir's MCP tools over raw Grep/Glob. Writes three merge-
+// preserving, idempotent targets via the pure helpers in src/install.mjs:
 //   <repo>/.mcp.json              — add mcpServers.gtir (this bin, `mcp --repo . --watch`)
 //   <repo>/.claude/settings.json  — add a Grep|Glob PreToolUse hook → `gtir hooknudge`
 //   <repo>/CLAUDE.md              — upsert a marked section nudging the MCP tools
 // --uninstall calls the remove* counterparts. Tolerant of missing files (starts from {}/"")
 // and never deletes a file on uninstall (leaves {}/empty). Returns a summary of changes.
-export function runInstall({ repo = process.cwd(), uninstall = false, log = (m) => process.stderr.write(m + "\n") } = {}) {
+//
+// Preserve semantics (install only, not uninstall):
+//   If mcpServers.gtir already exists and !force → skip writing .mcp.json entirely (so a
+//   locked/EPERM file is never touched) and log that the existing entry was preserved.
+//   The hook (.claude/settings.json) and CLAUDE.md are always written regardless.
+//   --force overwrites the existing gtir entry with the default single-repo entry.
+//
+// Per-file error handling: each write is attempted independently. A failure (e.g. EPERM on
+// the MCP file held by a running server) is reported with the filename but does NOT abort the
+// remaining writes. If any write failed the function returns with writeErrors set.
+export function runInstall({ repo = process.cwd(), uninstall = false, force = false, log = (m) => process.stderr.write(m + "\n") } = {}) {
   const absBin = fileURLToPath(import.meta.url); // the real path to this bin/gtir.mjs
 
   const readJson = (file) => {
@@ -198,32 +208,59 @@ export function runInstall({ repo = process.cwd(), uninstall = false, log = (m) 
   const settingsExisted = existsSync(settingsFile);
   const claudeMdExisted = existsSync(claudeMdFile);
 
+  const writeErrors = [];
+
   // .mcp.json
   if (!uninstall || mcpExisted) {
     const mcp0 = readJson(mcpFile);
-    const mcp1 = uninstall
-      ? removeMcpServer(mcp0, "gtir")
-      : addMcpServer(mcp0, "gtir", gtirMcpEntry(absBin));
-    writeJson(mcpFile, mcp1);
+
+    if (uninstall) {
+      // Uninstall: always attempt to remove the gtir key and write.
+      try { writeJson(mcpFile, removeMcpServer(mcp0, "gtir")); }
+      catch (e) { writeErrors.push(mcpFile); log(`gtir install: WARNING — could not write ${mcpFile}: ${e.message}`); }
+    } else {
+      // Install: check whether gtir already exists and we should preserve it.
+      const existingGtir = mcp0?.mcpServers?.gtir;
+      const hasExistingEntry = existingGtir && typeof existingGtir === "object" && !Array.isArray(existingGtir);
+      if (hasExistingEntry && !force) {
+        // Skip the write entirely — the existing entry may be richer (multiple --repo flags,
+        // type:stdio, etc.) and touching a locked file would abort the whole install.
+        log(`.mcp.json — left existing gtir entry (use --force to overwrite)`);
+      } else {
+        const mcp1 = addMcpServer(mcp0, "gtir", gtirMcpEntry(absBin), { force });
+        try { writeJson(mcpFile, mcp1); }
+        catch (e) { writeErrors.push(mcpFile); log(`gtir install: WARNING — could not write ${mcpFile}: ${e.message}`); }
+      }
+    }
   }
 
   // .claude/settings.json
   if (!uninstall || settingsExisted) {
-    mkdirSync(claudeDir, { recursive: true }); // only create .claude/ when we're actually writing settings
-    const settings0 = readJson(settingsFile);
-    const settings1 = uninstall
-      ? removePreToolUseHook(settings0, HOOK_MATCH_KEY)
-      : addPreToolUseHook(settings0, gtirHookEntry(absBin), HOOK_MATCH_KEY);
-    writeJson(settingsFile, settings1);
+    try {
+      mkdirSync(claudeDir, { recursive: true }); // only create .claude/ when we're actually writing settings
+      const settings0 = readJson(settingsFile);
+      const settings1 = uninstall
+        ? removePreToolUseHook(settings0, HOOK_MATCH_KEY)
+        : addPreToolUseHook(settings0, gtirHookEntry(absBin), HOOK_MATCH_KEY);
+      writeJson(settingsFile, settings1);
+    } catch (e) {
+      writeErrors.push(settingsFile);
+      log(`gtir install: WARNING — could not write ${settingsFile}: ${e.message}`);
+    }
   }
 
   // CLAUDE.md
   if (!uninstall || claudeMdExisted) {
-    const md0 = readText(claudeMdFile);
-    const md1 = uninstall
-      ? removeMarkedSection(md0, GTIR_START, GTIR_END)
-      : upsertMarkedSection(md0, GTIR_START, GTIR_END, gtirClaudeMdBody());
-    writeFileSync(claudeMdFile, md1);
+    try {
+      const md0 = readText(claudeMdFile);
+      const md1 = uninstall
+        ? removeMarkedSection(md0, GTIR_START, GTIR_END)
+        : upsertMarkedSection(md0, GTIR_START, GTIR_END, gtirClaudeMdBody());
+      writeFileSync(claudeMdFile, md1);
+    } catch (e) {
+      writeErrors.push(claudeMdFile);
+      log(`gtir install: WARNING — could not write ${claudeMdFile}: ${e.message}`);
+    }
   }
 
   const verb = uninstall ? "removed" : "wired";
@@ -231,7 +268,7 @@ export function runInstall({ repo = process.cwd(), uninstall = false, log = (m) 
   log(`  .mcp.json              ${uninstall ? "- gtir server removed" : "+ gtir MCP server"}`);
   log(`  .claude/settings.json  ${uninstall ? "- Grep|Glob hook removed" : "+ Grep|Glob → hooknudge"}`);
   log(`  CLAUDE.md              ${uninstall ? "- gtir section removed" : "+ gtir nav nudge"}`);
-  return { repo, uninstall, files: { mcp: mcpFile, settings: settingsFile, claudeMd: claudeMdFile } };
+  return { repo, uninstall, writeErrors, files: { mcp: mcpFile, settings: settingsFile, claudeMd: claudeMdFile } };
 }
 
 // --- argv parsing ---
@@ -264,6 +301,7 @@ function parseArgs(argv) {
     else if (a === "--lang") args.lang = argv[++i];
     else if (a === "--remove") args.remove = true;
     else if (a === "--uninstall") args.uninstall = true;
+    else if (a === "--force") args.force = true;
     else if (a === "--notes") args.notes = true;
     else if (a === "--code") args.code = true;
     else if (a === "--no-cache") args.noCache = true;
@@ -855,7 +893,8 @@ async function main() {
         break;
       }
       case "install": {
-        runInstall({ repo, uninstall: !!args.uninstall });
+        const result = runInstall({ repo, uninstall: !!args.uninstall, force: !!args.force });
+        if (result.writeErrors?.length) process.exitCode = 1;
         break;
       }
       case "hooknudge": {
@@ -1005,7 +1044,7 @@ async function main() {
           "  gtir doctor  [--repo <project>] [--no-pull]   # check Ollama, pull the model, verify readiness",
           "  gtir setup   --repo <project>",
           "  gtir hook    --repo <project> [--remove]",
-          "  gtir install --repo <project> [--uninstall]   # wire Claude Code (.mcp.json + PreToolUse hook + CLAUDE.md) to prefer gtir's MCP tools",
+          "  gtir install --repo <project> [--uninstall] [--force]   # wire Claude Code (.mcp.json + PreToolUse hook + CLAUDE.md); preserves existing gtir MCP entry unless --force",
           "  gtir hooknudge   # PreToolUse hook: reads stdin, nudges agents toward gtir's MCP tools on Grep/Glob (internal)",
           "  gtir fetch-grammars   # download prebuilt shader grammars (HLSL/GLSL, ~5MB, no toolchain)",
           "  gtir mcp     --repo <project> [--label name:<repo>] [--watch [--debounce 1500]] [--print-config]",
