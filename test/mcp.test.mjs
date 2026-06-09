@@ -640,3 +640,32 @@ test("tools/call dispatches path_ end-to-end: unknown symbol -> { error }, not t
     assert.ok(payload.error, `expected error field, got ${JSON.stringify(payload)}`);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("tools/call path_<label>: no-edge-index path surfaces error, does not throw", async () => {
+  // Stub pathFn to return the no-edge-index error (mirrors what pathQuery returns when hasEdges=false).
+  const pathFn = async (label, opts) => ({ from: opts.from, to: opts.to, path: null, steps: null, error: "no edge index — run: gtir index" });
+  const ctx = { ...baseCtx, pathFn };
+  const r = await handleRequest({ jsonrpc: "2.0", id: 200, method: "tools/call", params: { name: "path_code", arguments: { from: "f", to: "g" } } }, ctx);
+  assert.equal(r.result.isError, undefined, "should not be an MCP-level error");
+  const payload = JSON.parse(r.result.content[0].text);
+  assert.ok(payload.error, "expected an error field");
+  assert.match(payload.error, /no edge index/i);
+  assert.equal(r.result.structuredContent.error, payload.error, "structuredContent should surface the error too");
+});
+
+test("tools/call path_<label>: connected pair result includes steps[] of {symbol,path} objects", async () => {
+  // pathFn returns the new { path, steps } shape for a connected pair.
+  const pathFn = async (label, opts) => ({
+    from: opts.from, to: opts.to,
+    path: [`a.mjs#${opts.from}`, `b.mjs#${opts.to}`],
+    steps: [{ symbol: opts.from, path: "a.mjs" }, { symbol: opts.to, path: "b.mjs" }],
+  });
+  const ctx = { ...baseCtx, pathFn };
+  const r = await handleRequest({ jsonrpc: "2.0", id: 201, method: "tools/call", params: { name: "path_code", arguments: { from: "f", to: "g" } } }, ctx);
+  const payload = JSON.parse(r.result.content[0].text);
+  assert.ok(Array.isArray(payload.steps), "steps should be an array");
+  assert.equal(payload.steps.length, 2);
+  assert.deepEqual(payload.steps[0], { symbol: "f", path: "a.mjs" });
+  assert.deepEqual(payload.steps[1], { symbol: "g", path: "b.mjs" });
+  assert.deepEqual(r.result.structuredContent.steps, payload.steps);
+});

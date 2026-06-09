@@ -73,24 +73,28 @@ export async function impactQuery(cfg, { symbol, path = null, downstream = false
 // Returns { from, to, path: string[]|null } or { from, to, path: null, error: string } when a
 // symbol is not found. from/to are raw symbol names; fromPath/toPath substring-filter candidates.
 export async function pathQuery(cfg, { from, to, fromPath = null, toPath = null, depth, includeAmbiguous = false } = {}) {
-  if (!from) return { from, to, path: null, error: "from symbol is required" };
-  if (!to) return { from, to, path: null, error: "to symbol is required" };
+  if (!from) return { from, to, path: null, steps: null, error: "from symbol is required" };
+  if (!to) return { from, to, path: null, steps: null, error: "to symbol is required" };
   const store = await openStore(cfg);
   const mode = isNotesMode(cfg) ? "notes" : "code";
   const { graph, hasEdges } = await loadGraph(store, includeAmbiguous);
-  if (!hasEdges) return { from, to, path: null, error: "no edge index — run: gtir index" };
+  if (!hasEdges) return { from, to, path: null, steps: null, error: "no edge index — run: gtir index" };
   const inv = await buildSymbolInventory(store, mode);
   let fromSites = inv.byName.get(from) || [];
   if (fromPath) fromSites = fromSites.filter((s) => s.path.includes(fromPath));
-  if (fromSites.length === 0) return { from, to, path: null, error: `symbol '${from}' not found` };
+  if (fromSites.length === 0) return { from, to, path: null, steps: null, error: `symbol '${from}' not found` };
   let toSites = inv.byName.get(to) || [];
   if (toPath) toSites = toSites.filter((s) => s.path.includes(toPath));
-  if (toSites.length === 0) return { from, to, path: null, error: `symbol '${to}' not found` };
+  if (toSites.length === 0) return { from, to, path: null, steps: null, error: `symbol '${to}' not found` };
   const fromKeys = fromSites.map((s) => nodeKey(s.path, s.name || null));
   const toKeys = new Set(toSites.map((s) => nodeKey(s.path, s.name || null)));
   const maxDepth = Number.isFinite(depth) ? depth : Infinity;
   const foundPath = pathBetween(graph, fromKeys, toKeys, { maxDepth });
-  return { from, to, path: foundPath };
+  const steps = foundPath ? foundPath.map((key) => {
+    const h = key.indexOf("#");
+    return h >= 0 ? { symbol: key.slice(h + 1), path: key.slice(0, h) } : { symbol: null, path: key };
+  }) : null;
+  return { from, to, path: foundPath, steps };
 }
 
 // Likely-dead symbols (no inbound edges), entrypoints filtered out heuristically.
