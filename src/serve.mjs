@@ -81,7 +81,15 @@ export function startServer(cfg, { host = "127.0.0.1", port = 7411, token = null
     server.on("error", reject);
     server.listen(port, host, () => {
       process.stderr.write(`gtir serve: http://${host}:${server.address().port} (repo ${cfg.repo})\n`);
-      if (watch) startWatch(cfg);   // start the file watcher (refreshes the index on vault edits)
+      if (watch) {
+        const w = startWatch(cfg);
+        const shutdown = () => {
+          try { if (w && typeof w.close === "function") w.close(); } catch { /* ignore */ }
+          server.close(() => process.exit(0));
+        };
+        process.once("SIGINT", shutdown);
+        process.once("SIGTERM", shutdown);
+      }
       resolve(server);
     });
   });
@@ -90,6 +98,6 @@ export function startServer(cfg, { host = "127.0.0.1", port = 7411, token = null
 // Wire the real watcher from watch.mjs. watchRepo is synchronous (returns immediately; chokidar
 // fires events later), so no await is needed. A watcher failure must never crash the server.
 function startWatch(cfg) {
-  try { startWatcher(cfg, {}); }
-  catch (e) { process.stderr.write(`gtir serve: watch failed to start: ${e.message}\n`); }
+  try { return startWatcher(cfg, {}); }
+  catch (e) { process.stderr.write(`gtir serve: watch failed to start: ${e.message}\n`); return null; }
 }

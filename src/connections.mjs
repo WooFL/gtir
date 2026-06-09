@@ -154,7 +154,7 @@ export async function computeConnections(cfg, { path, k } = {}) {
     const rows = await tbl.search(Array.from(c.embedding)).distanceType("cosine").limit(fanout + 4).toArray();
     for (const r of rows) {
       if (r.path === path) continue;
-      const sim = 1 - Number(r._distance);
+      const sim = 1 - Number(r._distance ?? 0);
       const prev = sem.get(r.path);
       if (!prev || sim > prev.sim) sem.set(r.path, { sim, lineStart: Number(r.line_start), lineEnd: Number(r.line_end), text: r.text });
     }
