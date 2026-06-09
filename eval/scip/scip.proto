@@ -1,0 +1,21 @@
+// Minimal vendored subset of github.com/sourcegraph/scip scip.proto.
+// Field numbers MATCH upstream, so protobufjs decodes real scip-typescript
+// output — fields we omit (metadata, symbols, text, syntax_kind, ...) are
+// simply skipped by the decoder. Keep field numbers in sync with upstream.
+syntax = "proto3";
+package scip;
+
+message Index {
+  repeated Document documents = 2;
+}
+
+message Document {
+  string relative_path = 1;
+  repeated Occurrence occurrences = 2;
+}
+
+message Occurrence {
+  repeated int32 range = 1;
+  string symbol = 2;
+  int32 symbol_roles = 3;
+}
