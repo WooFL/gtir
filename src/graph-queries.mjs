@@ -3,7 +3,7 @@ import { basename } from "node:path";
 import { declaredSymbols, declaredCallables } from "./symbols.mjs";
 import { openStore } from "./store.mjs";
 import { isNotesMode } from "./search.mjs";
-import { buildGraph, impact, cycles, orphans, nodeKey, degreeMap } from "./edge-graph.mjs";
+import { buildGraph, impact, cycles, orphans, nodeKey, degreeMap, pathBetween } from "./edge-graph.mjs";
 
 const noteName = (p) => basename(String(p)).replace(/\.(md|mdx)$/i, "");
 
@@ -67,6 +67,34 @@ export async function impactQuery(cfg, { symbol, path = null, downstream = false
     limit: Number.isFinite(limit) ? limit : 500,
   });
   return { symbol, path: sites[0].path, direction, count: nodes.length, truncated, nodes };
+}
+
+// Shortest call-path from one symbol to another. Mirrors impactQuery: same loader, same resolution.
+// Returns { from, to, path: string[]|null } or { from, to, path: null, error: string } when a
+// symbol is not found. from/to are raw symbol names; fromPath/toPath substring-filter candidates.
+export async function pathQuery(cfg, { from, to, fromPath = null, toPath = null, depth, includeAmbiguous = false } = {}) {
+  if (!from) return { from, to, path: null, steps: null, error: "from symbol is required" };
+  if (!to) return { from, to, path: null, steps: null, error: "to symbol is required" };
+  const store = await openStore(cfg);
+  const mode = isNotesMode(cfg) ? "notes" : "code";
+  const { graph, hasEdges } = await loadGraph(store, includeAmbiguous);
+  if (!hasEdges) return { from, to, path: null, steps: null, error: "no edge index — run: gtir index" };
+  const inv = await buildSymbolInventory(store, mode);
+  let fromSites = inv.byName.get(from) || [];
+  if (fromPath) fromSites = fromSites.filter((s) => s.path.includes(fromPath));
+  if (fromSites.length === 0) return { from, to, path: null, steps: null, error: `symbol '${from}' not found` };
+  let toSites = inv.byName.get(to) || [];
+  if (toPath) toSites = toSites.filter((s) => s.path.includes(toPath));
+  if (toSites.length === 0) return { from, to, path: null, steps: null, error: `symbol '${to}' not found` };
+  const fromKeys = fromSites.map((s) => nodeKey(s.path, s.name || null));
+  const toKeys = new Set(toSites.map((s) => nodeKey(s.path, s.name || null)));
+  const maxDepth = Number.isFinite(depth) ? depth : Infinity;
+  const foundPath = pathBetween(graph, fromKeys, toKeys, { maxDepth });
+  const steps = foundPath ? foundPath.map((key) => {
+    const h = key.indexOf("#");
+    return h >= 0 ? { symbol: key.slice(h + 1), path: key.slice(0, h) } : { symbol: null, path: key };
+  }) : null;
+  return { from, to, path: foundPath, steps };
 }
 
 // Likely-dead symbols (no inbound edges), entrypoints filtered out heuristically.

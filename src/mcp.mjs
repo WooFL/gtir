@@ -8,7 +8,7 @@ import { preflight } from "./doctor.mjs";
 import { parseLines } from "./eval.mjs";
 import { watchRepo } from "./watch.mjs";
 import { buildAdjacency, callersOf, calleesOf, neighborsOf } from "./edges.mjs";
-import { impactQuery, orphansQuery, cyclesQuery, graphForSearch, clearGraphCache } from "./graph-queries.mjs";
+import { impactQuery, orphansQuery, cyclesQuery, pathQuery, graphForSearch, clearGraphCache } from "./graph-queries.mjs";
 import { contextFor } from "./graph-retrieval.mjs";
 
 export function sanitizeLabel(s) {
@@ -177,6 +177,20 @@ export function buildTools(indexes) {
         include_ambiguous: { type: "boolean", description: "include ambiguous edges in cycle detection" },
       } },
     });
+    tools.push({
+      name: `path_${ix.label}`,
+      description: noteMode
+        ? `Shortest link-path from one note to another in ${at}.`
+        : `Shortest call-path from one symbol to another in ${at}.`,
+      inputSchema: { type: "object", properties: {
+        from: { type: "string", description: "source symbol (or note) name" },
+        to: { type: "string", description: "destination symbol (or note) name" },
+        from_path: { type: "string", description: "file path substring to disambiguate the 'from' symbol" },
+        to_path: { type: "string", description: "file path substring to disambiguate the 'to' symbol" },
+        depth: { type: "integer", description: "max hops (default unlimited)" },
+        include_ambiguous: { type: "boolean", description: "also traverse ambiguous (name-coincidence) edges" },
+      }, required: ["from", "to"] },
+    });
   }
   tools.push({
     name: "gtir_status",
@@ -254,7 +268,7 @@ function formatFind(results, symbol, kind) {
   }).join("\n\n");
 }
 
-const TOOL_VERBS = ["search", "read", "outline", "similar", "find", "callers", "callees", "neighbors", "backlinks", "links", "impact", "orphans", "cycles"];
+const TOOL_VERBS = ["search", "read", "outline", "similar", "find", "callers", "callees", "neighbors", "backlinks", "links", "impact", "orphans", "cycles", "path"];
 
 // "search_my_wiki" -> { verb: "search", label: "my_wiki" } (labels may contain underscores).
 export function parseToolName(name) {
@@ -267,7 +281,7 @@ export function parseToolName(name) {
 const stripSnippet = (results) => results.map(({ snippet, ...rest }) => rest);
 
 async function dispatchToolCall(params, ctx) {
-  const { indexes, searchFn, statusFn, readFn, outlineFn, similarFn, findFn, callersFn, calleesFn, neighborsFn, impactFn, orphansFn, cyclesFn } = ctx;
+  const { indexes, searchFn, statusFn, readFn, outlineFn, similarFn, findFn, callersFn, calleesFn, neighborsFn, impactFn, orphansFn, cyclesFn, pathFn } = ctx;
   const name = params.name;
   const args = params.arguments ?? {};
   const reply = (text, structured) => ({ content: [{ type: "text", text }], structuredContent: structured });
@@ -327,6 +341,10 @@ async function dispatchToolCall(params, ctx) {
       }
       if (verb === "cycles") {
         const out = await cyclesFn(label, { includeAmbiguous: !!args.include_ambiguous });
+        return reply(JSON.stringify(out, null, 2), out);
+      }
+      if (verb === "path") {
+        const out = await pathFn(label, { from: args.from, to: args.to, fromPath: args.from_path, toPath: args.to_path, depth: args.depth, includeAmbiguous: !!args.include_ambiguous });
         return reply(JSON.stringify(out, null, 2), out);
       }
     }
@@ -532,6 +550,13 @@ export function defaultCyclesFn(indexes) {
     return cyclesQuery(ix.cfg, opts);
   };
 }
+export function defaultPathFn(indexes) {
+  return async (label, opts) => {
+    const ix = indexes.find((i) => i.label === label);
+    if (!ix) throw new Error(`unknown index: ${label}`);
+    return pathQuery(ix.cfg, opts);
+  };
+}
 
 // Gate each served index on a readiness probe before serving. A broken/unready index is dropped
 // with a logged note (stderr) — the healthy ones still serve, matching defaultStatusFn's per-index
@@ -558,6 +583,7 @@ export function serveStdio(indexes, { version } = {}) {
     callersFn: defaultCallersFn(indexes), calleesFn: defaultCalleesFn(indexes),
     neighborsFn: defaultNeighborsFn(indexes),
     impactFn: defaultImpactFn(indexes), orphansFn: defaultOrphansFn(indexes), cyclesFn: defaultCyclesFn(indexes),
+    pathFn: defaultPathFn(indexes),
   };
   let buf = "";
   process.stdin.setEncoding("utf8");
@@ -574,7 +600,7 @@ export function serveStdio(indexes, { version } = {}) {
       if (res) process.stdout.write(JSON.stringify(res) + "\n");
     }
   });
-  process.stderr.write(`gtir mcp: serving [${indexes.map((i) => i.label).join(", ")}] × {search,read,outline,similar,find,callers,callees,neighbors,impact,orphans,cycles} + gtir_status\n`);
+  process.stderr.write(`gtir mcp: serving [${indexes.map((i) => i.label).join(", ")}] × {search,read,outline,similar,find,callers,callees,neighbors,impact,orphans,cycles,path} + gtir_status\n`);
 }
 
 // Start a live file-watcher per served index (`gtir mcp --watch`). Each watcher runs an
