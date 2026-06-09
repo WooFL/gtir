@@ -358,6 +358,9 @@ function parseArgs(argv) {
     else if (a === "--rerank") args.rerank = true;
     else if (a === "--golden") args.golden = argv[++i];
     else if (a === "--scip") args.scip = argv[++i];
+    else if (a === "--port") { const v = Number(argv[++i]); if (Number.isFinite(v)) args.port = v; }
+    else if (a === "--host") args.host = argv[++i];
+    else if (a === "--token") args.token = argv[++i];
     else if (a === "--sample") { const v = Number(argv[++i]); if (Number.isFinite(v)) args.sample = v; }
     else if (a === "--baseline") args.baseline = argv[++i];
     else if (a === "--out") args.out = argv[++i];
@@ -1077,6 +1080,18 @@ async function main() {
         }
         break;
       }
+      case "serve": {
+        const cfg = loadConfig(args.repo || ".");
+        const { startServer } = await import("../src/serve.mjs");
+        await startServer(cfg, {
+          host: args.host || "127.0.0.1",
+          port: args.port || 7411,
+          token: args.token || null,
+          watch: !!args.watch,
+        });
+        // keep the process alive; the http server holds the event loop open.
+        break;
+      }
       default:
         process.stderr.write([
           "usage: gtir <command> [options]",
@@ -1093,6 +1108,7 @@ async function main() {
           "  gtir install --repo <project> [--uninstall] [--force]   # wire Claude Code (.mcp.json + PreToolUse hook + CLAUDE.md); preserves existing gtir MCP entry unless --force",
           "  gtir hooknudge   # PreToolUse hook: reads stdin, nudges agents toward gtir's MCP tools on Grep/Glob (internal)",
           "  gtir fetch-grammars   # download prebuilt shader grammars (HLSL/GLSL, ~5MB, no toolchain)",
+          "  gtir serve   --repo <project> [--port 7411] [--host 127.0.0.1] [--token <t>] [--watch]   # local HTTP API for the Obsidian plugin",
           "  gtir mcp     --repo <project> [--label name:<repo>] [--watch [--debounce 1500]] [--print-config]",
           "  gtir eval    --repo <project> [--golden <f>] [-k 10] [--save] [--no-build] [--json]",
           "  gtir eval    --repo <project> --tune [\"ftsWeight=0,0.2;ftsWeightMixed=0,0.3\"]   # sweep fusion weights on the golden set",
