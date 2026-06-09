@@ -1,6 +1,21 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { extractTsClassNames, resolveTsMethods, extractTsImplements, resolveTsDispatch } from "../src/ts-types.mjs";
+import { getParser } from "../src/parser.mjs";
+import { extractTsClassNames, resolveTsMethods, extractTsImplements, resolveTsDispatch, inferTsObjectLiteralTarget } from "../src/ts-types.mjs";
+
+// Parse `src`, return the FIRST call_expression node in source order.
+async function firstCall(src) {
+  const parser = await getParser("typescript");
+  const tree = parser.parse(src);
+  let found = null;
+  const walk = (n) => {
+    if (found) return;
+    if (n.type === "call_expression") { found = n; return; }
+    for (let i = 0; i < n.namedChildCount; i++) walk(n.namedChild(i));
+  };
+  walk(tree.rootNode);
+  return found;
+}
 
 test("extractTsClassNames: class / export class / multiple", () => {
   assert.deepEqual(extractTsClassNames(`class Foo {}`), ["Foo"]);
@@ -179,4 +194,16 @@ test("resolveTsDispatch: no receiverType → row unchanged", () => {
   const row = dispatchRow({ receiverType: null });
   const [r] = resolveTsDispatch([row], tsImplementers, tsClassFiles, tsCallableFiles);
   assert.equal(r.conf, "ambiguous");
+});
+
+// ── inferTsObjectLiteralTarget ────────────────────────────────────────────────
+
+test("inferTsObjectLiteralTarget resolves a shorthand method on an object-literal local", async () => {
+  const src = `function go() {
+  const chop = { scalar() { return 1; } };
+  chop.scalar();
+}`;
+  const call = await firstCall(src);
+  const t = inferTsObjectLiteralTarget(call, "chop", "scalar");
+  assert.deepEqual(t, { line_start: 2, line_end: 2 });
 });
