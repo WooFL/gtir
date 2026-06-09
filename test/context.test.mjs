@@ -104,3 +104,41 @@ test("buildContext errors when neither query nor targets given", async () => {
   try { assert.equal((await buildContext(cfg, {})).error, "query or targets required"); }
   finally { rmSync(repo, { recursive: true, force: true }); }
 });
+
+test("buildContext targets mode: symbol -> span + neighbors; unknown -> error item", async () => {
+  const repo = codeRepo();
+  const cfg = { ...loadConfig(repo), ollamaUrl: "http://localhost:11434" };
+  try {
+    await buildIndex(cfg, { rebuild: true });
+    await indexEdges(cfg, { rebuild: true, collect: false });
+
+    const out = await buildContext(cfg, { targets: ["helper", "does_not_exist"] });
+    // one resolved (helper) + one error item -> medium
+    assert.equal(out.retrieval_quality, "medium");
+    const helper = out.items.find((i) => i.path && /lib\.ts$/.test(i.path));
+    assert.ok(helper, "helper resolved to lib.ts");
+    assert.equal(typeof helper.source, "string");
+    assert.ok(Array.isArray(helper.callers));
+    const missing = out.items.find((i) => i.error);
+    assert.deepEqual([missing.target, missing.error], ["does_not_exist", "not found"]);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("buildContext targets mode: a path:lines span resolves to that span", async () => {
+  const repo = codeRepo();
+  const cfg = { ...loadConfig(repo), ollamaUrl: "http://localhost:11434" };
+  try {
+    await buildIndex(cfg, { rebuild: true });
+    await indexEdges(cfg, { rebuild: true, collect: false });
+    const out = await buildContext(cfg, { targets: ["main.ts:2-5"] });
+    assert.equal(out.retrieval_quality, "high");
+    const it = out.items[0];
+    assert.equal(it.path, "main.ts");
+    assert.match(it.source, /run/);
+    assert.ok(Array.isArray(it.callees));
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
