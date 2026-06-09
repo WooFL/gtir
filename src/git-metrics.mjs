@@ -50,3 +50,24 @@ export function coChange(commits, edgePairs, { minSupport = 3, maxCommitFiles = 
   pairs.sort((x, y) => rank(x) - rank(y) || y.confidence - x.confidence || y.count - x.count);
   return { pairs, commitsScanned, skippedLargeCommits };
 }
+
+// Churn x complexity hotspots: score = revisions * LOC. `locMap` is Map<file, loc> for files that still
+// exist on disk; a file with no entry (deleted/binary) is skipped. Returns top-N by score desc. Pure.
+export function hotspots(commits, locMap, { top = 20, maxCommitFiles = 25 } = {}) {
+  const rev = new Map();
+  let commitsScanned = 0;
+  for (const c of commits) {
+    const files = [...new Set(c.files)];
+    if (files.length > maxCommitFiles) continue;
+    commitsScanned++;
+    for (const f of files) rev.set(f, (rev.get(f) ?? 0) + 1);
+  }
+  const files = [];
+  for (const [file, revisions] of rev) {
+    const loc = locMap.get(file);
+    if (loc == null) continue;
+    files.push({ file, revisions, loc, score: revisions * loc });
+  }
+  files.sort((x, y) => y.score - x.score || y.revisions - x.revisions);
+  return { files: files.slice(0, top), commitsScanned };
+}

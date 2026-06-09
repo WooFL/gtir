@@ -57,6 +57,39 @@ test("coChange skips mega-commits over maxCommitFiles", () => {
   assert.equal(r.pairs.length, 0);
 });
 
+import { hotspots } from "../src/git-metrics.mjs";
+
+test("hotspots scores revisions x loc and ranks desc", () => {
+  const commits = [
+    { hash: "1", files: ["a.ts", "b.ts"] },
+    { hash: "2", files: ["a.ts"] },
+    { hash: "3", files: ["a.ts", "b.ts"] },
+  ];
+  const locMap = new Map([["a.ts", 100], ["b.ts", 400]]);
+  const r = hotspots(commits, locMap, { top: 10 });
+  assert.equal(r.files[0].file, "b.ts");
+  assert.equal(r.files[0].revisions, 2);
+  assert.equal(r.files[0].loc, 400);
+  assert.equal(r.files[0].score, 800);
+  assert.equal(r.files[1].file, "a.ts");
+  assert.equal(r.files[1].score, 300);
+});
+
+test("hotspots skips files with no LOC entry (deleted/binary) and applies top", () => {
+  const commits = [{ hash: "1", files: ["a.ts", "gone.ts"] }, { hash: "2", files: ["a.ts"] }];
+  const locMap = new Map([["a.ts", 50]]);
+  const r = hotspots(commits, locMap, { top: 1 });
+  assert.equal(r.files.length, 1);
+  assert.equal(r.files[0].file, "a.ts");
+  assert.ok(!r.files.some((f) => f.file === "gone.ts"));
+});
+
+test("hotspots skips mega-commits", () => {
+  const big = { hash: "b", files: ["a.ts", "b.ts", "c.ts", "d.ts"] };
+  const r = hotspots([big], new Map([["a.ts", 10]]), { top: 5, maxCommitFiles: 3 });
+  assert.equal(r.files.length, 0);
+});
+
 test("coChange annotates callEdge from the supplied edgePairs set and sorts hidden coupling first", () => {
   const cc = [
     { hash: "1", files: ["a.ts", "b.ts"] }, { hash: "2", files: ["a.ts", "b.ts"] },
