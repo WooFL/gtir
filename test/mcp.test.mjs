@@ -51,9 +51,9 @@ test("buildTools emits search/read/outline/similar/find/callers/callees/neighbor
   const tools = buildTools([{ label: "code", repo: "/r/code", cfg: {} }, { label: "notes", repo: "/r/wiki", cfg: {} }]);
   assert.deepEqual(tools.map((t) => t.name), [
     "search_code", "read_code", "outline_code", "similar_code", "find_code",
-    "callers_code", "callees_code", "neighbors_code", "impact_code", "orphans_code", "cycles_code",
+    "callers_code", "callees_code", "neighbors_code", "impact_code", "orphans_code", "cycles_code", "path_code",
     "search_notes", "read_notes", "outline_notes", "similar_notes", "find_notes",
-    "backlinks_notes", "links_notes", "neighbors_notes", "impact_notes", "orphans_notes", "cycles_notes",
+    "backlinks_notes", "links_notes", "neighbors_notes", "impact_notes", "orphans_notes", "cycles_notes", "path_notes",
     "gtir_status",
   ]);
   assert.deepEqual(tools[0].inputSchema.required, ["query"]);   // search
@@ -94,7 +94,7 @@ test("handleRequest: tools/list returns the tool set", async () => {
   const r = await handleRequest({ jsonrpc: "2.0", id: 2, method: "tools/list" }, baseCtx);
   assert.deepEqual(r.result.tools.map((t) => t.name),
     ["search_code", "read_code", "outline_code", "similar_code", "find_code",
-     "callers_code", "callees_code", "neighbors_code", "impact_code", "orphans_code", "cycles_code", "gtir_status"]);
+     "callers_code", "callees_code", "neighbors_code", "impact_code", "orphans_code", "cycles_code", "path_code", "gtir_status"]);
 });
 
 test("handleRequest: unknown method => JSON-RPC -32601", async () => {
@@ -407,7 +407,7 @@ test("callees tool returns what a function calls (end-to-end)", async () => {
 });
 
 import { openStore } from "../src/store.mjs";
-import { defaultImpactFn, defaultOrphansFn, defaultCyclesFn } from "../src/mcp.mjs";
+import { defaultImpactFn, defaultOrphansFn, defaultCyclesFn, defaultPathFn } from "../src/mcp.mjs";
 
 test("buildTools registers impact_/orphans_/cycles_ per index", () => {
   const tools = buildTools([{ label: "code", repo: "/r", cfg: { model: "qwen3" } }]);
@@ -531,4 +531,112 @@ test("orphans_ tool no longer advertises include_ambiguous (always-on now)", () 
   const orphans = tools.find((t) => t.name === "orphans_code");
   assert.ok(orphans);
   assert.equal(orphans.inputSchema.properties.include_ambiguous, undefined);
+});
+
+// ---------------------------------------------------------------------------
+// path_ tool tests (TDD — written before implementation)
+// ---------------------------------------------------------------------------
+
+test("parseToolName('path_code') -> { verb: 'path', label: 'code' }", () => {
+  assert.deepEqual(parseToolName("path_code"), { verb: "path", label: "code" });
+  assert.deepEqual(parseToolName("path_my_wiki"), { verb: "path", label: "my_wiki" });
+});
+
+test("buildTools registers path_ per index with from+to required", () => {
+  const tools = buildTools([{ label: "code", repo: "/r", cfg: { model: "qwen3" } }]);
+  const names = tools.map((t) => t.name);
+  assert.ok(names.includes("path_code"), `expected path_code in ${names}`);
+  const pathTool = tools.find((t) => t.name === "path_code");
+  assert.deepEqual(pathTool.inputSchema.required, ["from", "to"]);
+  assert.ok(pathTool.inputSchema.properties.from);
+  assert.ok(pathTool.inputSchema.properties.to);
+  assert.ok(pathTool.inputSchema.properties.from_path);
+  assert.ok(pathTool.inputSchema.properties.to_path);
+  assert.ok(pathTool.inputSchema.properties.depth);
+  assert.ok(pathTool.inputSchema.properties.include_ambiguous);
+});
+
+test("tools/list includes path_<label> with from+to required", async () => {
+  const r = await handleRequest({ jsonrpc: "2.0", id: 99, method: "tools/list" }, baseCtx);
+  const pathTool = r.result.tools.find((t) => t.name === "path_code");
+  assert.ok(pathTool, "path_code should appear in tools/list");
+  assert.deepEqual(pathTool.inputSchema.required, ["from", "to"]);
+});
+
+test("tools/call path_<label>: connected pair returns path in structuredContent", async () => {
+  const pathFn = async (label, opts) => ({ from: opts.from, to: opts.to, path: [`a.mjs#${opts.from}`, `b.mjs#${opts.to}`] });
+  const ctx = { ...baseCtx, pathFn };
+  const r = await handleRequest({ jsonrpc: "2.0", id: 100, method: "tools/call", params: { name: "path_code", arguments: { from: "f", to: "g" } } }, ctx);
+  const payload = JSON.parse(r.result.content[0].text);
+  assert.ok(Array.isArray(payload.path), "path should be an array");
+  assert.equal(payload.path.length, 2);
+  assert.deepEqual(r.result.structuredContent.path, payload.path);
+});
+
+test("tools/call path_<label>: disconnected pair returns path: null", async () => {
+  const pathFn = async (label, opts) => ({ from: opts.from, to: opts.to, path: null });
+  const ctx = { ...baseCtx, pathFn };
+  const r = await handleRequest({ jsonrpc: "2.0", id: 101, method: "tools/call", params: { name: "path_code", arguments: { from: "x", to: "y" } } }, ctx);
+  const payload = JSON.parse(r.result.content[0].text);
+  assert.equal(payload.path, null);
+  assert.equal(r.result.structuredContent.path, null);
+});
+
+test("tools/call path_<label>: unknown symbol returns { error } as text, not a throw", async () => {
+  const pathFn = async (label, opts) => ({ from: opts.from, to: opts.to, path: null, error: `symbol '${opts.from}' not found` });
+  const ctx = { ...baseCtx, pathFn };
+  const r = await handleRequest({ jsonrpc: "2.0", id: 102, method: "tools/call", params: { name: "path_code", arguments: { from: "nope", to: "g" } } }, ctx);
+  assert.equal(r.result.isError, undefined, "should not be an MCP error");
+  const payload = JSON.parse(r.result.content[0].text);
+  assert.ok(payload.error, "expected an error field");
+  assert.match(payload.error, /not found/);
+});
+
+test("tools/call path_<label>: passes from_path, to_path, depth, include_ambiguous to pathFn", async () => {
+  let gotOpts;
+  const pathFn = async (label, opts) => { gotOpts = opts; return { from: opts.from, to: opts.to, path: null }; };
+  const ctx = { ...baseCtx, pathFn };
+  await handleRequest({ jsonrpc: "2.0", id: 103, method: "tools/call", params: { name: "path_code", arguments: { from: "a", to: "b", from_path: "src/a.ts", to_path: "src/b.ts", depth: 5, include_ambiguous: true } } }, ctx);
+  assert.equal(gotOpts.fromPath, "src/a.ts");
+  assert.equal(gotOpts.toPath, "src/b.ts");
+  assert.equal(gotOpts.depth, 5);
+  assert.equal(gotOpts.includeAmbiguous, true);
+});
+
+test("tools/call dispatches path_ end-to-end with real defaultPathFn (connected)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "gtir-mcp-path-"));
+  const cfg = { indexDir: join(dir, ".gtir"), model: "qwen3" };
+  try {
+    const store = await openStore(cfg);
+    await store.upsertRows([
+      { id: "1", path: "a.mjs", line_start: 1, line_end: 3, language: "js", text: "function f(){ g(); }", embedding: [0.1, 0.2], mtime_ms: 1, content_hash: "h1" },
+      { id: "2", path: "b.mjs", line_start: 1, line_end: 3, language: "js", text: "function g(){}", embedding: [0.1, 0.2], mtime_ms: 1, content_hash: "h2" },
+    ]);
+    await store.upsertEdges([{ kind: "calls", conf: "resolved", from_path: "a.mjs", from_lines: "1", from_symbol: "f", to_path: "b.mjs", to_lines: "1", to_symbol: "g", candidates: [], content_hash: "h1" }]);
+    const indexes = [{ label: "code", repo: dir, cfg }];
+    const ctx = { indexes, pathFn: defaultPathFn(indexes) };
+    const res = await handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "path_code", arguments: { from: "f", to: "g" } } }, ctx);
+    const payload = JSON.parse(res.result.content[0].text);
+    assert.ok(Array.isArray(payload.path), `expected path array, got ${JSON.stringify(payload)}`);
+    assert.ok(payload.path.some((k) => k.includes("f")));
+    assert.ok(payload.path.some((k) => k.includes("g")));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("tools/call dispatches path_ end-to-end: unknown symbol -> { error }, not throw", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "gtir-mcp-path2-"));
+  const cfg = { indexDir: join(dir, ".gtir"), model: "qwen3" };
+  try {
+    const store = await openStore(cfg);
+    await store.upsertRows([
+      { id: "1", path: "a.mjs", line_start: 1, line_end: 3, language: "js", text: "function f(){}", embedding: [0.1, 0.2], mtime_ms: 1, content_hash: "h1" },
+    ]);
+    await store.upsertEdges([{ kind: "calls", conf: "resolved", from_path: "a.mjs", from_lines: "1", from_symbol: "f", to_path: "b.mjs", to_lines: "1", to_symbol: "g", candidates: [], content_hash: "h1" }]);
+    const indexes = [{ label: "code", repo: dir, cfg }];
+    const ctx = { indexes, pathFn: defaultPathFn(indexes) };
+    const res = await handleRequest({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "path_code", arguments: { from: "doesNotExist", to: "f" } } }, ctx);
+    assert.equal(res.result.isError, undefined, "should not be an MCP error");
+    const payload = JSON.parse(res.result.content[0].text);
+    assert.ok(payload.error, `expected error field, got ${JSON.stringify(payload)}`);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

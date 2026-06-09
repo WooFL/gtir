@@ -22,14 +22,13 @@ import { indexEdges } from "../src/indexer.mjs";
 import { memberCallStats } from "../src/callstats.mjs";
 import { fetchGrammars } from "../src/fetch-grammars.mjs";
 import { buildGraph, renderHtml, renderMermaid } from "../src/graph.mjs";
-import { impactQuery, orphansQuery, cyclesQuery, graphForSearch, buildSymbolInventory } from "../src/graph-queries.mjs";
+import { impactQuery, orphansQuery, cyclesQuery, pathQuery, graphForSearch } from "../src/graph-queries.mjs";
 import {
   gtirMcpEntry, gtirHookEntry, gtirClaudeMdBody,
   addMcpServer, removeMcpServer, addPreToolUseHook, removePreToolUseHook,
   upsertMarkedSection, removeMarkedSection, hooknudge,
   GTIR_START, GTIR_END, HOOK_MATCH_KEY,
 } from "../src/install.mjs";
-import { pathBetween, buildGraph as buildEdgeGraph, nodeKey } from "../src/edge-graph.mjs";
 import { mkdirSync } from "node:fs";
 
 // --- programmatic entrypoints (used by tests and the dispatcher) ---
@@ -73,34 +72,9 @@ export async function runImpact({ repo, symbol, path = null, downstream = false,
   return impactQuery(loadConfig(repo), { symbol, path, downstream, depth, includeAmbiguous, limit });
 }
 
-// Shortest call-path between two symbols. Mirrors runImpact: loads edges + buildEdgeGraph, resolves
-// symbol names to node keys using the same inventory mechanism impactQuery uses.
-// Returns { path: string[]|null } on success, or { error: string } for missing symbols/index.
+// Shortest call-path between two symbols. Delegates to pathQuery (shared with MCP).
 export async function runPath({ repo, from, to, fromPath = null, toPath = null, depth, includeAmbiguous = false } = {}) {
-  if (!from) return { error: "from symbol is required" };
-  if (!to) return { error: "to symbol is required" };
-  const cfg = loadConfig(repo);
-  const store = await openStore(cfg);
-  const { isNotesMode } = await import("../src/search.mjs");
-  const mode = isNotesMode(cfg) ? "notes" : "code";
-  const hasEdges = await store.hasEdges();
-  if (!hasEdges) return { error: "no edge index — run: gtir index" };
-  const edges = await store.loadEdges();
-  const graph = buildEdgeGraph(edges, { includeAmbiguous });
-  const inv = await buildSymbolInventory(store, mode);
-  // Resolve 'from' symbol — same mechanism as impactQuery
-  let fromSites = inv.byName.get(from) || [];
-  if (fromPath) fromSites = fromSites.filter((s) => s.path.includes(fromPath));
-  if (fromSites.length === 0) return { error: `symbol '${from}' not found` };
-  // Resolve 'to' symbol
-  let toSites = inv.byName.get(to) || [];
-  if (toPath) toSites = toSites.filter((s) => s.path.includes(toPath));
-  if (toSites.length === 0) return { error: `symbol '${to}' not found` };
-  const fromKeys = fromSites.map((s) => nodeKey(s.path, s.name || null));
-  const toKeys = new Set(toSites.map((s) => nodeKey(s.path, s.name || null)));
-  const maxDepth = Number.isFinite(depth) ? depth : Infinity;
-  const foundPath = pathBetween(graph, fromKeys, toKeys, { maxDepth });
-  return { from, to, path: foundPath };
+  return pathQuery(loadConfig(repo), { from, to, fromPath, toPath, depth, includeAmbiguous });
 }
 export async function runOrphans({ repo } = {}) {
   return orphansQuery(loadConfig(repo));
