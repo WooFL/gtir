@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { modularity, leiden, refinePartition } from "../src/communities.mjs";
+import { buildGraph } from "../src/edge-graph.mjs";
+import { buildUndirected, assembleReport } from "../src/communities-run.mjs";
 
 function adjFrom(edges) { // edges: [a,b] (weight 1) or [a,b,w]
   const adj = new Map();
@@ -79,4 +81,63 @@ test("refinePartition leaves an already-connected community intact (1 sub-commun
   const adj = adjFrom([["a","b"],["b","c"],["a","c"]]);
   const community = new Map([["a",0],["b",0],["c",0]]);
   assert.equal(new Set(refinePartition(adj, community).values()).size, 1);
+});
+
+test("buildUndirected collapses to file-level and accumulates weight; drops self-links", () => {
+  const edges = [
+    { kind: "calls", conf: "resolved", from_path: "a.ts", from_symbol: "f", to_path: "b.ts", to_symbol: "g" },
+    { kind: "calls", conf: "resolved", from_path: "a.ts", from_symbol: "h", to_path: "b.ts", to_symbol: "g" },
+    { kind: "calls", conf: "resolved", from_path: "a.ts", from_symbol: "f", to_path: "a.ts", to_symbol: "h" },
+  ];
+  const g = buildGraph(edges, { includeAmbiguous: false });
+  const { adj } = buildUndirected(g, { level: "file" });
+  assert.ok(adj.has("a.ts") && adj.has("b.ts"));
+  assert.equal(adj.get("a.ts").get("b.ts"), 2, "two links collapse to weight 2");
+  assert.equal(adj.get("b.ts").get("a.ts"), 2, "symmetric");
+  assert.ok(!(adj.get("a.ts").has("a.ts")), "no self-loop from the intra-file link");
+});
+
+test("buildUndirected symbol level keeps distinct symbol nodes", () => {
+  const edges = [{ kind: "calls", conf: "resolved", from_path: "a.ts", from_symbol: "f", to_path: "b.ts", to_symbol: "g" }];
+  const g = buildGraph(edges, { includeAmbiguous: false });
+  const { adj } = buildUndirected(g, { level: "symbol" });
+  assert.ok(adj.has("a.ts#f") && adj.has("b.ts#g"));
+  assert.equal(adj.get("a.ts#f").get("b.ts#g"), 1);
+});
+
+test("buildUndirected counts CALL edges only (imports excluded)", () => {
+  const edges = [
+    { kind: "calls", conf: "resolved", from_path: "a.ts", from_symbol: "f", to_path: "b.ts", to_symbol: "g" },
+    { kind: "imports", conf: "resolved", from_path: "a.ts", to_path: "c.ts" },
+  ];
+  const g = buildGraph(edges, { includeAmbiguous: false });
+  const { adj } = buildUndirected(g, { level: "file" });
+  assert.ok(adj.get("a.ts").has("b.ts"), "call edge counted");
+  assert.ok(!(adj.get("a.ts").has("c.ts")), "import edge NOT counted");
+});
+
+test("assembleReport produces communities, god-nodes, and bridges", () => {
+  const adj = new Map();
+  const add = (a, b, w = 1) => { if (!adj.has(a)) adj.set(a, new Map()); adj.get(a).set(b, w); if (!adj.has(b)) adj.set(b, new Map()); adj.get(b).set(a, w); };
+  for (const [a, b] of [["a","b"],["b","c"],["a","c"],["d","e"],["e","f"],["d","f"],["c","d"]]) add(a, b);
+  const r = assembleReport(adj, { minSize: 1 });
+  assert.equal(r.communityCount, 2);
+  assert.equal(r.nodeCount, 6);
+  assert.ok(r.modularity > 0.3);
+  assert.equal(r.communities.length, 2);
+  assert.ok(r.communities[0].size === 3 && r.communities[1].size === 3);
+  assert.equal(r.bridges.length, 1);
+  const br = r.bridges[0];
+  assert.ok((br.a === "c" && br.b === "d") || (br.a === "d" && br.b === "c"));
+  const gods = new Set(r.godNodes.map((x) => x.node));
+  assert.ok(gods.has("c") && gods.has("d"));
+});
+
+test("assembleReport honours minSize", () => {
+  const adj = new Map();
+  const add = (a, b) => { if (!adj.has(a)) adj.set(a, new Map()); adj.get(a).set(b, 1); if (!adj.has(b)) adj.set(b, new Map()); adj.get(b).set(a, 1); };
+  for (const [a, b] of [["a","b"],["b","c"],["a","c"]]) add(a, b);
+  add("x", "y");
+  const r = assembleReport(adj, { minSize: 3 });
+  assert.ok(r.communities.every((c) => c.size >= 3), "size-2 community filtered out");
 });
