@@ -3,11 +3,11 @@
 // already makes (Ollama), so the zero-egress guarantee holds.
 import { createServer } from "node:http";
 import { openStore } from "./store.mjs";
-import { computeConnections } from "./connections.mjs";
+import { computeConnections, graphNeighborhood } from "./connections.mjs";
 import { search } from "./search.mjs";
 import { watchRepo as startWatcher } from "./watch.mjs";
 
-const POST_ROUTES = new Set(["/connections", "/search"]);
+const POST_ROUTES = new Set(["/connections", "/search", "/graph"]);
 const GET_ROUTES = new Set(["/health"]);
 
 // Pure routing: choose status + JSON. Enforces the optional token, method, and required args.
@@ -17,7 +17,7 @@ export async function route(handlers, { method, path, token, configuredToken, bo
   if (!isGet && !isPost) return { status: 404, json: { error: `unknown route ${path}` } };
   if (isGet && method !== "GET") return { status: 405, json: { error: "method not allowed" } };
   if (isPost && method !== "POST") return { status: 405, json: { error: "method not allowed" } };
-  if (path === "/connections" && !body?.path) return { status: 400, json: { error: "path is required" } };
+  if ((path === "/connections" || path === "/graph") && !body?.path) return { status: 400, json: { error: "path is required" } };
   if (path === "/search" && !body?.query) return { status: 400, json: { error: "query is required" } };
   try {
     return { status: 200, json: await handlers[path](body || {}) };
@@ -47,6 +47,7 @@ export function makeHandlers(cfg) {
       return { ok: true, repo: cfg.repo, model: cfg.model, dim: meta.dim ? Number(meta.dim) : null, count };
     },
     "/connections": async (body) => computeConnections(cfg, { path: body.path, k: body.k }),
+    "/graph": async (body) => graphNeighborhood(cfg, { path: body.path, k: body.k, hops: body.hops, max: body.max }),
     "/search": async (body) => ({ results: await search(String(body.query), cfg, { k: body.k ?? 8 }) }),
   };
 }

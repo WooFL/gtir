@@ -5,8 +5,17 @@ import { route } from "../src/serve.mjs";
 const handlers = {
   "/health": async () => ({ ok: true, repo: "r", model: "m", dim: 16, count: 3 }),
   "/connections": async (body) => ({ note: body.path, results: [] }),
+  "/graph": async (body) => ({ center: body.path, nodes: [], edges: [] }),
   "/search": async (body) => ({ results: [{ path: "a.md", query: body.query }] }),
 };
+
+test("route: POST /graph requires a path and returns the neighborhood", async () => {
+  const ok = await route(handlers, { method: "POST", path: "/graph", token: null, configuredToken: null, body: { path: "a.md" } });
+  assert.equal(ok.status, 200);
+  assert.equal(ok.json.center, "a.md");
+  const bad = await route(handlers, { method: "POST", path: "/graph", token: null, configuredToken: null, body: {} });
+  assert.equal(bad.status, 400);
+});
 
 test("route: GET /health returns 200 and the health json", async () => {
   const r = await route(handlers, { method: "GET", path: "/health", token: null, configuredToken: null, body: {} });

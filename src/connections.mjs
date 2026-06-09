@@ -194,3 +194,84 @@ export async function computeConnections(cfg, { path, k } = {}) {
   }));
   return { note: path, results: fuseConnections(entries, proximity, cfg).slice(0, limit) };
 }
+
+const noteLabel = (p) => basename(String(p)).replace(/\.(md|mdx)$/i, "");
+const topDir = (p) => { const s = String(p).replace(/\\/g, "/"); const i = s.indexOf("/"); return i >= 0 ? s.slice(0, i) : ""; };
+const isMd = (p) => /\.(md|mdx)$/i.test(String(p));
+
+// Neighborhood graph around `path` for the Connections graph view: the note's ranked related notes
+// (computeConnections) plus their wikilink neighbors out to `hops`, with the link/embeds edges among
+// them and center→related "semantic" edges where no link exists. Returns { center, nodes, edges }
+// (or { error } / { center, nodes:[], edges:[], status:"not-indexed" }). Markdown-only.
+export async function graphNeighborhood(cfg, { path, k, hops, max } = {}) {
+  if (!path) return { error: "path is required" };
+  const K = Math.max(1, Math.min(30, (k ?? cfg.connK ?? 12) | 0 || 12));
+  const HOPS = Math.max(0, Math.min(2, hops ?? 1));
+  const MAX = Math.max(4, Math.min(80, (max ?? 40) | 0 || 40));
+  const store = await openStore(cfg);
+  const tbl = await store.chunksTable();
+  if (!tbl) return { error: "no index — run: gtir index" };
+  const ownRows = await tbl.query().where(`path = ${sqlStr(path)}`).limit(1).toArray();
+  if (ownRows.length === 0) return { center: path, nodes: [], edges: [], status: "not-indexed" };
+
+  // 1. ranked related notes (semantic ⊕ lexical ⊕ link-graph)
+  const conn = await computeConnections(cfg, { path, k: K });
+  const related = new Map((conn.results || []).map((r) => [r.path, r.score]));
+
+  // 2. wikilink graph (notes are bare-path nodes)
+  const graph = (await store.hasEdges()) ? buildGraph(await store.loadEdges()) : { fwd: new Map(), rev: new Map() };
+  const neigh = (key) => new Set([...(graph.fwd.get(key) || []), ...(graph.rev.get(key) || [])]);
+
+  // 3. node set: center + related, expanded by HOPS through link-neighbors, md-only, capped at MAX
+  const nodes = new Set([path, ...related.keys()].filter(isMd));
+  let frontier = [...nodes];
+  for (let d = 0; d < HOPS && nodes.size < MAX; d++) {
+    const next = [];
+    for (const n of frontier) {
+      for (const nb of neigh(n)) {
+        if (!isMd(nb) || nodes.has(nb)) continue;
+        nodes.add(nb); next.push(nb);
+        if (nodes.size >= MAX) break;
+      }
+      if (nodes.size >= MAX) break;
+    }
+    frontier = next;
+  }
+
+  // 4. link/embed edges + link-degree within the node set
+  const degree = new Map();
+  const linkEdges = [];
+  const linked = new Set();
+  for (const a of nodes) {
+    for (const b of neigh(a)) {
+      if (!nodes.has(b) || a === b) continue;
+      degree.set(a, (degree.get(a) || 0) + 1);
+      const key = a < b ? `${a}|${b}` : `${b}|${a}`;
+      if (linked.has(key)) continue;
+      linked.add(key);
+      linkEdges.push({ from: a, to: b, kind: "link" });
+    }
+  }
+
+  // 5. center→related "semantic" edges where no wikilink already connects them
+  const semEdges = [];
+  for (const r of related.keys()) {
+    if (!nodes.has(r) || r === path) continue;
+    const key = path < r ? `${path}|${r}` : `${r}|${path}`;
+    if (!linked.has(key)) semEdges.push({ from: path, to: r, kind: "semantic" });
+  }
+
+  // 6. node objects (weight: related→score-scaled, pure-link→degree-scaled), center first, cap
+  const maxScore = Math.max(0.0001, ...[...related.values()].filter((v) => v != null));
+  const nodeList = [...nodes].map((p) => {
+    const score = related.get(p);
+    const weight = score != null
+      ? 0.4 + 0.6 * (score / maxScore)
+      : Math.min(1, 0.2 + 0.1 * (degree.get(p) || 0));
+    return { path: p, label: noteLabel(p), group: topDir(p), weight: Number(weight.toFixed(3)), center: p === path };
+  }).sort((a, b) => Number(b.center) - Number(a.center) || b.weight - a.weight).slice(0, MAX);
+
+  const kept = new Set(nodeList.map((n) => n.path));
+  const edges = [...linkEdges, ...semEdges].filter((e) => kept.has(e.from) && kept.has(e.to));
+  return { center: path, nodes: nodeList, edges };
+}

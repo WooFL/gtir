@@ -103,7 +103,7 @@ import { join } from "node:path";
 import { loadConfig } from "../src/config.mjs";
 import { buildIndex, indexEdges } from "../src/indexer.mjs";
 import { openStore } from "../src/store.mjs";
-import { computeConnections } from "../src/connections.mjs";
+import { computeConnections, graphNeighborhood } from "../src/connections.mjs";
 
 const DIM = 16;
 // Deterministic embed shaped like Ollama /api/embed (one vector per input), same as no-egress test.
@@ -173,6 +173,44 @@ test("computeConnections errors cleanly on a missing path arg and an unindexed n
     await buildIndex(cfg, { rebuild: true });
     const r = await computeConnections(cfg, { path: "does-not-exist.md", k: 5 });
     assert.deepEqual([r.note, r.status, r.results], ["does-not-exist.md", "not-indexed", []]);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("graphNeighborhood returns the active note's neighborhood (center + nodes + a link edge)", async () => {
+  const repo = notesVault();
+  const cfg = { ...loadConfig(repo), model: "nomic-embed-text", ollamaUrl: "http://localhost:11434" };
+  try {
+    await buildIndex(cfg, { rebuild: true });
+    await indexEdges(cfg, { rebuild: true, collect: false });
+    const g = await graphNeighborhood(cfg, { path: "alpha.md", k: 5 });
+    assert.equal(g.center, "alpha.md");
+    const center = g.nodes.find((n) => n.path === "alpha.md");
+    assert.ok(center && center.center === true, "center node flagged");
+    assert.ok(g.nodes.some((n) => n.path === "beta.md"), "beta in the neighborhood");
+    // alpha [[beta]] -> an edge between them (either a link edge or center->related)
+    assert.ok(g.edges.some((e) =>
+      (e.from === "alpha.md" && e.to === "beta.md") || (e.from === "beta.md" && e.to === "alpha.md")),
+      "alpha–beta edge present");
+    for (const n of g.nodes) {
+      assert.equal(typeof n.weight, "number");
+      assert.equal(typeof n.label, "string");
+      assert.equal(typeof n.group, "string");
+    }
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("graphNeighborhood errors on missing path and reports an unindexed note", async () => {
+  const repo = notesVault();
+  const cfg = { ...loadConfig(repo), model: "nomic-embed-text" };
+  try {
+    assert.equal((await graphNeighborhood(cfg, {})).error, "path is required");
+    await buildIndex(cfg, { rebuild: true });
+    const r = await graphNeighborhood(cfg, { path: "nope.md" });
+    assert.deepEqual([r.center, r.status, r.nodes, r.edges], ["nope.md", "not-indexed", [], []]);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
