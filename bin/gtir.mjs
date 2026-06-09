@@ -343,7 +343,7 @@ function parseArgs(argv) {
     else if (a === "--uninstall") args.uninstall = true;
     else if (a === "--force") args.force = true;
     else if (a === "--notes") args.notes = true;
-    else if (a === "--code") args.code = argv[++i];
+    else if (a === "--code") args.code = true;
     else if (a === "--link-repo") args.linkRepo = argv[++i];
     else if (a === "--no-cache") args.noCache = true;
     else if (a === "--no-index") args.noIndex = true;
@@ -923,8 +923,8 @@ async function main() {
       case "crosslinks": {
         const { codeLinksFor } = await import("../src/crosslinks.mjs");
         const cfg = loadConfig(args.repo || ".");
-        if (!args.code) { process.stderr.write("gtir crosslinks: --code <codeRepo> is required\n"); process.exitCode = 2; break; }
-        const codeCfg = loadConfig(args.code);
+        if (!args.linkRepo) { process.stderr.write("gtir crosslinks: --link-repo <codeRepo> is required\n"); process.exitCode = 2; break; }
+        const codeCfg = loadConfig(args.linkRepo);
         const out = await codeLinksFor(cfg, codeCfg, args.path);
         process.stdout.write(JSON.stringify(out, null, 2) + "\n");
         break;
@@ -1129,7 +1129,7 @@ async function main() {
           "  gtir hooknudge   # PreToolUse hook: reads stdin, nudges agents toward gtir's MCP tools on Grep/Glob (internal)",
           "  gtir fetch-grammars   # download prebuilt shader grammars (HLSL/GLSL, ~5MB, no toolchain)",
           "  gtir serve   --repo <project> [--port 7411] [--host 127.0.0.1] [--token <t>] [--watch] [--link-repo <codeRepo>]   # local HTTP API for the Obsidian plugin; link a code index for note->code cross-links",
-          "  gtir crosslinks --repo <vault> --code <codeRepo> --path <note.md>   # a note's code references (JSON)",
+          "  gtir crosslinks --repo <vault> --link-repo <codeRepo> --path <note.md>             # a note's code references (JSON)",
           "  gtir mcp     --repo <project> [--label name:<repo>] [--watch [--debounce 1500]] [--print-config]",
           "  gtir eval    --repo <project> [--golden <f>] [-k 10] [--save] [--no-build] [--json]",
           "  gtir eval    --repo <project> --tune [\"ftsWeight=0,0.2;ftsWeightMixed=0,0.3\"]   # sweep fusion weights on the golden set",
