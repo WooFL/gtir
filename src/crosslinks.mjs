@@ -86,3 +86,23 @@ export async function codeLinksFor(wikiCfg, codeCfg, notePath, { cap } = {}) {
   const { inv, files } = await codeIndexFor(codeCfg);
   return crossLinks(inv, files, noteText, { cap: cap ?? wikiCfg.crossLinkCap ?? 15 });
 }
+
+// Append code nodes (kind:"code", a synthetic id so it never collides with a note path) + center->code
+// edges to a graphNeighborhood() result. Each node carries codePath/lines/snippet for the plugin's
+// "open in editor" / inline-snippet actions. Pure.
+export function augmentGraphWithCode(graph, codeLinks) {
+  if (!Array.isArray(codeLinks) || codeLinks.length === 0) return graph;
+  const nodes = [...graph.nodes];
+  const edges = [...graph.edges];
+  const seen = new Set(nodes.map((n) => n.path));
+  for (const c of codeLinks) {
+    const id = `code:${c.path}${c.symbol ? "#" + c.symbol : ""}`;
+    if (seen.has(id)) continue; seen.add(id);
+    nodes.push({
+      path: id, label: c.symbol || basename(c.path), group: "code", weight: 0.6, center: false,
+      kind: "code", codePath: c.path, lines: c.lines, snippet: c.snippet,
+    });
+    edges.push({ from: graph.center, to: id, kind: "code" });
+  }
+  return { ...graph, nodes, edges };
+}
