@@ -45,6 +45,7 @@ export const DEFAULTS = {
   connGraphWeight: 0.25,   // ceiling of the link-graph proximity multiplier (1 -> 1.25)
   connGraphHops: 2,        // max BFS hop distance counted as "near" in the link graph
   connFusion: true,        // fold wikilink-graph proximity into the ranking (false = vector+BM25 only)
+  crossLinkCap: 15,        // max note->code cross-links returned per note
   // `context` task-shaped tool: bundle size + confidence thresholds.
   contextK: 5,              // query-mode result count
   contextMarginHigh: 0.30,  // relative top-vs-#2 margin -> retrieval_quality "high"
