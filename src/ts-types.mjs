@@ -129,8 +129,7 @@ export function inferTsFieldReceiverType(callNode) {
 export function inferTsReceiverType(callNode, receiverName) {
   if (!callNode || !receiverName) return null;
   if (receiverName === "this") return enclosingTsClass(callNode);
-  let scope = callNode.parent;
-  while (scope && !TS_FN_SCOPES.has(scope.type) && scope.parent) scope = scope.parent;
+  const scope = enclosingTsScope(callNode);
   if (!scope) return null;
   return collectTsBindings(scope).get(receiverName) ?? null;
 }
@@ -144,6 +143,7 @@ function enclosingTsScope(callNode) {
 
 // The span of a function-valued member named `method` inside an `object` literal node, or null.
 // Accepts shorthand methods (`m(){}`) and function-valued properties (`m: ()=>{}` / `m: function(){}`).
+// Identifier keys only; string-literal keys ({"run": …}) are not matched.
 function objectLiteralMethodSpan(objNode, method) {
   for (let i = 0; i < objNode.namedChildCount; i++) {
     const m = objNode.namedChild(i);

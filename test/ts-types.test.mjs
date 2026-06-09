@@ -261,7 +261,7 @@ test("inferTsObjectLiteralTarget returns null when the receiver has no binding",
   assert.equal(inferTsObjectLiteralTarget(call, "p", "run"), null);
 });
 
-test("inferTsObjectLiteralTarget does not pick an inner-closure binding of the same name", async () => {
+test("inferTsObjectLiteralTarget does not descend into an inner-closure binding when resolving an outer-scope call", async () => {
   const src = `function go() {
   const chop = { a() {} };
   const inner = () => {
@@ -280,4 +280,10 @@ test("inferTsObjectLiteralTarget does not pick an inner-closure binding of the s
   const bCall = calls.find((c) => c.text.startsWith("chop.b"));
   assert.deepEqual(inferTsObjectLiteralTarget(aCall, "chop", "a"), { line_start: 2, line_end: 2 });
   assert.equal(inferTsObjectLiteralTarget(bCall, "chop", "b"), null);
+});
+
+test("inferTsObjectLiteralTarget resolves a module-level binding", async () => {
+  const src = `const h = { run() { return 1; } };\nh.run();`;
+  const call = await firstCall(src);
+  assert.deepEqual(inferTsObjectLiteralTarget(call, "h", "run"), { line_start: 1, line_end: 1 });
 });
