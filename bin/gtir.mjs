@@ -394,9 +394,9 @@ function parseArgs(argv) {
     else if (a === "--orphans") args.orphans = true;
     else if (a === "--target") { (args.targets ??= []).push(argv[++i]); }
     else if (a === "--context") { const v = Number(argv[++i]); if (Number.isFinite(v)) args.context = v; }
-    else if (a === "--window") { const v = Number(argv[++i]); if (Number.isFinite(v)) args.window = v; }
-    else if (a === "--min-support") { const v = Number(argv[++i]); if (Number.isFinite(v)) args.minSupport = v; }
-    else if (a === "--top") { const v = Number(argv[++i]); if (Number.isFinite(v)) args.top = v; }
+    else if (a === "--window") { const v = Number(argv[++i]); if (Number.isInteger(v) && v > 0) args.window = v; }
+    else if (a === "--min-support") { const v = Number(argv[++i]); if (Number.isInteger(v) && v > 0) args.minSupport = v; }
+    else if (a === "--top") { const v = Number(argv[++i]); if (Number.isInteger(v) && v > 0) args.top = v; }
     else args._.push(a);
   }
   return args;

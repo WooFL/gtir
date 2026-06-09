@@ -186,3 +186,13 @@ test("cochange/hotspots over a real temp git repo", { skip: !gitAvailable() }, a
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("cochangeQuery returns an error (not a throw) on a non-git directory", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "gtir-nogit-"));
+  try {
+    const r = await cochangeQuery({ repo: dir }, {});
+    assert.equal(r.error, "not a git repository (or git unavailable)");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

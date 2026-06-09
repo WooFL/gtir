@@ -39,6 +39,7 @@ function runGitLog(repo, window) {
 function buildLocMap(repo, files, { maxBytes = 2 * 1024 * 1024 } = {}) {
   const loc = new Map();
   for (const f of files) {
+    if (f.includes("..") || f.startsWith("/") || /^[A-Za-z]:/.test(f)) continue; // never read outside the repo
     try {
       const p = join(repo, f);
       if (statSync(p).size > maxBytes) continue;
