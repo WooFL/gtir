@@ -5,6 +5,7 @@ import { createServer } from "node:http";
 import { openStore } from "./store.mjs";
 import { computeConnections } from "./connections.mjs";
 import { search } from "./search.mjs";
+import { watchRepo as startWatcher } from "./watch.mjs";
 
 const POST_ROUTES = new Set(["/connections", "/search"]);
 const GET_ROUTES = new Set(["/health"]);
@@ -86,5 +87,9 @@ export function startServer(cfg, { host = "127.0.0.1", port = 7411, token = null
   });
 }
 
-// Replaced in Task 8 with the real watcher wiring; declared here so startServer references resolve.
-function startWatch(_cfg) { /* wired in Task 8 */ }
+// Wire the real watcher from watch.mjs. watchRepo is synchronous (returns immediately; chokidar
+// fires events later), so no await is needed. A watcher failure must never crash the server.
+function startWatch(cfg) {
+  try { startWatcher(cfg, {}); }
+  catch (e) { process.stderr.write(`gtir serve: watch failed to start: ${e.message}\n`); }
+}

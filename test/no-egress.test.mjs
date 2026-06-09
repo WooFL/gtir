@@ -108,6 +108,36 @@ function fixtureRepo() {
   return repo;
 }
 
+test("zero egress: gtir serve /connections only contacts configured loopback hosts", async () => {
+  const { startServer } = await import("../src/serve.mjs");
+  recordedHosts.length = 0;
+  const repo = fixtureRepo();
+  const cfg = { ...loadConfig(repo), ollamaUrl: "http://localhost:11434" };
+  let server;
+  try {
+    await buildIndex(cfg, { rebuild: true });
+    server = await startServer(cfg, { host: "127.0.0.1", port: 0 }); // ephemeral port
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const health = await realFetch(`${base}/health`).then((r) => r.json());
+    assert.equal(health.ok, true);
+    const conn = await realFetch(`${base}/connections`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: "auth.ts", k: 5 }),
+    }).then((r) => r.json());
+    assert.ok(Array.isArray(conn.results), "serve /connections returned results");
+
+    // The engine work (embedding the query path) went through GLOBAL fetch -> recordedHosts.
+    const allowed = configuredHosts(cfg);
+    for (const h of recordedHosts) {
+      assert.ok(allowed.has(h), `serve egress to a NON-configured host: ${h}`);
+    }
+    assert.deepEqual(recordedHosts.filter((h) => !isLoopbackHost(h)), [], "no non-loopback egress from serve");
+  } finally {
+    if (server) await new Promise((r) => server.close(r));
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test("zero egress: index → search → MCP search_code only ever contact configured loopback hosts", async () => {
   recordedHosts.length = 0;
   const repo = fixtureRepo();
