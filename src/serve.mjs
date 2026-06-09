@@ -48,7 +48,9 @@ export function makeHandlers(cfg, { linkCfg = null } = {}) {
       }
       // `routes` advertises this server's capabilities so a client can tell a current daemon from a
       // stale one (e.g. an older process that predates an endpoint) and refuse to adopt the stale one.
-      return { ok: true, repo: cfg.repo, model: cfg.model, dim: meta.dim ? Number(meta.dim) : null, count, routes: SERVE_ROUTES };
+      // `linked` tells the plugin whether this daemon was started with a cross-corpus --link-repo, so it
+      // won't adopt a non-linked daemon when the user wants note→code links.
+      return { ok: true, repo: cfg.repo, model: cfg.model, dim: meta.dim ? Number(meta.dim) : null, count, routes: SERVE_ROUTES, linked: !!linkCfg };
     },
     "/connections": async (body) => {
       const res = await computeConnections(cfg, { path: body.path, k: body.k });

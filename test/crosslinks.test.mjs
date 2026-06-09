@@ -136,9 +136,13 @@ test("serve makeHandlers augments /connections + /graph with code when linkCfg i
     const g = await handlers["/graph"]({ path: "design.md" });
     assert.ok(g.nodes.some((n) => n.kind === "code"), "/graph has a code node");
 
+    // /health advertises whether a code index is linked (the plugin uses this to avoid adopting a non-linked daemon)
+    assert.equal((await handlers["/health"]()).linked, true);
+
     const plain = makeHandlers(wikiCfg, {});
     const conn2 = await plain["/connections"]({ path: "design.md" });
     assert.equal(conn2.code, undefined);
+    assert.equal((await plain["/health"]()).linked, false);
   } finally {
     rmSync(code, { recursive: true, force: true }); rmSync(wiki, { recursive: true, force: true });
   }
