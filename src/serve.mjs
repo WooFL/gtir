@@ -52,7 +52,7 @@ export function makeHandlers(cfg, { linkCfg = null } = {}) {
     },
     "/connections": async (body) => {
       const res = await computeConnections(cfg, { path: body.path, k: body.k });
-      if (linkCfg && body.path && !res.error) {
+      if (linkCfg && body.path && !res.error && res.status !== "not-indexed") {
         try { res.code = await codeLinksFor(cfg, linkCfg, body.path); }
         catch (e) { process.stderr.write(`gtir serve: cross-links failed: ${e.message}\n`); }
       }
