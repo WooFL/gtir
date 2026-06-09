@@ -1090,7 +1090,8 @@ async function main() {
         if (r.error) { process.stderr.write(`gtir communities: ${r.error}\n`); process.exitCode = 2; break; }
         if (args.json) { process.stdout.write(JSON.stringify(r, null, 2) + "\n"); break; }
         if (r.communityCount === 0) { process.stderr.write("gtir communities: no call edges to cluster\n"); break; }
-        process.stderr.write(`gtir communities: ${r.nodeCount} nodes, ${r.communityCount} communities, modularity=${r.modularity}\n`);
+        const shownNote = r.communities.length < r.communityCount ? ` (showing ${r.communities.length} with ≥ min-size members)` : "";
+        process.stderr.write(`gtir communities: ${r.nodeCount} nodes, ${r.communityCount} communities, modularity=${r.modularity}${shownNote}\n`);
         for (const c of r.communities) {
           const shown = c.members.slice(0, 8).join(", ");
           const more = c.members.length > 8 ? `, +${c.members.length - 8} more` : "";
