@@ -32,3 +32,31 @@ export function retrievalQuality(items, mode, cfg = {}) {
     ...(quality === "low" ? { note: "weak or ambiguous match — verify before relying" } : {}),
   };
 }
+
+export async function buildContext(cfg, { query = null, targets = null, k, contextLines } = {}) {
+  const hasTargets = Array.isArray(targets) && targets.length > 0;
+  if (!query && !hasTargets) return { error: "query or targets required" };
+  const K = Math.max(1, Math.min(20, (k ?? cfg.contextK ?? 5) | 0 || 5));
+
+  if (query) {
+    let hits;
+    try {
+      const graphData = await graphForSearch(cfg);
+      hits = await search(query, cfg, { k: K, edges: true, graphData });
+    } catch (e) {
+      return { error: e.message };
+    }
+    const items = hits.map((h) => ({
+      path: h.path, lines: h.lines, language: h.language, score: h.score, vec_rank: h.vec_rank,
+      source: h.snippet, callers: h.callers ?? [], callees: h.callees ?? [],
+    }));
+    return { ...retrievalQuality(items, "query", cfg), items };
+  }
+
+  return await buildTargetsContext(cfg, targets, contextLines); // real impl in Task 4
+}
+
+// Temporary stub — replaced by the real resolver in Task 4. Keeps this task self-contained.
+async function buildTargetsContext(_cfg, _targets, _contextLines) {
+  return { ...retrievalQuality([], "targets"), items: [] };
+}
