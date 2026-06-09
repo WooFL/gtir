@@ -284,8 +284,16 @@ export function resolveEdges(rawEdges, symbolIndex, noteIndex, opts = {}) {
   const out = [];
   for (const e of rawEdges) {
     if (e.kind === "calls") {
-      const cands = symbolIndex.get(e.refName) ?? [];
       const from = { path: e.fromPath, fromLine: e.fromLine, symbol: e.fromSymbol ?? null };
+      // Object-literal local: the extractor already pinned the in-file target span (same file as the
+      // call). Trust it over any coincidental same-name symbol elsewhere — the literal is ground truth.
+      if (e.localTarget) {
+        out.push(row("calls", from,
+          { path: e.fromPath, line_start: e.localTarget.line_start, line_end: e.localTarget.line_end, symbol: e.refName },
+          "resolved", [], contentHash, e.refName, null, e.isMethod));
+        continue;
+      }
+      const cands = symbolIndex.get(e.refName) ?? [];
       // External: no in-repo def for this name. Carry the member metadata (isMethod/receiver/…) so the
       // callstats benchmark can see external MEMBER calls (e.g. std::vector::push_back) as member calls.
       // These fields are in-memory only (toEdgeRow strips them) and the resolver chain only touches

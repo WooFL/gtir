@@ -646,3 +646,22 @@ test("extractCodeEdges carries localTarget for an object-literal member call", a
   assert.equal(call.receiverType, null, "object-literal receiver has no type name");
 });
 
+test("resolveEdges resolves an object-literal call to the literal, beating a same-name free function", async () => {
+  const src = `function scalar() { return 99; }
+function go() {
+  const chop = { scalar() { return 1; } };
+  chop.scalar();
+}`;
+  const parser = await getParser("typescript");
+  const tree = parser.parse(src);
+  const raw = extractCodeEdges(tree, "typescript", "a.ts");
+  const symbolIndex = new Map([["scalar", [{ path: "a.ts", line_start: 1, line_end: 1 }]]]);
+  const rows = resolveEdges(raw, symbolIndex, new Map());
+  const call = rows.find((r) => r.kind === "calls" && r.ref_name === "scalar" && r.isMethod);
+  assert.ok(call, "object-literal scalar call row exists");
+  assert.equal(call.conf, "resolved");
+  assert.equal(call.to_path, "a.ts");
+  assert.equal(call.to_lines, "3-3");
+  assert.equal(call.to_symbol, "scalar");
+});
+
