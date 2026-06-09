@@ -76,6 +76,8 @@ function localMove(g, nbr, k, m2, initComm, restrict) {
         kiIn.set(cj, (kiIn.get(cj) ?? 0) + w);
       }
       totC.set(ci, totC.get(ci) - ki);
+      // Gain baseline (staying) uses totC[ci] AFTER removing ki — i.e. "i rejoins ci". For every other
+      // candidate c, totC[c] still excludes ki (i was never in c). This asymmetry is the correct Louvain ΔQ.
       let best = ci, bestGain = (kiIn.get(ci) ?? 0) - (totC.get(ci) ?? 0) * ki / m2;
       for (const [c, kin] of kiIn) {
         const gain = kin - (totC.get(c) ?? 0) * ki / m2;
