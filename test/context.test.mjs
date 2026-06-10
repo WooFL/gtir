@@ -179,7 +179,7 @@ test("buildContext attaches `notes` for a cited symbol; omits the field with no 
   } finally { rmSync(code, { recursive: true, force: true }); rmSync(wiki, { recursive: true, force: true }); }
 });
 
-import { handleRequest, defaultContextFn } from "../src/mcp.mjs";
+import { handleRequest, defaultContextFn, defaultNotesForFn } from "../src/mcp.mjs";
 
 test("MCP context_<label> returns the bundle via handleRequest", async () => {
   const repo = codeRepo();
@@ -198,4 +198,22 @@ test("MCP context_<label> returns the bundle via handleRequest", async () => {
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
+});
+
+test("MCP notes_for returns the wiki notes documenting a symbol", async () => {
+  const code = codeRepoWR(), wiki = wikiRepoWR();
+  const codeCfg = { ...loadConfig(code), model: "qwen3-embedding:0.6b", ollamaUrl: "http://localhost:11434" };
+  const wikiCfg = { ...loadConfig(wiki), model: "nomic-embed-text", ollamaUrl: "http://localhost:11434" };
+  try {
+    await buildIndex(codeCfg, { rebuild: true }); await indexEdges(codeCfg, { rebuild: true, collect: false });
+    await buildIndex(wikiCfg, { rebuild: true });
+    clearReverseCache();
+    const indexes = [{ label: "code", repo: codeCfg.repo, cfg: codeCfg }, { label: "wiki", repo: wikiCfg.repo, cfg: wikiCfg }];
+    const ctx = { indexes, version: "test", notesForFn: defaultNotesForFn(indexes) };
+    const res = await handleRequest(
+      { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "notes_for", arguments: { symbol: "WidgetRegistry" } } },
+      ctx,
+    );
+    assert.ok(res.result.structuredContent.notes.some((n) => n.note === "design.md"), "design.md returned");
+  } finally { rmSync(code, { recursive: true, force: true }); rmSync(wiki, { recursive: true, force: true }); }
 });
