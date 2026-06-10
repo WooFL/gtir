@@ -395,7 +395,7 @@ function verifyInstall({ repo, sel, log }) {
 // --assistant set omits it); Cursor is on via --all, an explicit set, or a detected .cursor/ dir.
 function resolveAssistants(repo, args) {
   if (args.all) return { claude: true, cursor: true };
-  if (args.assistant) return { claude: args.assistant.has("claude"), cursor: args.assistant.has("cursor") };
+  if (args.assistant && args.assistant.size > 0) return { claude: args.assistant.has("claude"), cursor: args.assistant.has("cursor") };
   return { claude: true, cursor: existsSync(path.join(repo, ".cursor")) };
 }
 

@@ -652,3 +652,21 @@ test("CLI `gtir install --verify`: exit 1 when not wired, exit 0 after wiring", 
   const out = execFileSync("node", [BIN, "install", "--repo", repo, "--verify"], { encoding: "utf8" });
   assert.ok(typeof out === "string");
 });
+
+test("CLI `gtir install --assistant=` (empty) falls through to default (Claude wired)", () => {
+  const repo = tmp();
+  execFileSync("node", [BIN, "install", "--repo", repo, "--no-index", "--assistant="], { encoding: "utf8" });
+  // Empty set must NOT silently skip Claude — default keeps Claude on.
+  assert.ok(existsSync(join(repo, ".mcp.json")), "Claude .mcp.json written (empty --assistant= ignored)");
+  assert.ok(existsSync(join(repo, "AGENTS.md")), "AGENTS.md written");
+});
+
+test("CLI `gtir install --verify --all`: exercises cursor verify items, exit 0 when fully wired", () => {
+  const repo = tmp();
+  execFileSync("node", [BIN, "install", "--repo", repo, "--no-index", "--all"], { encoding: "utf8" });
+  mkdirSync(join(repo, ".gtir", "index.lance"), { recursive: true });
+  // --all makes verify check the cursor items too; all present => exit 0.
+  const out = execFileSync("node", [BIN, "install", "--repo", repo, "--verify", "--all"], { encoding: "utf8" });
+  // execFileSync throws on non-zero exit; reaching here = exit 0
+  assert.ok(typeof out === "string");
+});
