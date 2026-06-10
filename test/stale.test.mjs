@@ -115,3 +115,17 @@ test("diffBaseline marks removed when symbol absent from current", () => {
   assert.equal(out.stale[0].rows[0].severity, "removed");
   assert.equal(out.stale[0].rows[0].after, null);
 });
+
+test("extractSignature does not truncate on => inside a return type", () => {
+  assert.equal(
+    extractSignature("fetchUser(id: string): Promise<(e: Error) => void> { return null; }"),
+    "fetchUser(id: string): Promise<(e: Error) => void>",
+  );
+});
+
+test("snapshotRow + gradeDrift integrate: body change graded body, identical graded null", () => {
+  const a = snapshotRow({ kind: "symbol", symbol: "f", path: "a.ts", lines: "1-3", text: "f() {\n  return 1;\n}" });
+  const b = snapshotRow({ kind: "symbol", symbol: "f", path: "a.ts", lines: "1-3", text: "f() {\n  return 2;\n}" });
+  assert.equal(gradeDrift(a, b), "body");
+  assert.equal(gradeDrift(a, a), null);
+});

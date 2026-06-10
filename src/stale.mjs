@@ -13,15 +13,12 @@ export function normalizeForHash(text) {
     .trim();
 }
 
-// Header slice: up to the first body-open `{`, or an arrow `=>`, or a python-style `:` def line.
+// Header slice: up to the first body-open `{`, or a python-style `:` def line.
 export function extractSignature(text) {
   const s = String(text || "");
   const brace = s.indexOf("{");
-  const arrow = s.indexOf("=>");
-  // arrow before brace -> include through the arrow
-  if (arrow !== -1 && (brace === -1 || arrow < brace)) return s.slice(0, arrow + 2).replace(/\s+/g, " ").trim();
   if (brace !== -1) return s.slice(0, brace).replace(/\s+/g, " ").trim();
-  // python/no-brace: first line, trimmed (keeps a trailing `:` if present)
+  // no brace: first non-empty line (python `def …:`, expression arrows, etc.)
   const firstLine = s.split("\n").map((l) => l.trim()).find((l) => l.length) || "";
   return firstLine;
 }
@@ -57,7 +54,7 @@ export function gradeDrift(oldRow, cur) {
 const PRIORITY = { signature: "high", removed: "high", body: "medium" };
 
 // baselineLinks/currentLinks: { [notePath]: row[] }. muted: { [notePath]: symbol[] | ["*"] }.
-// A current row matches a baseline row by symbol (any path); a body-hash match at a new path = move (no drift).
+// A current row matches a baseline row by symbol (any path); a moved symbol that did NOT change grades as null (no drift); a moved+changed symbol reports against its new path.
 export function diffBaseline(baselineLinks, currentLinks, muted = {}) {
   const stale = [];
   for (const [note, baseRows] of Object.entries(baselineLinks)) {
@@ -73,9 +70,9 @@ export function diffBaseline(baselineLinks, currentLinks, muted = {}) {
       const severity = gradeDrift(b, sameName);
       if (!severity) continue;
       rows.push({
-        symbol: b.symbol, codePath: b.path, lines: b.lines, severity, priority: PRIORITY[severity],
+        symbol: b.symbol, codePath: sameName ? sameName.path : b.path, lines: b.lines, severity, priority: PRIORITY[severity],
         before: { sig: b.sig, snippet: b.snippet, lines: b.lines },
-        after: sameName ? { sig: sameName.sig, snippet: sameName.snippet, lines: sameName.lines } : null,
+        after: sameName ? { path: sameName.path, sig: sameName.sig, snippet: sameName.snippet, lines: sameName.lines } : null,
       });
     }
     if (rows.length) stale.push({ note, rows });
