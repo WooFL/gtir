@@ -99,18 +99,32 @@ test("codeLinksFor resolves a note's code references against the code index", as
 
 import { augmentGraphWithCode } from "../src/crosslinks.mjs";
 
-test("augmentGraphWithCode adds code nodes + center->code edges", () => {
+test("augmentGraphWithCode adds file-labeled symbols, file nodes, containment + note edges", () => {
   const graph = { center: "a.md", nodes: [{ path: "a.md", label: "a", group: "", weight: 1, center: true }], edges: [] };
   const codeLinks = [
     { kind: "symbol", symbol: "WidgetRegistry", path: "src/registry.ts", lines: "10-40", snippet: "class WidgetRegistry" },
     { kind: "file", path: "src/util.ts", snippet: "" },
   ];
-  const g = augmentGraphWithCode(graph, codeLinks);
-  const codeNodes = g.nodes.filter((n) => n.kind === "code");
-  assert.equal(codeNodes.length, 2);
-  assert.ok(codeNodes.some((n) => n.label === "WidgetRegistry" && n.codePath === "src/registry.ts"));
-  assert.ok(g.edges.some((e) => e.from === "a.md" && e.kind === "code"));
-  assert.ok(g.nodes.some((n) => n.path === "a.md" && n.center));
+  const g = augmentGraphWithCode(graph, codeLinks, { callEdges: [] });
+  const sym = g.nodes.find((n) => n.kind === "code");
+  assert.equal(sym.label, "WidgetRegistry · registry.ts");      // file-labeled
+  assert.equal(sym.codePath, "src/registry.ts");
+  const files = g.nodes.filter((n) => n.kind === "file").map((n) => n.codePath).sort();
+  assert.deepEqual(files, ["src/registry.ts", "src/util.ts"]);  // symbol's file + the directly-cited file
+  assert.ok(g.edges.some((e) => e.from === "a.md" && e.to === sym.path && e.kind === "code"));        // note->symbol
+  assert.ok(g.edges.some((e) => e.from === sym.path && e.kind === "code-file"));                       // containment
+  assert.ok(g.edges.some((e) => e.from === "a.md" && e.to === "codefile:src/util.ts" && e.kind === "code")); // note->file
+});
+
+test("augmentGraphWithCode emits a code-call edge between two shown symbols", () => {
+  const graph = { center: "a.md", nodes: [{ path: "a.md", label: "a", group: "", weight: 1, center: true }], edges: [] };
+  const codeLinks = [
+    { kind: "symbol", symbol: "foo", path: "m.ts" },
+    { kind: "symbol", symbol: "bar", path: "m.ts" },
+  ];
+  const struct = { callEdges: [{ fromPath: "m.ts", fromSymbol: "foo", toPath: "m.ts", toSymbol: "bar" }] };
+  const g = augmentGraphWithCode(graph, codeLinks, struct);
+  assert.ok(g.edges.some((e) => e.from === "code:m.ts#foo" && e.to === "code:m.ts#bar" && e.kind === "code-call"));
 });
 
 test("augmentGraphWithCode with no links returns the graph unchanged", () => {

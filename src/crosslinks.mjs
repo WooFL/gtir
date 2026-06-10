@@ -201,22 +201,46 @@ export async function codeStructure(codeCfg, codeLinks) {
   return { callEdges };
 }
 
-// Append code nodes (kind:"code", a synthetic id so it never collides with a note path) + center->code
-// edges to a graphNeighborhood() result. Each node carries codePath/lines/snippet for the plugin's
-// "open in editor" / inline-snippet actions. Pure.
-export function augmentGraphWithCode(graph, codeLinks) {
+// Append code structure to a graphNeighborhood() result. Emits, per the note's resolved codeLinks:
+//   - symbol nodes (kind:"code", label `symbol · file`), id `code:<path>#<symbol>`
+//   - file nodes  (kind:"file"), id `codefile:<path>`
+//   - note->symbol  edges (kind:"code"), note->file edges for directly-cited files (kind:"code")
+//   - symbol->file  containment edges (kind:"code-file")
+//   - symbol<->symbol call edges (kind:"code-call") from struct.callEdges (both ends must be shown)
+// Pure. File nodes are derived here from codeLinks paths; struct only carries the call edges (which
+// need the async call graph). 2-arg calls (no struct) still work — they just emit no call edges.
+export function augmentGraphWithCode(graph, codeLinks, { callEdges = [] } = {}) {
   if (!Array.isArray(codeLinks) || codeLinks.length === 0) return graph;
   const nodes = [...graph.nodes];
   const edges = [...graph.edges];
   const seen = new Set(nodes.map((n) => n.path));
+  const fileId = (p) => `codefile:${p}`;
+  const addFile = (p, noteEdge) => {
+    const id = fileId(p);
+    if (!seen.has(id)) {
+      seen.add(id);
+      nodes.push({ path: id, label: basename(p), group: "code", weight: 0.5, center: false, kind: "file", codePath: p });
+    }
+    if (noteEdge && !edges.some((e) => e.from === graph.center && e.to === id && e.kind === "code"))
+      edges.push({ from: graph.center, to: id, kind: "code" });
+    return id;
+  };
   for (const c of codeLinks) {
-    const id = `code:${c.path}${c.symbol ? "#" + c.symbol : ""}`;
+    if ((c.kind === "file" || !c.symbol)) { addFile(c.path, true); continue; }   // directly-cited file
+    const id = `code:${c.path}#${c.symbol}`;
     if (seen.has(id)) continue; seen.add(id);
     nodes.push({
-      path: id, label: c.symbol || basename(c.path), group: "code", weight: 0.6, center: false,
+      path: id, label: `${c.symbol} · ${basename(c.path)}`, group: "code", weight: 0.6, center: false,
       kind: "code", codePath: c.path, lines: c.lines, snippet: c.snippet,
     });
-    edges.push({ from: graph.center, to: id, kind: "code" });
+    edges.push({ from: graph.center, to: id, kind: "code" });   // note -> symbol
+    const fid = addFile(c.path, false);                          // file node (no note edge from the symbol's file)
+    edges.push({ from: id, to: fid, kind: "code-file" });        // containment
+  }
+  for (const ce of callEdges) {
+    const from = `code:${ce.fromPath}#${ce.fromSymbol}`;
+    const to = `code:${ce.toPath}#${ce.toSymbol}`;
+    if (seen.has(from) && seen.has(to)) edges.push({ from, to, kind: "code-call" });
   }
   return { ...graph, nodes, edges };
 }
