@@ -187,6 +187,20 @@ test("buildSymbolInventory (callables): ignores symbols_json, uses declaredCalla
   } finally { rmSync(cfg._root, { recursive: true, force: true }); }
 });
 
+test("buildSymbolInventory: out-of-range symbol span falls back to whole-chunk text", async () => {
+  const cfg = tmpCfg();
+  try {
+    const store = await openStore(cfg);
+    // chunk spans lines 10-12, but the symbol claims lines 99-100 (out of range)
+    await store.upsertRows([
+      chunkSym("1", "a.mjs", 10, 12, "function wide(){ return 1; }", [{ name: "wide", lineStart: 99, lineEnd: 100 }]),
+    ]);
+    const inv = await buildSymbolInventory(store, "code");
+    const site = inv.byName.get("wide")[0];
+    assert.match(site.text, /function wide/, "out-of-range span returns the whole chunk text, not empty");
+  } finally { rmSync(cfg._root, { recursive: true, force: true }); }
+});
+
 test("graphForSearch builds {graph,degree}, caches, and clears", async () => {
   const cfg = tmpCfg();
   try {
