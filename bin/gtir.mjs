@@ -474,6 +474,7 @@ function parseArgs(argv) {
     else if (a === "--notes") args.notes = true;
     else if (a === "--code") args.code = true;
     else if (a === "--link-repo") args.linkRepo = argv[++i];
+    else if (a === "--wiki") args.wiki = argv[++i];
     else if (a === "--emit-briefs") args.emitBriefs = argv[++i];
     else if (a === "--no-cache") args.noCache = true;
     else if (a === "--no-index") args.noIndex = true;
@@ -1159,7 +1160,7 @@ async function main() {
           else process.stderr.write(`gtir install: onboarded (${init.indexed.chunks} chunks, dim=${init.indexed.dim})\n`);
         }
         // Phase 2 — wire the selected assistants.
-        const result = runInstall({ repo, uninstall: !!args.uninstall, force: !!args.force, assistants: sel });
+        const result = runInstall({ repo, uninstall: !!args.uninstall, force: !!args.force, assistants: sel, wiki: args.wiki ?? null });
         if (result.writeErrors?.length) process.exitCode = 1;
         break;
       }
@@ -1384,7 +1385,7 @@ async function main() {
           "  gtir doctor  [--repo <project>] [--no-pull]   # check Ollama, pull the model, verify readiness",
           "  gtir setup   --repo <project>",
           "  gtir hook    --repo <project> [--remove]",
-          "  gtir install --repo <project> [--no-index] [--assistant=claude,cursor] [--all] [--uninstall] [--force] [--verify]   # onboard (index + git hook) and wire assistants (.mcp.json/.claude + .cursor + AGENTS.md)",
+          "  gtir install --repo <project> [--wiki <wikiPath>] [--no-index] [--assistant=claude,cursor] [--all] [--uninstall] [--force] [--verify]   # onboard + wire assistants; --wiki pairs an Obsidian vault (MCP read leg + PostToolUse drift nudge)",
           "  gtir hooknudge   # PreToolUse hook: reads stdin, nudges agents toward gtir's MCP tools on Grep/Glob (internal)",
           "  gtir fetch-grammars   # download prebuilt shader grammars (HLSL/GLSL, ~5MB, no toolchain)",
           "  gtir serve   --repo <project> [--port 7411] [--host 127.0.0.1] [--token <t>] [--watch] [--link-repo <codeRepo>]   # local HTTP API for the Obsidian plugin; link a code index for note->code cross-links",
