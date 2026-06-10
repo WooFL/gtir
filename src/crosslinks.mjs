@@ -1,7 +1,8 @@
 // src/crosslinks.mjs — cross-corpus note->code mention bridge. Resolves code-shaped identifiers and
 // file paths a note mentions against a LINKED code index's symbol inventory + file set. No embedding —
 // pure symbol/path matching, so the wiki(nomic)/code(qwen3) model mismatch is irrelevant.
-import { basename } from "node:path";
+import { basename, join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
 import { openStore } from "./store.mjs";
 import { buildSymbolInventory } from "./graph-queries.mjs";
 import { queryIdentifiers } from "./search.mjs";
@@ -116,6 +117,43 @@ export async function codeIndexFor(codeCfg) {
   return entry;
 }
 export function clearCodeCache(indexDir) { indexDir ? _codeCache.delete(indexDir) : _codeCache.clear(); }
+
+const _revCache = new Map(); // `${wikiIndexDir}=>${codeIndexDir}` -> { bySymbol, byPath }
+const revKey = (wikiCfg, codeCfg) => `${wikiCfg.indexDir}=>${codeCfg.indexDir}`;
+export function clearReverseCache(key) { key ? _revCache.delete(key) : _revCache.clear(); }
+
+// Read the stale baseline JSON directly. Returns the parsed doc or null. NOTE: deliberately NOT
+// imported from stale-run.mjs — that module imports this one (codeIndexFor/crossLinks), so the
+// reverse import would be circular.
+function readBaselineFile(wikiCfg) {
+  try {
+    const p = join(wikiCfg.gtirDir, "stale-baselines.json");
+    if (!existsSync(p)) return null;
+    return JSON.parse(readFileSync(p, "utf8"));
+  } catch { return null; }
+}
+
+// code key -> notes that cite it, cached per (wiki,code) index pair for the process lifetime.
+// Source: the precise stale baseline when present; else live crossLinks over every note (slower).
+export async function reverseLinks(wikiCfg, codeCfg, { deps = {} } = {}) {
+  const key = revKey(wikiCfg, codeCfg);
+  if (_revCache.has(key)) return _revCache.get(key);
+
+  const base = (deps.readBaseline || readBaselineFile)(wikiCfg);
+  let linksByNote;
+  if (base && base.links && Object.keys(base.links).length) {
+    linksByNote = base.links;
+  } else {
+    const wikiStore = await openStore(wikiCfg);
+    const rows = await wikiStore.allChunkRows(["path"]);
+    const notePaths = [...new Set(rows.map((r) => r.path))];
+    linksByNote = {};
+    for (const note of notePaths) linksByNote[note] = await codeLinksFor(wikiCfg, codeCfg, note);
+  }
+  const rev = invertLinks(linksByNote);
+  _revCache.set(key, rev);
+  return rev;
+}
 
 // Read a note's chunk text from the wiki index, resolve its code references against the code index.
 export async function codeLinksFor(wikiCfg, codeCfg, notePath, { cap } = {}) {

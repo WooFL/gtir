@@ -143,6 +143,42 @@ test("notesFor: union of symbol + path matches, deduped per note, capped", () =>
   assert.deepEqual(notesFor(rev, {}), []);          // no keys -> empty
 });
 
+import { reverseLinks, clearReverseCache } from "../src/crosslinks.mjs";
+
+test("reverseLinks inverts an existing stale baseline without opening a store", async () => {
+  const wiki = mkdtempSync(join(tmpdir(), "gtir-rev-"));
+  mkdirSync(join(wiki, ".gtir"), { recursive: true });
+  writeFileSync(join(wiki, ".gtir", "stale-baselines.json"), JSON.stringify({
+    links: {
+      "design.md": [{ kind: "symbol", symbol: "WidgetRegistry", path: "src/registry.ts", lines: "1-4", snippet: "class WidgetRegistry" }],
+    },
+  }));
+  const wikiCfg = { ...loadConfig(wiki), model: "nomic-embed-text" };
+  const codeCfg = { ...loadConfig(wiki), indexDir: "/nonexistent/code.lance" }; // distinct cache key; never opened
+  try {
+    clearReverseCache();
+    const rev = await reverseLinks(wikiCfg, codeCfg);
+    assert.deepEqual(rev.bySymbol.get("WidgetRegistry").map((r) => r.note), ["design.md"]);
+    assert.ok(rev.byPath.get("src/registry.ts"), "path indexed too");
+  } finally { rmSync(wiki, { recursive: true, force: true }); }
+});
+
+test("reverseLinks falls back to live crossLinks when no baseline; caches; clears", async () => {
+  const code = codeRepo(), wiki = wikiRepo();
+  const codeCfg = { ...loadConfig(code), model: "qwen3-embedding:0.6b", ollamaUrl: "http://localhost:11434" };
+  const wikiCfg = { ...loadConfig(wiki), model: "nomic-embed-text", ollamaUrl: "http://localhost:11434" };
+  try {
+    await buildIndex(codeCfg, { rebuild: true }); await indexEdges(codeCfg, { rebuild: true, collect: false });
+    await buildIndex(wikiCfg, { rebuild: true });
+    clearReverseCache();
+    const rev = await reverseLinks(wikiCfg, codeCfg);
+    assert.ok(rev.bySymbol.get("WidgetRegistry"), "WidgetRegistry inverted from live note->code links");
+    assert.equal(await reverseLinks(wikiCfg, codeCfg), rev, "cached: same object");
+    clearReverseCache();
+    assert.notEqual(await reverseLinks(wikiCfg, codeCfg), rev, "rebuilt after clear");
+  } finally { rmSync(code, { recursive: true, force: true }); rmSync(wiki, { recursive: true, force: true }); }
+});
+
 import { makeHandlers } from "../src/serve.mjs";
 
 test("serve makeHandlers augments /connections + /graph with code when linkCfg is set", async () => {
