@@ -11,3 +11,7 @@ docs/superpowers/
 # smoke-test / throwaway graph outputs
 /gtir-graph.html
 /focus.html
+# dedicated Obsidian wiki vault — its own inner git repo, not part of the shipped code
+/wiki/
+# Claude Code per-user local settings (machine-specific; the shared hook lives in settings.json)
+.claude/settings.local.json

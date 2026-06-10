@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "gtir": {
+      "command": "node",
+      "args": [
+        "bin/gtir.mjs",
+        "mcp",
+        "--repo",
+        ".",
+        "--watch"
+      ]
+    }
+  }
+}

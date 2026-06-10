@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Grep|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node bin/gtir.mjs hooknudge",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
