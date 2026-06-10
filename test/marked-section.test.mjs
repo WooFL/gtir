@@ -26,3 +26,22 @@ test("removeMarkedSection: removes block, preserves prose; round-trips", () => {
   const removed = removeMarkedSection(added, S, E);
   assert.equal(removed.replace(/\s+$/, ""), original.replace(/\s+$/, ""));
 });
+
+const noBareLf = (s) => !/(?<!\r)\n/.test(s); // every "\n" is part of a "\r\n"
+
+test("upsertMarkedSection: CRLF host => block written CRLF, no mixed EOL, idempotent", () => {
+  const src = "# Doc\r\n\r\nkeep\r\n";
+  const out = upsertMarkedSection(src, S, E, "row1\nrow2"); // body arrives LF (like renderRefsTable)
+  assert.ok(out.includes(S) && out.includes("row1") && out.includes("row2"));
+  assert.ok(noBareLf(out), "every newline is CRLF — no bare LF leaked into a CRLF file");
+  assert.match(out, /keep/);
+  assert.equal(upsertMarkedSection(out, S, E, "row1\nrow2"), out, "idempotent on CRLF");
+});
+
+test("removeMarkedSection: CRLF host => strips block, preserves CRLF prose", () => {
+  const added = upsertMarkedSection("# Doc\r\n\r\nprose\r\n", S, E, "BODY");
+  const removed = removeMarkedSection(added, S, E);
+  assert.ok(noBareLf(removed), "no bare LF after removal");
+  assert.match(removed, /prose/);
+  assert.ok(!removed.includes(S));
+});
