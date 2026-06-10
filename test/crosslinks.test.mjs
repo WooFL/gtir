@@ -179,6 +179,20 @@ test("reverseLinks falls back to live crossLinks when no baseline; caches; clear
   } finally { rmSync(code, { recursive: true, force: true }); rmSync(wiki, { recursive: true, force: true }); }
 });
 
+test("reverseLinks baselineOnly: no baseline => empty maps, never opens the wiki store", async () => {
+  // Fake cfgs whose indexDir would make openStore throw if the live fallback were taken.
+  const wikiCfg = { gtirDir: "/no/such/.gtir", indexDir: "/no/such/wiki.lance" };
+  const codeCfg = { indexDir: "/no/such/code.lance" };
+  clearReverseCache();
+  const rev = await reverseLinks(wikiCfg, codeCfg, { baselineOnly: true, deps: { readBaseline: () => null } });
+  assert.equal(rev.bySymbol.size, 0);
+  assert.equal(rev.byPath.size, 0);
+  // The empty result must NOT be cached: a subsequent call (without baselineOnly) should
+  // get a different object, not the same cached empty one.
+  const rev2 = await reverseLinks(wikiCfg, codeCfg, { deps: { readBaseline: () => null } });
+  assert.notEqual(rev2, rev, "baselineOnly result must not be cached");
+});
+
 import { makeHandlers } from "../src/serve.mjs";
 
 test("serve makeHandlers augments /connections + /graph with code when linkCfg is set", async () => {
