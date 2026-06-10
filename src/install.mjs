@@ -54,6 +54,21 @@ export function gtirNavBody() {
   ].join("\n");
 }
 
+// The Cursor rule file (.cursor/rules/gtir.mdc): MDC frontmatter + the shared nav body. Cursor has
+// no PreToolUse-hook equivalent, so this always-applied rule is the nudge channel. gtir owns this
+// file outright (written whole on install, deleted on uninstall).
+export function gtirCursorRuleBody() {
+  return [
+    "---",
+    "description: Prefer gtir's MCP tools for code navigation in this repo.",
+    "alwaysApply: true",
+    "---",
+    "",
+    gtirNavBody(),
+    "",
+  ].join("\n");
+}
+
 // Treat a value as a reusable container ONLY when it's a real plain object. A config
 // file is hand-edited JSON, so a key we expect to be an object can legally be the wrong
 // type (e.g. `{"mcpServers":"x"}` or `{"hooks":[...]}`). Spreading a string would smear

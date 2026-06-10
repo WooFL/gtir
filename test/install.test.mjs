@@ -9,6 +9,7 @@ import {
   gtirMcpEntry,
   gtirHookEntry,
   gtirNavBody,
+  gtirCursorRuleBody,
   addMcpServer,
   removeMcpServer,
   addPreToolUseHook,
@@ -54,6 +55,18 @@ test("gtirNavBody: factual nudge naming context + both search tools", () => {
   assert.match(body, /mcp__gtir__find_code/);
   assert.match(body, /Grep/);
   assert.match(body, /Glob/);
+});
+
+test("gtirCursorRuleBody: MDC frontmatter + nav body", () => {
+  const out = gtirCursorRuleBody();
+  // Frontmatter block at the top
+  assert.match(out, /^---\n/);
+  assert.match(out, /description: .+/);
+  assert.match(out, /alwaysApply: true/);
+  // Closing frontmatter fence then the shared nav body
+  assert.ok(out.includes("\n---\n"), "frontmatter is closed");
+  assert.match(out, /mcp__gtir__context/);
+  assert.match(out, /mcp__gtir__search_code/);
 });
 
 // --- addMcpServer / removeMcpServer ----------------------------------------
