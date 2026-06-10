@@ -6,6 +6,8 @@ import { join, dirname } from "node:path";
 import { openStore } from "./store.mjs";
 import { codeIndexFor, crossLinks } from "./crosslinks.mjs";
 import { snapshotRow, diffBaseline } from "./stale.mjs";
+import { hasRefsBlock, upsertRefsBlock, upsertStaleCallout, removeStaleCallout } from "./refs-block.mjs";
+import { setFrontmatterFields } from "./frontmatter.mjs";
 
 const BASELINE_NAME = "stale-baselines.json";
 function baselinePath(wikiCfg) { return join(wikiCfg.gtirDir, BASELINE_NAME); }
@@ -103,6 +105,86 @@ export function muteQuery(wikiCfg, notePath, symbol) {
   doc.muted[notePath] = [...list];
   writeBaseline(wikiCfg, doc);
   return { muted: { [notePath]: doc.muted[notePath] } };
+}
+
+// Deterministic code->note sync. Refreshes the managed refs block in every note that has one, then
+// per-symbol re-baselines: `signature` drift (now shown in the table) and undrifted symbols are acked;
+// `body`/`removed` drift is LEFT flagged (prose may be wrong — gtir never guesses prose). Flagged notes
+// get a stale callout + frontmatter stale:true; clean notes get them cleared. Patches .md files on disk.
+// deps: { resolve, readNote, writeNote } are injectable for tests.
+export async function syncQuery(wikiCfg, codeCfg, { sha = "unknown", init = false, all = false, notePath = null, deps = {} } = {}) {
+  const doc = readBaseline(wikiCfg);
+  if (!doc) return { error: "no baseline — run: gtir stale baseline" };
+  if (needCode(codeCfg) && !deps.resolve) return { error: "stale needs a code index — pass --link-repo <codeRepo>" };
+  const resolve = deps.resolve || (() => resolveAllNoteRefs(wikiCfg, codeCfg));
+  const current = await resolve();
+  const report = diffBaseline(doc.links, current, doc.muted || {});
+  const staleByNote = new Map((report.stale || []).map((s) => [s.note, s.rows]));
+
+  const readNote = deps.readNote || ((p) => { const fp = join(wikiCfg.repo, p); return existsSync(fp) ? readFileSync(fp, "utf8") : null; });
+  const writeNote = deps.writeNote || ((p, text) => writeFileSync(join(wikiCfg.repo, p), text, "utf8"));
+
+  const writeErrors = [];
+
+  // --- init: seed a refs block into target notes that lack one (does not re-baseline)
+  if (init) {
+    const targets = notePath ? [notePath] : (all ? Object.keys(current).filter((n) => (current[n] || []).length) : []);
+    for (const note of targets) {
+      let text;
+      try { text = readNote(note); } catch { writeErrors.push(note); continue; }
+      if (text == null) { writeErrors.push(note); continue; }
+      if (!hasRefsBlock(text)) {
+        try { writeNote(note, upsertRefsBlock(text, current[note] || [], sha)); } catch { writeErrors.push(note); }
+      }
+    }
+  }
+
+  // --- sync: every note with a refs block gets its table refreshed + per-symbol ack + stale toggle
+  const synced = [];
+  const needsProse = [];
+  for (const note of Object.keys(doc.links)) {
+    let text;
+    try { text = readNote(note); } catch { writeErrors.push(note); continue; }
+    if (text == null) { writeErrors.push(note); continue; }
+    if (!hasRefsBlock(text)) continue;
+
+    try {
+      const curRows = current[note] || [];
+      const driftRows = staleByNote.get(note) || [];
+      // sevBySym: keyed by symbol for symbol-kind rows, by codePath for file-kind rows (symbol is undefined).
+      // curBySym: keyed by `${symbol ?? path}#kind` so file rows don't all collapse onto `undefined#file`.
+      const sevBySym = new Map(driftRows.map((r) => [r.symbol ?? r.codePath, r.severity]));
+      const curBySym = new Map(curRows.map((r) => [`${r.symbol ?? r.path}#${r.kind}`, r]));
+
+      text = upsertRefsBlock(text, curRows, sha);
+
+      // per-symbol re-baseline: signature/no-drift → adopt current row; body/removed → keep baseline (flagged)
+      const merged = (doc.links[note] || []).map((b) => {
+        const sev = sevBySym.get(b.symbol ?? b.path);
+        if (sev === "body" || sev === "removed") return b;
+        return curBySym.get(`${b.symbol ?? b.path}#${b.kind}`) || b;
+      });
+
+      const acked = driftRows.filter((r) => r.severity === "signature").map((r) => r.symbol ?? r.codePath);
+      const flagged = driftRows.filter((r) => r.severity === "body" || r.severity === "removed").map((r) => r.symbol ?? r.codePath);
+
+      if (flagged.length) {
+        text = upsertStaleCallout(text, flagged);
+        text = setFrontmatterFields(text, { stale: true, last_synced_sha: sha });
+      } else {
+        text = removeStaleCallout(text);
+        text = setFrontmatterFields(text, { stale: false, last_synced_sha: sha });
+      }
+
+      writeNote(note, text);                 // may throw → caught below; baseline left UNCHANGED on failure
+      doc.links[note] = merged;              // commit the re-baseline only after a successful write
+      if (flagged.length) needsProse.push(note);
+      synced.push({ note, refsRefreshed: true, acked, flagged });
+    } catch { writeErrors.push(note); continue; }
+  }
+
+  writeBaseline(wikiCfg, doc);
+  return { synced, needsProse, writeErrors };
 }
 
 // ---- brief adapter (command-center schema). Mirrors tools/command-center/triggers.mjs writeBrief.
