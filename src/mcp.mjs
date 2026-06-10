@@ -573,24 +573,36 @@ export function defaultNeighborsFn(indexes) {
   };
 }
 
-function findWikiAndCode(indexes) {
+// Pick the notes (wiki) index and the code index from the served set. If more than one code index is
+// served, the FIRST is used (stale tools are single-pair); ambiguity is not currently surfaced.
+export function findWikiAndCode(indexes) {
   const isNotes = (ix) => /nomic|notes/i.test(ix.label) || /nomic/i.test(ix.cfg?.model || "");
   const wiki = indexes.find(isNotes);
   const code = indexes.find((ix) => !isNotes(ix));
   return { wiki, code };
 }
 
+// Narrow a drift report to a single note (used by the stale_check `note` arg).
+export function filterReportToNote(report, note) {
+  if (report.error || !note) return report;
+  const stale = report.stale.filter((s) => s.note === note);
+  return { ...report, stale, staleNotes: stale.length, staleLinks: stale.reduce((n, s) => n + s.rows.length, 0) };
+}
+
 export function defaultStaleCheckFn(indexes) {
-  return async () => {
+  return async (args = {}) => {
     const { wiki, code } = findWikiAndCode(indexes);
-    if (!wiki || !code) return { error: "stale needs a code index — configure both a notes and a code repo" };
-    return staleCheckQuery(wiki.cfg, code.cfg);
+    if (!wiki) return { error: "stale needs a notes index — configure a notes (wiki) repo" };
+    if (!code) return { error: "stale needs a code index — configure a code repo to link the notes to" };
+    const report = await staleCheckQuery(wiki.cfg, code.cfg);
+    return filterReportToNote(report, args && args.note);
   };
 }
 export function defaultStaleAckFn(indexes) {
   return async (note) => {
     const { wiki, code } = findWikiAndCode(indexes);
-    if (!wiki || !code) return { error: "stale needs a code index — configure both a notes and a code repo" };
+    if (!wiki) return { error: "stale needs a notes index — configure a notes (wiki) repo" };
+    if (!code) return { error: "stale needs a code index — configure a code repo to link the notes to" };
     if (!note) return { error: "note is required" };
     return staleAckQuery(wiki.cfg, code.cfg, note);
   };
