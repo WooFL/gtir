@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { fileURLToPath } from "node:url";
 import { realpathSync, readFileSync, existsSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { loadConfig } from "../src/config.mjs";
 import { buildIndex } from "../src/indexer.mjs";
@@ -27,6 +28,7 @@ import { buildGraph, renderHtml, renderMermaid } from "../src/graph.mjs";
 import { impactQuery, orphansQuery, cyclesQuery, pathQuery, graphForSearch } from "../src/graph-queries.mjs";
 import { cochangeQuery, hotspotsQuery } from "../src/git-metrics-run.mjs";
 import { communitiesQuery } from "../src/communities-run.mjs";
+import { baselineQuery, checkQuery, ackQuery, muteQuery, emitBriefs } from "../src/stale-run.mjs";
 import {
   gtirMcpEntry, gtirHookEntry, gtirClaudeMdBody,
   addMcpServer, removeMcpServer, addPreToolUseHook, removePreToolUseHook,
@@ -94,6 +96,30 @@ export async function runHotspots({ repo, window, top }) {
 }
 export async function runCommunities({ repo, symbolLevel, includeAmbiguous, minSize }) {
   return communitiesQuery(loadConfig(repo), { level: symbolLevel ? "symbol" : "file", includeAmbiguous, minSize: minSize ?? 1 });
+}
+
+// `gtir stale <baseline|check|ack|mute>`: drive the note-staleness layer (src/stale-run.mjs).
+// `repo` is the note vault; `linkRepo` is the code repo. For `check` with `emitDir`, also write
+// per-note briefs to that queue dir, stamped with the code repo's current HEAD sha.
+export async function runStale(sub, { repo, linkRepo, emitDir, notePath, muteTarget } = {}) {
+  const wikiCfg = loadConfig(repo);
+  const codeCfg = linkRepo ? loadConfig(linkRepo) : null;
+  if (sub === "baseline") return baselineQuery(wikiCfg, codeCfg);
+  if (sub === "check") {
+    const report = await checkQuery(wikiCfg, codeCfg);
+    if (!report.error && emitDir) {
+      let sha = "unknown";
+      try { sha = execFileSync("git", ["-C", codeCfg.repo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(); } catch { /* leave "unknown" */ }
+      report.written = emitBriefs(report, emitDir, { sha, detectedAt: new Date().toISOString(), now: Date.now() });
+    }
+    return report;
+  }
+  if (sub === "ack") return ackQuery(wikiCfg, codeCfg, notePath);
+  if (sub === "mute") {
+    const [n, sym] = String(muteTarget || "").split("#");
+    return muteQuery(wikiCfg, n, sym);
+  }
+  return { error: `unknown stale subcommand: ${sub}` };
 }
 
 export async function runSetup({ repo } = {}) {
@@ -356,6 +382,7 @@ function parseArgs(argv) {
     else if (a === "--notes") args.notes = true;
     else if (a === "--code") args.code = true;
     else if (a === "--link-repo") args.linkRepo = argv[++i];
+    else if (a === "--emit-briefs") args.emitBriefs = argv[++i];
     else if (a === "--no-cache") args.noCache = true;
     else if (a === "--no-index") args.noIndex = true;
     else if (a === "--no-hook") args.noHook = true;
@@ -945,6 +972,32 @@ async function main() {
         process.stdout.write(JSON.stringify(out, null, 2) + "\n");
         break;
       }
+      case "stale": {
+        const sub = args._[0];
+        if (!["baseline", "check", "ack", "mute"].includes(sub)) {
+          process.stderr.write("usage: gtir stale <baseline|check|ack|mute> [--repo <wiki>] [--link-repo <code>] [--emit-briefs <dir>] [--json]\n");
+          process.exit(2);
+        }
+        const target = args._[1]; // note path (ack) or note#symbol (mute)
+        const r = await runStale(sub, {
+          repo: args.repo || ".", linkRepo: args.linkRepo, emitDir: args.emitBriefs,
+          notePath: target, muteTarget: target,
+        });
+        if (r.error) { process.stderr.write(`${r.error}\n`); process.exit(2); }
+        if (args.json) { process.stdout.write(JSON.stringify(r, null, 2) + "\n"); break; }
+        if (sub === "baseline") process.stdout.write(`baselined ${r.notes} notes, ${r.links} code links\n`);
+        else if (sub === "ack") process.stdout.write(`re-baselined ${r.acked} (${r.links} links)\n`);
+        else if (sub === "mute") process.stdout.write(`muted ${JSON.stringify(r.muted)}\n`);
+        else {
+          const sig = r.stale.reduce((n, s) => n + s.rows.filter((x) => x.severity === "signature").length, 0);
+          const body = r.stale.reduce((n, s) => n + s.rows.filter((x) => x.severity === "body").length, 0);
+          const rem = r.stale.reduce((n, s) => n + s.rows.filter((x) => x.severity === "removed").length, 0);
+          process.stdout.write(`${r.staleNotes} stale notes (${sig} signature, ${body} body, ${rem} removed)\n`);
+          for (const s of r.stale) for (const row of s.rows) process.stdout.write(`  [${row.severity}] ${s.note}  <- ${row.symbol} @ ${row.codePath}:${row.lines}\n`);
+          if (r.written) process.stdout.write(`emitted ${r.written.length} brief(s)\n`);
+        }
+        break;
+      }
       case "status": {
         process.stdout.write(JSON.stringify(await runStatus({ repo }), null, 2) + "\n");
         break;
@@ -1187,6 +1240,7 @@ async function main() {
           "  gtir fetch-grammars   # download prebuilt shader grammars (HLSL/GLSL, ~5MB, no toolchain)",
           "  gtir serve   --repo <project> [--port 7411] [--host 127.0.0.1] [--token <t>] [--watch] [--link-repo <codeRepo>]   # local HTTP API for the Obsidian plugin; link a code index for note->code cross-links",
           "  gtir crosslinks --repo <vault> --link-repo <codeRepo> --path <note.md>             # a note's code references (JSON)",
+          "  gtir stale   <baseline|check|ack|mute> --repo <vault> --link-repo <codeRepo> [--emit-briefs <dir>] [--json]   # flag notes whose referenced code drifted",
           "  gtir mcp     --repo <project> [--label name:<repo>] [--watch [--debounce 1500]] [--print-config]",
           "  gtir eval    --repo <project> [--golden <f>] [-k 10] [--save] [--no-build] [--json]",
           "  gtir eval    --repo <project> --tune [\"ftsWeight=0,0.2;ftsWeightMixed=0,0.3\"]   # sweep fusion weights on the golden set",
