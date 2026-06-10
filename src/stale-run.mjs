@@ -2,13 +2,13 @@
 // bridge, snapshots symbol-body hashes to <wiki>/.gtir/stale-baselines.json, diffs on demand, and emits
 // claude-obsidian command-center briefs. Query fns accept injectable deps for testability.
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, renameSync } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { openStore } from "./store.mjs";
 import { codeIndexFor, crossLinks } from "./crosslinks.mjs";
 import { snapshotRow, diffBaseline } from "./stale.mjs";
 
 const BASELINE_NAME = "stale-baselines.json";
-function baselinePath(wikiCfg) { return join(wikiCfg.indexDir, BASELINE_NAME); }
+function baselinePath(wikiCfg) { return join(wikiCfg.gtirDir, BASELINE_NAME); }
 
 function readBaseline(wikiCfg) {
   const p = baselinePath(wikiCfg);
@@ -17,6 +17,7 @@ function readBaseline(wikiCfg) {
 }
 function writeBaseline(wikiCfg, doc) {
   const p = baselinePath(wikiCfg);
+  mkdirSync(dirname(p), { recursive: true });
   const tmp = p + ".tmp";
   writeFileSync(tmp, JSON.stringify(doc, null, 2), "utf8");
   renameSync(tmp, p);

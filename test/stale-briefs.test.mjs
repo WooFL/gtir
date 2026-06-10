@@ -43,7 +43,7 @@ test("emitBriefs dedupes a second call for the same note", () => {
 
 test("checkQuery returns no-baseline error when baseline file is absent", async () => {
   const wikiDir = mkdtempSync(join(tmpdir(), "wiki-"));
-  const cfg = { indexDir: wikiDir };
+  const cfg = { gtirDir: wikiDir };
   const out = await checkQuery(cfg, {}, { resolve: async () => ({}) });
   assert.match(out.error, /no baseline/);
   rmSync(wikiDir, { recursive: true, force: true });
@@ -51,7 +51,7 @@ test("checkQuery returns no-baseline error when baseline file is absent", async 
 
 test("checkQuery diffs an injected current resolution against the baseline file", async () => {
   const wikiDir = mkdtempSync(join(tmpdir(), "wiki-"));
-  const cfg = { indexDir: wikiDir };
+  const cfg = { gtirDir: wikiDir };
   writeFileSync(join(wikiDir, "stale-baselines.json"), JSON.stringify({
     version: 1,
     links: { "a.md": [{ symbol: "f", path: "a.ts", lines: "1-3", kind: "symbol", sigHash: "s1", bodyHash: "b1", sig: "f()", snippet: "f() {" }] },
