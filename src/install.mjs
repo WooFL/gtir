@@ -183,6 +183,26 @@ export function removeMarkedSection(text, startMark, endMark) {
   return stripped.replace(/\s*$/, src.replace(/\s*$/, "").length ? "\n" : "");
 }
 
+// --- verify predicates (pure; the CLI feeds them parsed file contents) ------
+
+// True iff `json` has a gtir server under a well-formed `mcpServers` object.
+export function mcpHasGtir(json) {
+  const s = json?.mcpServers;
+  return !!(s && typeof s === "object" && !Array.isArray(s) && s.gtir);
+}
+
+// True iff `json` has a PreToolUse entry whose command contains gtir's hook key.
+export function settingsHasHook(json) {
+  const arr = json?.hooks?.PreToolUse;
+  return Array.isArray(arr) && arr.some((e) =>
+    Array.isArray(e?.hooks) && e.hooks.some((h) => typeof h?.command === "string" && h.command.includes(HOOK_MATCH_KEY)));
+}
+
+// True iff `text` contains gtir's marked section (both fences).
+export function markedSectionPresent(text) {
+  return typeof text === "string" && text.includes(GTIR_START) && text.includes(GTIR_END);
+}
+
 // --- hooknudge handler (pure; the CLI feeds it stdin) -----------------------
 
 // Factual nudge text surfaced to the agent when it reaches for Grep/Glob.

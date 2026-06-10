@@ -17,6 +17,9 @@ import {
   upsertMarkedSection,
   removeMarkedSection,
   hooknudge,
+  mcpHasGtir,
+  settingsHasHook,
+  markedSectionPresent,
   GTIR_START,
   GTIR_END,
   HOOK_MATCH_KEY,
@@ -539,4 +542,30 @@ test("runInstall idempotency with richer gtir: install twice => no change to .mc
   runInstall({ repo });
   const after2 = readFileSync(join(repo, ".mcp.json"), "utf8");
   assert.equal(after2, after1, ".mcp.json unchanged on second install");
+});
+
+// --- verify predicates ---------------------------------------------------------
+
+test("mcpHasGtir: true only when mcpServers.gtir is present", () => {
+  assert.equal(mcpHasGtir({ mcpServers: { gtir: gtirMcpEntry(BIN) } }), true);
+  assert.equal(mcpHasGtir({ mcpServers: { other: {} } }), false);
+  assert.equal(mcpHasGtir({}), false);
+  assert.equal(mcpHasGtir({ mcpServers: "x" }), false); // malformed
+  assert.equal(mcpHasGtir(null), false);
+});
+
+test("settingsHasHook: true only when a PreToolUse hook command contains the match key", () => {
+  const withHook = addPreToolUseHook({}, gtirHookEntry(BIN), HOOK_MATCH_KEY);
+  assert.equal(settingsHasHook(withHook), true);
+  assert.equal(settingsHasHook({ hooks: { PreToolUse: [{ matcher: "Bash", hooks: [{ command: "echo" }] }] } }), false);
+  assert.equal(settingsHasHook({}), false);
+  assert.equal(settingsHasHook({ hooks: "x" }), false); // malformed
+});
+
+test("markedSectionPresent: true only when both gtir marks present", () => {
+  const withSection = upsertMarkedSection("# Doc\n", GTIR_START, GTIR_END, "BODY");
+  assert.equal(markedSectionPresent(withSection), true);
+  assert.equal(markedSectionPresent("# Doc\nno marks\n"), false);
+  assert.equal(markedSectionPresent(""), false);
+  assert.equal(markedSectionPresent(undefined), false);
 });
