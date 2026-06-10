@@ -11,6 +11,7 @@ import { buildAdjacency, callersOf, calleesOf, neighborsOf } from "./edges.mjs";
 import { impactQuery, orphansQuery, cyclesQuery, pathQuery, graphForSearch, clearGraphCache } from "./graph-queries.mjs";
 import { contextFor } from "./graph-retrieval.mjs";
 import { buildContext } from "./context.mjs";
+import { checkQuery as staleCheckQuery, ackQuery as staleAckQuery } from "./stale-run.mjs";
 
 export function sanitizeLabel(s) {
   return String(s).toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "index";
@@ -214,6 +215,18 @@ export function buildTools(indexes) {
     description: "List the indexes this gtir MCP server serves, with model, dim, file/chunk count, and last-built time.",
     inputSchema: { type: "object", properties: {} },
   });
+  tools.push({
+    name: "stale_check",
+    description: "After changing code, list wiki notes whose cited code has drifted (signature/body/removed). " +
+      "Returns each stale note + symbol + severity + before/now. Reconcile each note, then call stale_ack. " +
+      "Requires both a notes index and a code index to be served.",
+    inputSchema: { type: "object", properties: { note: { type: "string", description: "scope to one note path (optional)" } } },
+  });
+  tools.push({
+    name: "stale_ack",
+    description: "Re-baseline a wiki note after you reconciled it to current code, so the same drift stops flagging.",
+    inputSchema: { type: "object", properties: { note: { type: "string", description: "the note path to re-baseline" } }, required: ["note"] },
+  });
   return tools;
 }
 
@@ -297,7 +310,7 @@ export function parseToolName(name) {
 
 const stripSnippet = (results) => results.map(({ snippet, ...rest }) => rest);
 
-async function dispatchToolCall(params, ctx) {
+export async function dispatchToolCall(params, ctx) {
   const { indexes, searchFn, statusFn, readFn, outlineFn, similarFn, findFn, callersFn, calleesFn, neighborsFn, impactFn, orphansFn, cyclesFn, pathFn, contextFn } = ctx;
   const name = params.name;
   const args = params.arguments ?? {};
@@ -306,6 +319,16 @@ async function dispatchToolCall(params, ctx) {
     if (name === "gtir_status") {
       const status = await statusFn();
       return reply(JSON.stringify(status, null, 2), { indexes: status });
+    }
+    if (name === "stale_check") {
+      const out = await ctx.staleCheckFn(args);
+      if (out.error) return { content: [{ type: "text", text: out.error }], isError: true };
+      return reply(JSON.stringify(out, null, 2), out);
+    }
+    if (name === "stale_ack") {
+      const out = await ctx.staleAckFn(args.note);
+      if (out.error) return { content: [{ type: "text", text: out.error }], isError: true };
+      return reply(JSON.stringify(out, null, 2), out);
     }
     const parsed = parseToolName(name);
     if (parsed) {
@@ -550,6 +573,41 @@ export function defaultNeighborsFn(indexes) {
   };
 }
 
+// Pick the notes (wiki) index and the code index from the served set. If more than one code index is
+// served, the FIRST is used (stale tools are single-pair); ambiguity is not currently surfaced.
+export function findWikiAndCode(indexes) {
+  const isNotes = (ix) => /nomic|notes/i.test(ix.label) || /nomic/i.test(ix.cfg?.model || "");
+  const wiki = indexes.find(isNotes);
+  const code = indexes.find((ix) => !isNotes(ix));
+  return { wiki, code };
+}
+
+// Narrow a drift report to a single note (used by the stale_check `note` arg).
+export function filterReportToNote(report, note) {
+  if (report.error || !note) return report;
+  const stale = report.stale.filter((s) => s.note === note);
+  return { ...report, stale, staleNotes: stale.length, staleLinks: stale.reduce((n, s) => n + s.rows.length, 0) };
+}
+
+export function defaultStaleCheckFn(indexes) {
+  return async (args = {}) => {
+    const { wiki, code } = findWikiAndCode(indexes);
+    if (!wiki) return { error: "stale needs a notes index — configure a notes (wiki) repo" };
+    if (!code) return { error: "stale needs a code index — configure a code repo to link the notes to" };
+    const report = await staleCheckQuery(wiki.cfg, code.cfg);
+    return filterReportToNote(report, args && args.note);
+  };
+}
+export function defaultStaleAckFn(indexes) {
+  return async (note) => {
+    const { wiki, code } = findWikiAndCode(indexes);
+    if (!wiki) return { error: "stale needs a notes index — configure a notes (wiki) repo" };
+    if (!code) return { error: "stale needs a code index — configure a code repo to link the notes to" };
+    if (!note) return { error: "note is required" };
+    return staleAckQuery(wiki.cfg, code.cfg, note);
+  };
+}
+
 export function defaultImpactFn(indexes) {
   return async (label, opts) => {
     const ix = indexes.find((i) => i.label === label);
@@ -614,6 +672,8 @@ export function serveStdio(indexes, { version } = {}) {
     impactFn: defaultImpactFn(indexes), orphansFn: defaultOrphansFn(indexes), cyclesFn: defaultCyclesFn(indexes),
     pathFn: defaultPathFn(indexes),
     contextFn: defaultContextFn(indexes),
+    staleCheckFn: defaultStaleCheckFn(indexes),
+    staleAckFn: defaultStaleAckFn(indexes),
   };
   let buf = "";
   process.stdin.setEncoding("utf8");

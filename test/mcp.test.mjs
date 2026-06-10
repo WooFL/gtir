@@ -54,7 +54,7 @@ test("buildTools emits search/read/outline/similar/find/callers/callees/neighbor
     "callers_code", "callees_code", "neighbors_code", "impact_code", "orphans_code", "cycles_code", "path_code",
     "context_notes", "search_notes", "read_notes", "outline_notes", "similar_notes", "find_notes",
     "backlinks_notes", "links_notes", "neighbors_notes", "impact_notes", "orphans_notes", "cycles_notes", "path_notes",
-    "gtir_status",
+    "gtir_status", "stale_check", "stale_ack",
   ]);
   assert.deepEqual(tools[1].inputSchema.required, ["query"]);   // search
   assert.ok(tools[1].inputSchema.properties.compact);           // search gained compact
@@ -66,7 +66,7 @@ test("buildTools emits search/read/outline/similar/find/callers/callees/neighbor
   assert.deepEqual(tools[6].inputSchema.required, ["symbol"]);  // callers
   assert.deepEqual(tools[7].inputSchema.required, ["symbol"]);  // callees
   assert.deepEqual(tools[8].inputSchema.required, ["symbol"]);  // neighbors
-  assert.deepEqual(tools.at(-1).inputSchema.properties, {});    // status takes no args
+  assert.deepEqual(tools.find((t) => t.name === "gtir_status").inputSchema.properties, {});    // status takes no args
 });
 
 import { handleRequest } from "../src/mcp.mjs";
@@ -94,7 +94,7 @@ test("handleRequest: tools/list returns the tool set", async () => {
   const r = await handleRequest({ jsonrpc: "2.0", id: 2, method: "tools/list" }, baseCtx);
   assert.deepEqual(r.result.tools.map((t) => t.name),
     ["context_code", "search_code", "read_code", "outline_code", "similar_code", "find_code",
-     "callers_code", "callees_code", "neighbors_code", "impact_code", "orphans_code", "cycles_code", "path_code", "gtir_status"]);
+     "callers_code", "callees_code", "neighbors_code", "impact_code", "orphans_code", "cycles_code", "path_code", "gtir_status", "stale_check", "stale_ack"]);
 });
 
 test("handleRequest: unknown method => JSON-RPC -32601", async () => {
