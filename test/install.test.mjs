@@ -730,3 +730,28 @@ test("mcpHasWikiPair: true iff the gtir server has >= 2 --repo args", () => {
   assert.equal(mcpHasWikiPair({ mcpServers: { gtir: { args: ["x", "--repo", ".", "--watch"] } } }), false);
   assert.equal(mcpHasWikiPair({}), false);
 });
+
+test("runInstall --wiki: writes config.wiki, pairs the MCP, adds the PostToolUse hook", () => {
+  const repo = tmp();
+  runInstall({ repo, wiki: "../wiki" });
+  const cfg = JSON.parse(readFileSync(join(repo, ".gtir", "config.json"), "utf8"));
+  assert.equal(cfg.wiki, "../wiki");
+  const mcp = JSON.parse(readFileSync(join(repo, ".mcp.json"), "utf8"));
+  assert.equal(mcp.mcpServers.gtir.args.filter((a) => a === "--repo").length, 2);
+  assert.ok(settingsHasPostHook(JSON.parse(readFileSync(join(repo, ".claude", "settings.json"), "utf8"))));
+});
+
+test("runInstall without --wiki: code-only MCP, no PostToolUse hook", () => {
+  const repo = tmp();
+  runInstall({ repo });
+  const mcp = JSON.parse(readFileSync(join(repo, ".mcp.json"), "utf8"));
+  assert.equal(mcp.mcpServers.gtir.args.filter((a) => a === "--repo").length, 1);
+  assert.ok(!settingsHasPostHook(JSON.parse(readFileSync(join(repo, ".claude", "settings.json"), "utf8"))));
+});
+
+test("runInstall --wiki then uninstall: removes the PostToolUse hook", () => {
+  const repo = tmp();
+  runInstall({ repo, wiki: "../wiki" });
+  runInstall({ repo, uninstall: true });
+  assert.ok(!settingsHasPostHook(JSON.parse(readFileSync(join(repo, ".claude", "settings.json"), "utf8"))));
+});

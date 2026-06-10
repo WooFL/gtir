@@ -47,6 +47,10 @@ import {
   GTIR_START,
   GTIR_END,
   HOOK_MATCH_KEY,
+  addPostToolUseHook,
+  removePostToolUseHook,
+  gtirPostHookEntry,
+  POST_HOOK_MATCH_KEY,
 } from "../src/install.mjs";
 import { mkdirSync } from "node:fs";
 
@@ -278,7 +282,7 @@ export async function runScipEval({ repo, scip, json = false, sampleN = 10, _edg
 // preserve an existing gtir entry unless --force. --verify is check-only (no writes; exit 0/1).
 // Per-file errors are collected into writeErrors and never abort the remaining writes.
 export function runInstall({ repo = process.cwd(), uninstall = false, force = false,
-                            assistants = null, verify = false,
+                            assistants = null, verify = false, wiki = null,
                             log = (m) => process.stderr.write(m + "\n") } = {}) {
   const absBin = fileURLToPath(import.meta.url); // the real path to this bin/gtir.mjs
 
@@ -311,19 +315,32 @@ export function runInstall({ repo = process.cwd(), uninstall = false, force = fa
       const existing = m0?.mcpServers?.gtir;
       const hasExisting = existing && typeof existing === "object" && !Array.isArray(existing);
       if (hasExisting && !force) { log(`${rel(file)} — left existing gtir entry (use --force to overwrite)`); return; }
-      writeJson(file, addMcpServer(m0, "gtir", gtirMcpEntry(absBin), { force }));
+      writeJson(file, addMcpServer(m0, "gtir", gtirMcpEntry(absBin, wiki), { force }));
     } catch (e) { writeErrors.push(file); log(`gtir install: WARNING — could not write ${file}: ${e.message}`); }
   };
 
-  // Claude settings.json PreToolUse hook.
+  // Claude settings.json: PreToolUse nav hook always; PostToolUse drift hook only when a wiki is paired.
   const settingsWrite = (file) => {
     const existed = existsSync(file);
     if (uninstall && !existed) return;
     try {
       mkdirSync(path.dirname(file), { recursive: true });
       const s0 = readJson(file);
-      const s1 = uninstall ? removePreToolUseHook(s0, HOOK_MATCH_KEY) : addPreToolUseHook(s0, gtirHookEntry(absBin), HOOK_MATCH_KEY);
+      let s1 = uninstall ? removePreToolUseHook(s0, HOOK_MATCH_KEY) : addPreToolUseHook(s0, gtirHookEntry(absBin), HOOK_MATCH_KEY);
+      if (uninstall) s1 = removePostToolUseHook(s1, POST_HOOK_MATCH_KEY);
+      else if (wiki) s1 = addPostToolUseHook(s1, gtirPostHookEntry(absBin), POST_HOOK_MATCH_KEY);
+      else s1 = removePostToolUseHook(s1, POST_HOOK_MATCH_KEY);
       writeJson(file, s1);
+    } catch (e) { writeErrors.push(file); log(`gtir install: WARNING — could not write ${file}: ${e.message}`); }
+  };
+
+  // gtir config: persist the wiki pairing so `context`/`driftnudge` find it (no-op without --wiki).
+  const configWrite = () => {
+    if (uninstall || !wiki) return;
+    const file = path.join(repo, ".gtir", "config.json");
+    try {
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeJson(file, { ...readJson(file), wiki });
     } catch (e) { writeErrors.push(file); log(`gtir install: WARNING — could not write ${file}: ${e.message}`); }
   };
 
@@ -350,6 +367,7 @@ export function runInstall({ repo = process.cwd(), uninstall = false, force = fa
     catch (e) { writeErrors.push(file); log(`gtir install: WARNING — could not write ${file}: ${e.message}`); }
   };
 
+  configWrite();
   const wrote = [];
   if (sel.claude) {
     mcpFileWrite(path.join(repo, ".mcp.json"));
