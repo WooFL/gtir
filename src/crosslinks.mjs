@@ -148,7 +148,10 @@ export async function reverseLinks(wikiCfg, codeCfg, { deps = {} } = {}) {
     const rows = await wikiStore.allChunkRows(["path"]);
     const notePaths = [...new Set(rows.map((r) => r.path))];
     linksByNote = {};
-    for (const note of notePaths) linksByNote[note] = await codeLinksFor(wikiCfg, codeCfg, note);
+    for (const note of notePaths) {
+      try { linksByNote[note] = await codeLinksFor(wikiCfg, codeCfg, note); }
+      catch { linksByNote[note] = []; }  // one unresolvable note must not sink the whole reverse index
+    }
   }
   const rev = invertLinks(linksByNote);
   _revCache.set(key, rev);
