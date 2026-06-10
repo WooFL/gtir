@@ -4,9 +4,8 @@
 import { basename, join } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { openStore } from "./store.mjs";
-import { buildSymbolInventory } from "./graph-queries.mjs";
+import { buildSymbolInventory, graphForSearch } from "./graph-queries.mjs";
 import { queryIdentifiers } from "./search.mjs";
-import { graphForSearch } from "./graph-queries.mjs";
 import { nodeKey } from "./edge-graph.mjs";
 
 const CODE_EXT = "(?:ts|tsx|js|jsx|mjs|cjs|py|rs|go|c|cc|cpp|h|hpp|cs|java|kt|rb|swift)";
