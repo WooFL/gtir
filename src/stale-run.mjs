@@ -148,33 +148,39 @@ export async function syncQuery(wikiCfg, codeCfg, { sha = "unknown", init = fals
     if (text == null) { writeErrors.push(note); continue; }
     if (!hasRefsBlock(text)) continue;
 
-    const curRows = current[note] || [];
-    const driftRows = staleByNote.get(note) || [];
-    const sevBySym = new Map(driftRows.map((r) => [r.symbol, r.severity]));
-    const curBySym = new Map(curRows.map((r) => [`${r.symbol}#${r.kind}`, r]));
+    try {
+      const curRows = current[note] || [];
+      const driftRows = staleByNote.get(note) || [];
+      // sevBySym is keyed by symbol only (the drift rows from diffBaseline carry no kind). A same-name
+      // collision across kinds errs toward FLAGGING (body/removed wins), never toward masking — safe.
+      const sevBySym = new Map(driftRows.map((r) => [r.symbol, r.severity]));
+      const curBySym = new Map(curRows.map((r) => [`${r.symbol}#${r.kind}`, r]));
 
-    text = upsertRefsBlock(text, curRows, sha);
+      text = upsertRefsBlock(text, curRows, sha);
 
-    doc.links[note] = (doc.links[note] || []).map((b) => {
-      const sev = sevBySym.get(b.symbol);
-      if (sev === "body" || sev === "removed") return b;
-      return curBySym.get(`${b.symbol}#${b.kind}`) || b;
-    });
+      // per-symbol re-baseline: signature/no-drift → adopt current row; body/removed → keep baseline (flagged)
+      const merged = (doc.links[note] || []).map((b) => {
+        const sev = sevBySym.get(b.symbol);
+        if (sev === "body" || sev === "removed") return b;
+        return curBySym.get(`${b.symbol}#${b.kind}`) || b;
+      });
 
-    const acked = driftRows.filter((r) => r.severity === "signature").map((r) => r.symbol);
-    const flagged = driftRows.filter((r) => r.severity === "body" || r.severity === "removed").map((r) => r.symbol);
+      const acked = driftRows.filter((r) => r.severity === "signature").map((r) => r.symbol);
+      const flagged = driftRows.filter((r) => r.severity === "body" || r.severity === "removed").map((r) => r.symbol);
 
-    if (flagged.length) {
-      text = upsertStaleCallout(text, flagged);
-      text = setFrontmatterFields(text, { stale: true, last_synced_sha: sha });
-      needsProse.push(note);
-    } else {
-      text = removeStaleCallout(text);
-      text = setFrontmatterFields(text, { stale: false, last_synced_sha: sha });
-    }
+      if (flagged.length) {
+        text = upsertStaleCallout(text, flagged);
+        text = setFrontmatterFields(text, { stale: true, last_synced_sha: sha });
+      } else {
+        text = removeStaleCallout(text);
+        text = setFrontmatterFields(text, { stale: false, last_synced_sha: sha });
+      }
 
-    try { writeNote(note, text); } catch { writeErrors.push(note); continue; }
-    synced.push({ note, refsRefreshed: true, acked, flagged });
+      writeNote(note, text);                 // may throw → caught below; baseline left UNCHANGED on failure
+      doc.links[note] = merged;              // commit the re-baseline only after a successful write
+      if (flagged.length) needsProse.push(note);
+      synced.push({ note, refsRefreshed: true, acked, flagged });
+    } catch { writeErrors.push(note); continue; }
   }
 
   writeBaseline(wikiCfg, doc);
