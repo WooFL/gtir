@@ -193,6 +193,44 @@ test("reverseLinks baselineOnly: no baseline => empty maps, never opens the wiki
   assert.notEqual(rev2, rev, "baselineOnly result must not be cached");
 });
 
+import { codeStructure } from "../src/crosslinks.mjs";
+import { clearGraphCache } from "../src/graph-queries.mjs";
+
+test("codeStructure keeps call edges only between two shown symbols", async () => {
+  // foo() calls bar() and qux(); bar() calls baz(). Mirrors the codeRepo()/loadConfig harness
+  // already used by the codeLinksFor test above (loadConfig takes a repo PATH; fetch is stubbed
+  // in the _before block, so buildIndex/indexEdges run offline).
+  const repo = mkdtempSync(join(tmpdir(), "gtir-cs-"));
+  mkdirSync(join(repo, "src"), { recursive: true });
+  writeFileSync(join(repo, "src", "m.ts"),
+    "export function bar(){ return baz(); }\n" +
+    "export function baz(){ return 1; }\n" +
+    "export function qux(){ return 2; }\n" +
+    "export function foo(){ return bar() + qux(); }\n");
+  const cfg = { ...loadConfig(repo), model: "qwen3-embedding:0.6b", ollamaUrl: "http://localhost:11434" };
+  try {
+    await buildIndex(cfg, { rebuild: true });
+    await indexEdges(cfg, { rebuild: true, collect: false });
+    clearGraphCache(cfg.indexDir);
+    // Shown = foo, bar (NOT qux, NOT baz). foo->bar survives; foo->qux dropped (qux not shown);
+    // bar->baz dropped (baz not shown).
+    const shown = [
+      { kind: "symbol", symbol: "foo", path: "src/m.ts" },
+      { kind: "symbol", symbol: "bar", path: "src/m.ts" },
+    ];
+    const { callEdges } = await codeStructure(cfg, shown);
+    assert.equal(callEdges.length, 1);
+    assert.deepEqual(callEdges[0], { fromPath: "src/m.ts", fromSymbol: "foo", toPath: "src/m.ts", toSymbol: "bar" });
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("codeStructure returns no edges when fewer than 2 symbols are shown", async () => {
+  const { callEdges } = await codeStructure({ indexDir: "unused" }, [{ kind: "symbol", symbol: "x", path: "a.ts" }]);
+  assert.deepEqual(callEdges, []);
+});
+
 import { makeHandlers } from "../src/serve.mjs";
 
 test("serve makeHandlers augments /connections + /graph with code when linkCfg is set", async () => {

@@ -6,6 +6,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { openStore } from "./store.mjs";
 import { buildSymbolInventory } from "./graph-queries.mjs";
 import { queryIdentifiers } from "./search.mjs";
+import { graphForSearch } from "./graph-queries.mjs";
+import { nodeKey } from "./edge-graph.mjs";
 
 const CODE_EXT = "(?:ts|tsx|js|jsx|mjs|cjs|py|rs|go|c|cc|cpp|h|hpp|cs|java|kt|rb|swift)";
 const PATH_RE = new RegExp(`(?:packages|apps|src|lib|tools|scripts)/[\\w\\-./]+\\.${CODE_EXT}`, "g");
@@ -169,6 +171,31 @@ export async function codeLinksFor(wikiCfg, codeCfg, notePath, { cap } = {}) {
   const noteText = rows.map((r) => r.text).join("\n");
   const { inv, files } = await codeIndexFor(codeCfg);
   return crossLinks(inv, files, noteText, { cap: cap ?? wikiCfg.crossLinkCap ?? 15 });
+}
+
+// Caller->callee edges AMONG the shown symbols only (set intersection over the resolved call
+// graph). Never introduces a new symbol node. Returns { callEdges:[{fromPath,fromSymbol,toPath,
+// toSymbol}] }. Needs >=2 shown symbols to have any edge between them.
+export async function codeStructure(codeCfg, codeLinks) {
+  const symbols = (codeLinks || []).filter((c) => (c.kind === undefined || c.kind === "symbol") && c.symbol);
+  if (symbols.length < 2) return { callEdges: [] };
+  const { graph } = await graphForSearch(codeCfg);
+  const keyMeta = new Map(); // nodeKey -> { path, symbol }
+  for (const s of symbols) keyMeta.set(nodeKey(s.path, s.symbol), { path: s.path, symbol: s.symbol });
+  const callEdges = [];
+  const seen = new Set();
+  for (const [key, from] of keyMeta) {
+    const callees = graph.fwd.get(key);
+    if (!callees) continue;
+    for (const dst of callees) {
+      const to = keyMeta.get(dst);
+      if (!to) continue;                    // callee not among shown symbols -> skip
+      const ek = `${key}->${dst}`;
+      if (seen.has(ek)) continue; seen.add(ek);
+      callEdges.push({ fromPath: from.path, fromSymbol: from.symbol, toPath: to.path, toSymbol: to.symbol });
+    }
+  }
+  return { callEdges };
 }
 
 // Append code nodes (kind:"code", a synthetic id so it never collides with a note path) + center->code
