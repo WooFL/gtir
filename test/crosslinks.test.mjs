@@ -118,6 +118,67 @@ test("augmentGraphWithCode with no links returns the graph unchanged", () => {
   assert.equal(augmentGraphWithCode(graph, []).nodes.length, 1);
 });
 
+import { invertLinks, notesFor } from "../src/crosslinks.mjs";
+
+test("invertLinks: symbol rows fill bySymbol+byPath; file rows byPath only; dedup per note", () => {
+  const { bySymbol, byPath } = invertLinks({
+    "n1.md": [{ kind: "symbol", symbol: "foo", path: "a.ts", lines: "1-3", snippet: "fn foo" }],
+    "n2.md": [{ kind: "symbol", symbol: "foo", path: "a.ts", lines: "1-3" },
+              { kind: "file", path: "a.ts" }],
+  });
+  assert.deepEqual(bySymbol.get("foo").map((r) => r.note).sort(), ["n1.md", "n2.md"]);
+  assert.equal(byPath.get("a.ts").length, 2);     // n1 (via symbol's path) + n2 (file row)
+  assert.equal(bySymbol.has("a.ts"), false);       // a file row never lands in bySymbol
+  assert.equal(bySymbol.get("foo")[0].lines, "1-3");
+});
+
+test("notesFor: union of symbol + path matches, deduped per note, capped", () => {
+  const rev = invertLinks({
+    "n1.md": [{ kind: "symbol", symbol: "foo", path: "a.ts", lines: "1-3" }],
+    "n2.md": [{ kind: "file", path: "a.ts" }],
+  });
+  assert.deepEqual(notesFor(rev, { symbol: "foo", path: "a.ts" }).map((n) => n.note).sort(), ["n1.md", "n2.md"]);
+  assert.equal(notesFor(rev, { symbol: "foo", path: "a.ts" }, 1).length, 1);                 // cap
+  assert.equal(notesFor(rev, { symbol: "foo", path: "a.ts" }).filter((n) => n.note === "n1.md").length, 1); // n1 once, not twice
+  assert.deepEqual(notesFor(rev, {}), []);          // no keys -> empty
+});
+
+import { reverseLinks, clearReverseCache } from "../src/crosslinks.mjs";
+
+test("reverseLinks inverts an existing stale baseline without opening a store", async () => {
+  const wiki = mkdtempSync(join(tmpdir(), "gtir-rev-"));
+  mkdirSync(join(wiki, ".gtir"), { recursive: true });
+  writeFileSync(join(wiki, ".gtir", "stale-baselines.json"), JSON.stringify({
+    links: {
+      "design.md": [{ kind: "symbol", symbol: "WidgetRegistry", path: "src/registry.ts", lines: "1-4", snippet: "class WidgetRegistry" }],
+    },
+  }));
+  const wikiCfg = { ...loadConfig(wiki), model: "nomic-embed-text" };
+  const codeCfg = { ...loadConfig(wiki), indexDir: "/nonexistent/code.lance" }; // distinct cache key; never opened
+  try {
+    clearReverseCache();
+    const rev = await reverseLinks(wikiCfg, codeCfg);
+    assert.deepEqual(rev.bySymbol.get("WidgetRegistry").map((r) => r.note), ["design.md"]);
+    assert.ok(rev.byPath.get("src/registry.ts"), "path indexed too");
+  } finally { rmSync(wiki, { recursive: true, force: true }); }
+});
+
+test("reverseLinks falls back to live crossLinks when no baseline; caches; clears", async () => {
+  const code = codeRepo(), wiki = wikiRepo();
+  const codeCfg = { ...loadConfig(code), model: "qwen3-embedding:0.6b", ollamaUrl: "http://localhost:11434" };
+  const wikiCfg = { ...loadConfig(wiki), model: "nomic-embed-text", ollamaUrl: "http://localhost:11434" };
+  try {
+    await buildIndex(codeCfg, { rebuild: true }); await indexEdges(codeCfg, { rebuild: true, collect: false });
+    await buildIndex(wikiCfg, { rebuild: true });
+    clearReverseCache();
+    const rev = await reverseLinks(wikiCfg, codeCfg);
+    assert.ok(rev.bySymbol.get("WidgetRegistry"), "WidgetRegistry inverted from live note->code links");
+    assert.equal(await reverseLinks(wikiCfg, codeCfg), rev, "cached: same object");
+    clearReverseCache();
+    assert.notEqual(await reverseLinks(wikiCfg, codeCfg), rev, "rebuilt after clear");
+  } finally { rmSync(code, { recursive: true, force: true }); rmSync(wiki, { recursive: true, force: true }); }
+});
+
 import { makeHandlers } from "../src/serve.mjs";
 
 test("serve makeHandlers augments /connections + /graph with code when linkCfg is set", async () => {

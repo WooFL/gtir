@@ -13,6 +13,7 @@ import { impactQuery, orphansQuery, cyclesQuery, pathQuery, graphForSearch, clea
 import { contextFor } from "./graph-retrieval.mjs";
 import { buildContext } from "./context.mjs";
 import { checkQuery as staleCheckQuery, ackQuery as staleAckQuery, syncQuery as staleSyncQuery } from "./stale-run.mjs";
+import { reverseLinks, notesFor } from "./crosslinks.mjs";
 
 export function sanitizeLabel(s) {
   return String(s).toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "index";
@@ -57,7 +58,8 @@ export function buildTools(indexes) {
       description: `Task-shaped: get complete context for ${at} in ONE call. Pass a "query" (searches, then ` +
         `attaches each top hit's source + callers/callees) OR "targets" (symbol names and/or "path:lines" spans, ` +
         `each returned with source + callers/callees + siblings). Includes a retrieval_quality (high/medium/low) ` +
-        `and best_guesses flag. Prefer this over separate search+read+callers calls — it saves round-trips.`,
+        `and best_guesses flag. Prefer this over separate search+read+callers calls — it saves round-trips.` +
+        ` When a wiki is paired, each item also carries "notes" — the wiki notes documenting that code.`,
       inputSchema: {
         type: "object",
         properties: {
@@ -240,6 +242,19 @@ export function buildTools(indexes) {
       all: { type: "boolean", description: "with init: seed every code-citing note" },
     } },
   });
+  tools.push({
+    name: "notes_for",
+    description: "Wiki notes that document a piece of code — pass a symbol name and/or a repo-relative path. " +
+      "The read half of the code↔notes loop: what the knowledge base already says about this code before you change it. " +
+      "Returns { notes: [{ note, lines?, snippet? }] }. Empty when no wiki+code pair is served.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        symbol: { type: "string", description: "code symbol name" },
+        path: { type: "string", description: "repo-relative file path" },
+      },
+    },
+  });
   return tools;
 }
 
@@ -346,6 +361,10 @@ export async function dispatchToolCall(params, ctx) {
     if (name === "stale_sync") {
       const out = await ctx.staleSyncFn(args);
       if (out.error) return { content: [{ type: "text", text: out.error }], isError: true };
+      return reply(JSON.stringify(out, null, 2), out);
+    }
+    if (name === "notes_for") {
+      const out = await ctx.notesForFn(args);
       return reply(JSON.stringify(out, null, 2), out);
     }
     const parsed = parseToolName(name);
@@ -669,7 +688,20 @@ export function defaultContextFn(indexes) {
   return async (label, args) => {
     const ix = indexes.find((i) => i.label === label);
     if (!ix) throw new Error(`unknown index: ${label}`);
-    return buildContext(ix.cfg, { query: args.query, targets: args.targets, k: args.k, contextLines: args.context });
+    // Attach related notes only when THIS index is the code side of a wiki↔code pair on this server.
+    const { wiki, code } = findWikiAndCode(indexes);
+    const paired = wiki && code && ix.label === code.label ? { wikiCfg: wiki.cfg, codeCfg: code.cfg } : null;
+    return buildContext(ix.cfg, { query: args.query, targets: args.targets, k: args.k, contextLines: args.context, wiki: paired });
+  };
+}
+
+export function defaultNotesForFn(indexes) {
+  return async (args = {}) => {
+    const { wiki, code } = findWikiAndCode(indexes);
+    if (!wiki || !code) return { notes: [] };
+    const rev = await reverseLinks(wiki.cfg, code.cfg);
+    const cap = code.cfg.relatedNotesCap ?? 8;
+    return { notes: notesFor(rev, { symbol: args.symbol || null, path: args.path || null }, cap) };
   };
 }
 
@@ -703,6 +735,7 @@ export function serveStdio(indexes, { version } = {}) {
     staleCheckFn: defaultStaleCheckFn(indexes),
     staleAckFn: defaultStaleAckFn(indexes),
     staleSyncFn: defaultStaleSyncFn(indexes),
+    notesForFn: defaultNotesForFn(indexes),
   };
   let buf = "";
   process.stdin.setEncoding("utf8");

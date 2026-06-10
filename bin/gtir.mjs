@@ -2,7 +2,7 @@
 import { fileURLToPath } from "node:url";
 import { realpathSync, readFileSync, existsSync, writeFileSync, rmSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import path from "node:path";
+import path, { resolve } from "node:path";
 import { loadConfig } from "../src/config.mjs";
 import { buildIndex } from "../src/indexer.mjs";
 import { search } from "../src/search.mjs";
@@ -1025,7 +1025,9 @@ async function main() {
         const { buildContext } = await import("../src/context.mjs");
         const cfg = loadConfig(repo);
         const query = args._.length ? args._.join(" ") : null;
-        const out = await buildContext(cfg, { query, targets: args.targets, k: args.k, contextLines: args.context });
+        const linkRepo = args.linkRepo || (cfg.wiki ? resolve(cfg.repo, cfg.wiki) : null);
+        const wiki = linkRepo ? { wikiCfg: loadConfig(linkRepo), codeCfg: cfg } : null;
+        const out = await buildContext(cfg, { query, targets: args.targets, k: args.k, contextLines: args.context, wiki });
         process.stdout.write(JSON.stringify(out, null, 2) + "\n");
         break;
       }
@@ -1333,7 +1335,7 @@ async function main() {
           "  gtir refresh --repo <project> [--no-cache]",
           "  gtir watch   --repo <project> [--debounce 1500] [--sweep 300]   # live-refresh as files change (uncommitted edits)",
           "  gtir search  --repo <project> <query> [-k N] [--path-prefix P] [--language L]",
-          "  gtir context \"<query>\" --repo <project> [-k N]   |   context --repo <project> --target <SYM|path:lines> [--target ...]   # one-call bundled context",
+          "  gtir context \"<query>\" --repo <project> [-k N]   |   context --repo <project> --target <SYM|path:lines> [--target ...] [--link-repo <wiki>]   # one-call bundled context (+ related notes when a wiki is linked)",
           "  gtir demo    [--repo <project>] [--query <q>]   # see meaning-match vs grep, on a sample corpus",
           "  gtir status  --repo <project>",
           "  gtir doctor  [--repo <project>] [--no-pull]   # check Ollama, pull the model, verify readiness",
