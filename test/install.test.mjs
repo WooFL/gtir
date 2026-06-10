@@ -23,6 +23,11 @@ import {
   GTIR_START,
   GTIR_END,
   HOOK_MATCH_KEY,
+  gtirPostHookEntry,
+  addPostToolUseHook,
+  removePostToolUseHook,
+  settingsHasPostHook,
+  POST_HOOK_MATCH_KEY,
 } from "../src/install.mjs";
 import { runInstall } from "../bin/gtir.mjs";
 
@@ -669,4 +674,39 @@ test("CLI `gtir install --verify --all`: exercises cursor verify items, exit 0 w
   const out = execFileSync("node", [BIN, "install", "--repo", repo, "--verify", "--all"], { encoding: "utf8" });
   // execFileSync throws on non-zero exit; reaching here = exit 0
   assert.ok(typeof out === "string");
+});
+
+// --- PostToolUse hook builders (ambient write-back drift nudge) ---------------
+
+test("gtirPostHookEntry: Edit|Write|MultiEdit matcher + forward-slashed driftnudge command", () => {
+  const e = gtirPostHookEntry("C:\\x\\bin\\gtir.mjs");
+  assert.equal(e.matcher, "Edit|Write|MultiEdit");
+  assert.match(e.hooks[0].command, /driftnudge/);
+  assert.ok(!e.hooks[0].command.includes("\\"), "path forward-slashed");
+});
+
+test("addPostToolUseHook: idempotent; preserves unrelated PostToolUse entries", () => {
+  const other = { matcher: "Bash", hooks: [{ type: "command", command: "echo hi" }] };
+  const entry = gtirPostHookEntry("/b/gtir.mjs");
+  let j = { hooks: { PostToolUse: [other] } };
+  j = addPostToolUseHook(j, entry, POST_HOOK_MATCH_KEY);
+  j = addPostToolUseHook(j, entry, POST_HOOK_MATCH_KEY); // twice == once
+  assert.equal(j.hooks.PostToolUse.filter((e) => e.matcher === "Edit|Write|MultiEdit").length, 1);
+  assert.ok(j.hooks.PostToolUse.some((e) => e.matcher === "Bash"), "other entry preserved");
+  assert.ok(settingsHasPostHook(j));
+});
+
+test("removePostToolUseHook: removes gtir's, keeps others; idempotent", () => {
+  const other = { matcher: "Bash", hooks: [{ type: "command", command: "echo hi" }] };
+  let j = { hooks: { PostToolUse: [other, gtirPostHookEntry("/b/gtir.mjs")] } };
+  j = removePostToolUseHook(j, POST_HOOK_MATCH_KEY);
+  assert.ok(!settingsHasPostHook(j));
+  assert.ok(j.hooks.PostToolUse.some((e) => e.matcher === "Bash"));
+  j = removePostToolUseHook(j, POST_HOOK_MATCH_KEY); // idempotent
+  assert.ok(!settingsHasPostHook(j));
+});
+
+test("settingsHasPostHook: false when absent or empty", () => {
+  assert.equal(settingsHasPostHook({}), false);
+  assert.equal(settingsHasPostHook({ hooks: { PostToolUse: [] } }), false);
 });
