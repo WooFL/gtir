@@ -15,10 +15,20 @@ export const HOOK_MATCH_KEY = "hooknudge";
 
 // --- builders ---------------------------------------------------------------
 
-// The `.mcp.json` server entry: run this very gtir bin as an MCP stdio server over
-// the repo it's installed in (`--repo .`), live-refreshing on file changes (`--watch`).
-export function gtirMcpEntry(absBinPath) {
-  return { command: "node", args: [absBinPath, "mcp", "--repo", ".", "--watch"] };
+// The `.mcp.json` server entry: run this gtir bin as an MCP stdio server over the repo (`--repo .`),
+// live-refreshing on file changes (`--watch`). When a wiki is paired, serve it too (a second `--repo`)
+// so the in-session read leg + notes_for work.
+export function gtirMcpEntry(absBinPath, wikiPath = null) {
+  const args = [absBinPath, "mcp", "--repo", "."];
+  if (wikiPath) args.push("--repo", wikiPath);
+  args.push("--watch");
+  return { command: "node", args };
+}
+
+// True iff the gtir MCP server is paired with a wiki (a second `--repo` arg).
+export function mcpHasWikiPair(json) {
+  const args = json?.mcpServers?.gtir?.args;
+  return Array.isArray(args) && args.filter((a) => a === "--repo").length >= 2;
 }
 
 // The PreToolUse hook entry: on Grep/Glob, run `gtir hooknudge` (reads the hook JSON

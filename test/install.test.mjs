@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   gtirMcpEntry,
+  mcpHasWikiPair,
   gtirHookEntry,
   gtirNavBody,
   gtirCursorRuleBody,
@@ -709,4 +710,68 @@ test("removePostToolUseHook: removes gtir's, keeps others; idempotent", () => {
 test("settingsHasPostHook: false when absent or empty", () => {
   assert.equal(settingsHasPostHook({}), false);
   assert.equal(settingsHasPostHook({ hooks: { PostToolUse: [] } }), false);
+});
+
+// --- gtirMcpEntry wiki pairing + mcpHasWikiPair --------------------------------
+
+test("gtirMcpEntry: no wiki => single --repo . + --watch (unchanged)", () => {
+  const e = gtirMcpEntry("/b/gtir.mjs");
+  assert.deepEqual(e.args, ["/b/gtir.mjs", "mcp", "--repo", ".", "--watch"]);
+});
+
+test("gtirMcpEntry: with wiki => a second --repo <wiki> before --watch", () => {
+  const e = gtirMcpEntry("/b/gtir.mjs", "../wiki");
+  assert.deepEqual(e.args, ["/b/gtir.mjs", "mcp", "--repo", ".", "--repo", "../wiki", "--watch"]);
+  assert.equal(e.args.filter((a) => a === "--repo").length, 2);
+});
+
+test("mcpHasWikiPair: true iff the gtir server has >= 2 --repo args", () => {
+  assert.equal(mcpHasWikiPair({ mcpServers: { gtir: { args: ["x", "--repo", ".", "--repo", "../wiki", "--watch"] } } }), true);
+  assert.equal(mcpHasWikiPair({ mcpServers: { gtir: { args: ["x", "--repo", ".", "--watch"] } } }), false);
+  assert.equal(mcpHasWikiPair({}), false);
+});
+
+test("runInstall --wiki: writes config.wiki, pairs the MCP, adds the PostToolUse hook", () => {
+  const repo = tmp();
+  runInstall({ repo, wiki: "../wiki" });
+  const cfg = JSON.parse(readFileSync(join(repo, ".gtir", "config.json"), "utf8"));
+  assert.equal(cfg.wiki, "../wiki");
+  const mcp = JSON.parse(readFileSync(join(repo, ".mcp.json"), "utf8"));
+  assert.equal(mcp.mcpServers.gtir.args.filter((a) => a === "--repo").length, 2);
+  assert.ok(settingsHasPostHook(JSON.parse(readFileSync(join(repo, ".claude", "settings.json"), "utf8"))));
+});
+
+test("runInstall without --wiki: code-only MCP, no PostToolUse hook", () => {
+  const repo = tmp();
+  runInstall({ repo });
+  const mcp = JSON.parse(readFileSync(join(repo, ".mcp.json"), "utf8"));
+  assert.equal(mcp.mcpServers.gtir.args.filter((a) => a === "--repo").length, 1);
+  assert.ok(!settingsHasPostHook(JSON.parse(readFileSync(join(repo, ".claude", "settings.json"), "utf8"))));
+});
+
+test("runInstall --wiki then uninstall: removes the PostToolUse hook", () => {
+  const repo = tmp();
+  runInstall({ repo, wiki: "../wiki" });
+  runInstall({ repo, uninstall: true });
+  assert.ok(!settingsHasPostHook(JSON.parse(readFileSync(join(repo, ".claude", "settings.json"), "utf8"))));
+});
+
+// --- verifyInstall wiki-conditional items (Task 3) ----------------------------
+
+test("verifyInstall: when a wiki is configured, checks the PostToolUse hook + MCP wiki pairing", () => {
+  const repo = tmp();
+  runInstall({ repo, wiki: "../wiki" });
+  mkdirSync(join(repo, ".gtir", "index.lance"), { recursive: true }); // satisfy the index item
+  const r = runInstall({ repo, verify: true });
+  assert.equal(r.ready, true);
+  assert.ok(r.items.some((i) => i.name === "PostToolUse hook" && i.ok));
+  assert.ok(r.items.some((i) => i.name === ".mcp.json wiki pair" && i.ok));
+});
+
+test("verifyInstall: no wiki configured => no PostToolUse/pairing items", () => {
+  const repo = tmp();
+  runInstall({ repo });
+  const r = runInstall({ repo, verify: true });
+  assert.ok(!r.items.some((i) => i.name === "PostToolUse hook"));
+  assert.ok(!r.items.some((i) => i.name === ".mcp.json wiki pair"));
 });

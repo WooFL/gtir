@@ -47,6 +47,12 @@ import {
   GTIR_START,
   GTIR_END,
   HOOK_MATCH_KEY,
+  addPostToolUseHook,
+  removePostToolUseHook,
+  gtirPostHookEntry,
+  POST_HOOK_MATCH_KEY,
+  settingsHasPostHook,
+  mcpHasWikiPair,
 } from "../src/install.mjs";
 import { mkdirSync } from "node:fs";
 
@@ -278,7 +284,7 @@ export async function runScipEval({ repo, scip, json = false, sampleN = 10, _edg
 // preserve an existing gtir entry unless --force. --verify is check-only (no writes; exit 0/1).
 // Per-file errors are collected into writeErrors and never abort the remaining writes.
 export function runInstall({ repo = process.cwd(), uninstall = false, force = false,
-                            assistants = null, verify = false,
+                            assistants = null, verify = false, wiki = null,
                             log = (m) => process.stderr.write(m + "\n") } = {}) {
   const absBin = fileURLToPath(import.meta.url); // the real path to this bin/gtir.mjs
 
@@ -311,19 +317,32 @@ export function runInstall({ repo = process.cwd(), uninstall = false, force = fa
       const existing = m0?.mcpServers?.gtir;
       const hasExisting = existing && typeof existing === "object" && !Array.isArray(existing);
       if (hasExisting && !force) { log(`${rel(file)} — left existing gtir entry (use --force to overwrite)`); return; }
-      writeJson(file, addMcpServer(m0, "gtir", gtirMcpEntry(absBin), { force }));
+      writeJson(file, addMcpServer(m0, "gtir", gtirMcpEntry(absBin, wiki), { force }));
     } catch (e) { writeErrors.push(file); log(`gtir install: WARNING — could not write ${file}: ${e.message}`); }
   };
 
-  // Claude settings.json PreToolUse hook.
+  // Claude settings.json: PreToolUse nav hook always; PostToolUse drift hook only when a wiki is paired.
   const settingsWrite = (file) => {
     const existed = existsSync(file);
     if (uninstall && !existed) return;
     try {
       mkdirSync(path.dirname(file), { recursive: true });
       const s0 = readJson(file);
-      const s1 = uninstall ? removePreToolUseHook(s0, HOOK_MATCH_KEY) : addPreToolUseHook(s0, gtirHookEntry(absBin), HOOK_MATCH_KEY);
+      let s1 = uninstall ? removePreToolUseHook(s0, HOOK_MATCH_KEY) : addPreToolUseHook(s0, gtirHookEntry(absBin), HOOK_MATCH_KEY);
+      if (uninstall) s1 = removePostToolUseHook(s1, POST_HOOK_MATCH_KEY);
+      else if (wiki) s1 = addPostToolUseHook(s1, gtirPostHookEntry(absBin), POST_HOOK_MATCH_KEY);
+      else s1 = removePostToolUseHook(s1, POST_HOOK_MATCH_KEY);
       writeJson(file, s1);
+    } catch (e) { writeErrors.push(file); log(`gtir install: WARNING — could not write ${file}: ${e.message}`); }
+  };
+
+  // gtir config: persist the wiki pairing so `context`/`driftnudge` find it (no-op without --wiki).
+  const configWrite = () => {
+    if (uninstall || !wiki) return;
+    const file = path.join(repo, ".gtir", "config.json");
+    try {
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeJson(file, { ...readJson(file), wiki });
     } catch (e) { writeErrors.push(file); log(`gtir install: WARNING — could not write ${file}: ${e.message}`); }
   };
 
@@ -350,6 +369,7 @@ export function runInstall({ repo = process.cwd(), uninstall = false, force = fa
     catch (e) { writeErrors.push(file); log(`gtir install: WARNING — could not write ${file}: ${e.message}`); }
   };
 
+  configWrite();
   const wrote = [];
   if (sel.claude) {
     mcpFileWrite(path.join(repo, ".mcp.json"));
@@ -389,6 +409,12 @@ function verifyInstall({ repo, sel, log }) {
     items.push({ name: ".cursor/rules/gtir.mdc", ok: existsSync(path.join(repo, ".cursor", "rules", "gtir.mdc")), detail: "rule file" });
   }
   items.push({ name: "AGENTS.md", ok: markedSectionPresent(readText(path.join(repo, "AGENTS.md"))), detail: "nav section" });
+
+  const cfgWiki = readJson(path.join(repo, ".gtir", "config.json")).wiki;
+  if (sel.claude && cfgWiki) {
+    items.push({ name: "PostToolUse hook", ok: settingsHasPostHook(readJson(path.join(repo, ".claude", "settings.json"))), detail: "Edit|Write|MultiEdit → driftnudge" });
+    items.push({ name: ".mcp.json wiki pair", ok: mcpHasWikiPair(readJson(path.join(repo, ".mcp.json"))), detail: `--repo ${cfgWiki}` });
+  }
 
   const ready = items.every((i) => i.ok);
   log(`gtir install --verify (${repo})`);
@@ -448,6 +474,7 @@ function parseArgs(argv) {
     else if (a === "--notes") args.notes = true;
     else if (a === "--code") args.code = true;
     else if (a === "--link-repo") args.linkRepo = argv[++i];
+    else if (a === "--wiki") args.wiki = argv[++i];
     else if (a === "--emit-briefs") args.emitBriefs = argv[++i];
     else if (a === "--no-cache") args.noCache = true;
     else if (a === "--no-index") args.noIndex = true;
@@ -1133,7 +1160,7 @@ async function main() {
           else process.stderr.write(`gtir install: onboarded (${init.indexed.chunks} chunks, dim=${init.indexed.dim})\n`);
         }
         // Phase 2 — wire the selected assistants.
-        const result = runInstall({ repo, uninstall: !!args.uninstall, force: !!args.force, assistants: sel });
+        const result = runInstall({ repo, uninstall: !!args.uninstall, force: !!args.force, assistants: sel, wiki: args.wiki ?? null });
         if (result.writeErrors?.length) process.exitCode = 1;
         break;
       }
@@ -1358,7 +1385,7 @@ async function main() {
           "  gtir doctor  [--repo <project>] [--no-pull]   # check Ollama, pull the model, verify readiness",
           "  gtir setup   --repo <project>",
           "  gtir hook    --repo <project> [--remove]",
-          "  gtir install --repo <project> [--no-index] [--assistant=claude,cursor] [--all] [--uninstall] [--force] [--verify]   # onboard (index + git hook) and wire assistants (.mcp.json/.claude + .cursor + AGENTS.md)",
+          "  gtir install --repo <project> [--wiki <wikiPath>] [--no-index] [--assistant=claude,cursor] [--all] [--uninstall] [--force] [--verify]   # onboard + wire assistants; --wiki pairs an Obsidian vault (MCP read leg + PostToolUse drift nudge)",
           "  gtir hooknudge   # PreToolUse hook: reads stdin, nudges agents toward gtir's MCP tools on Grep/Glob (internal)",
           "  gtir fetch-grammars   # download prebuilt shader grammars (HLSL/GLSL, ~5MB, no toolchain)",
           "  gtir serve   --repo <project> [--port 7411] [--host 127.0.0.1] [--token <t>] [--watch] [--link-repo <codeRepo>]   # local HTTP API for the Obsidian plugin; link a code index for note->code cross-links",
