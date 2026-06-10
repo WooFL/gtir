@@ -256,6 +256,21 @@ export async function runScipEval({ repo, scip, json = false, sampleN = 10, _edg
   return res;
 }
 
+// `gtir install [--repo <path>] [--no-index] [--assistant=claude,cursor] [--all] [--uninstall] [--force] [--verify]`
+// One-command onboarding + multi-assistant wiring. The CLI case runs two phases: Phase 1 onboards
+// (runInit: config + .gitignore + index + git auto-refresh hook; --no-index skips only the embed),
+// Phase 2 calls runInstall to wire each selected assistant. runInstall itself is wiring-only (no
+// index) so it stays unit-testable without Ollama.
+//
+// Targets (all merge-preserving + idempotent via the pure helpers in src/install.mjs):
+//   Claude (baseline): .mcp.json (mcpServers.gtir), .claude/settings.json (Grep|Glob PreToolUse hook), CLAUDE.md (nav section)
+//   Cursor (detected via .cursor/, or --all/--assistant): .cursor/mcp.json (mcpServers.gtir), .cursor/rules/gtir.mdc (gtir-OWNED file)
+//   Universal (always): AGENTS.md (nav section)
+//
+// Ownership: shared files merge/section-upsert and are never deleted on uninstall; the gtir-owned
+// .cursor/rules/gtir.mdc is written whole and deleted on uninstall. .mcp.json/.cursor/mcp.json
+// preserve an existing gtir entry unless --force. --verify is check-only (no writes; exit 0/1).
+// Per-file errors are collected into writeErrors and never abort the remaining writes.
 export function runInstall({ repo = process.cwd(), uninstall = false, force = false,
                             assistants = null, verify = false,
                             log = (m) => process.stderr.write(m + "\n") } = {}) {
