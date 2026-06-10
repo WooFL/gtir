@@ -33,20 +33,39 @@ export function gtirHookEntry(absBinPath) {
   };
 }
 
-// The CLAUDE.md marked-section body. FACTUAL, not imperative (per Claude Code hook
-// guidance): state what the tools do and that they often beat raw Grep/Glob here.
-export function gtirClaudeMdBody() {
+// The shared nav-nudge body. FACTUAL, not imperative (per Claude Code hook guidance): state what
+// the tools do and that they often beat raw Grep/Glob/Read here. Used by CLAUDE.md, AGENTS.md, and
+// the Cursor rule file so all assistants advertise the same tools.
+export function gtirNavBody() {
   return [
     "## Code navigation: prefer gtir's MCP tools",
     "",
     "This repo has a gtir semantic+lexical code index available over MCP. For navigating code,",
-    "these usually beat raw Grep/Glob:",
+    "these usually beat raw Grep/Glob/Read:",
     "",
+    "- `mcp__gtir__context` — pull a full bundle for a symbol or query (definition + source span +",
+    "  callers/callees + siblings) in ONE call, instead of several Read/Grep round-trips.",
     "- `mcp__gtir__search_code` — find code by meaning (a concept, or \"where does X happen\").",
-    "  Reach for it for paraphrased / fuzzy recall instead of guessing Grep patterns.",
     "- `mcp__gtir__find_code` — jump to an exact symbol's definition and references.",
     "",
+    "For repos paired with an Obsidian wiki, `mcp__gtir__stale_check` flags notes whose cited code drifted.",
+    "",
     "Grep/Glob remain fine for exact string matches and file-name globs.",
+  ].join("\n");
+}
+
+// The Cursor rule file (.cursor/rules/gtir.mdc): MDC frontmatter + the shared nav body. Cursor has
+// no PreToolUse-hook equivalent, so this always-applied rule is the nudge channel. gtir owns this
+// file outright (written whole on install, deleted on uninstall).
+export function gtirCursorRuleBody() {
+  return [
+    "---",
+    "description: Prefer gtir's MCP tools for code navigation in this repo.",
+    "alwaysApply: true",
+    "---",
+    "",
+    gtirNavBody(),
+    "",
   ].join("\n");
 }
 
@@ -164,13 +183,33 @@ export function removeMarkedSection(text, startMark, endMark) {
   return stripped.replace(/\s*$/, src.replace(/\s*$/, "").length ? "\n" : "");
 }
 
+// --- verify predicates (pure; the CLI feeds them parsed file contents) ------
+
+// True iff `json` has a gtir server under a well-formed `mcpServers` object.
+export function mcpHasGtir(json) {
+  const s = json?.mcpServers;
+  return !!(s && typeof s === "object" && !Array.isArray(s) && s.gtir);
+}
+
+// True iff `json` has a PreToolUse entry whose command contains gtir's hook key.
+export function settingsHasHook(json) {
+  const arr = json?.hooks?.PreToolUse;
+  return Array.isArray(arr) && arr.some((e) =>
+    Array.isArray(e?.hooks) && e.hooks.some((h) => typeof h?.command === "string" && h.command.includes(HOOK_MATCH_KEY)));
+}
+
+// True iff `text` contains gtir's marked section (both fences).
+export function markedSectionPresent(text) {
+  return typeof text === "string" && text.includes(GTIR_START) && text.includes(GTIR_END);
+}
+
 // --- hooknudge handler (pure; the CLI feeds it stdin) -----------------------
 
 // Factual nudge text surfaced to the agent when it reaches for Grep/Glob.
 export const HOOKNUDGE_TEXT =
-  "gtir MCP is available in this repo: mcp__gtir__search_code finds code by meaning "
-  + "(a concept, or \"where does X happen\"); mcp__gtir__find_code jumps to a symbol's "
-  + "definition/references. They often beat raw Grep/Glob for navigating this codebase.";
+  "gtir MCP is available in this repo: mcp__gtir__context bundles a symbol's definition + source "
+  + "+ callers/callees in one call; mcp__gtir__search_code finds code by meaning; mcp__gtir__find_code "
+  + "jumps to a symbol's definition/references. They often beat raw Grep/Glob for navigating this codebase.";
 
 // Given the raw PreToolUse hook JSON (as a string), return the stdout the hook should
 // print: an additionalContext nudge for Grep/Glob, otherwise "" (no output). Never

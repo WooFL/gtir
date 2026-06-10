@@ -8,7 +8,8 @@ import { fileURLToPath } from "node:url";
 import {
   gtirMcpEntry,
   gtirHookEntry,
-  gtirClaudeMdBody,
+  gtirNavBody,
+  gtirCursorRuleBody,
   addMcpServer,
   removeMcpServer,
   addPreToolUseHook,
@@ -16,6 +17,9 @@ import {
   upsertMarkedSection,
   removeMarkedSection,
   hooknudge,
+  mcpHasGtir,
+  settingsHasHook,
+  markedSectionPresent,
   GTIR_START,
   GTIR_END,
   HOOK_MATCH_KEY,
@@ -47,12 +51,25 @@ test("gtirHookEntry: Grep|Glob matcher, command contains hooknudge, forward-slas
   assert.equal(h.command, 'node "C:/abs/bin/gtir.mjs" hooknudge');
 });
 
-test("gtirClaudeMdBody: factual nudge naming both MCP tools", () => {
-  const body = gtirClaudeMdBody();
+test("gtirNavBody: factual nudge naming context + both search tools", () => {
+  const body = gtirNavBody();
+  assert.match(body, /mcp__gtir__context/);
   assert.match(body, /mcp__gtir__search_code/);
   assert.match(body, /mcp__gtir__find_code/);
   assert.match(body, /Grep/);
   assert.match(body, /Glob/);
+});
+
+test("gtirCursorRuleBody: MDC frontmatter + nav body", () => {
+  const out = gtirCursorRuleBody();
+  // Frontmatter block at the top
+  assert.match(out, /^---\n/);
+  assert.match(out, /description: .+/);
+  assert.match(out, /alwaysApply: true/);
+  // Closing frontmatter fence then the shared nav body
+  assert.ok(out.includes("\n---\n"), "frontmatter is closed");
+  assert.match(out, /mcp__gtir__context/);
+  assert.match(out, /mcp__gtir__search_code/);
 });
 
 // --- addMcpServer / removeMcpServer ----------------------------------------
@@ -225,7 +242,7 @@ test("removeMarkedSection: absent => no-op (returns text unchanged modulo traili
 
 test("upsert then remove round-trips to the original prose (modulo trailing whitespace)", () => {
   const original = "# Doc\n\nsome prose here\n";
-  const added = upsertMarkedSection(original, GTIR_START, GTIR_END, gtirClaudeMdBody());
+  const added = upsertMarkedSection(original, GTIR_START, GTIR_END, gtirNavBody());
   const removed = removeMarkedSection(added, GTIR_START, GTIR_END);
   assert.equal(removed.replace(/\s+$/, ""), original.replace(/\s+$/, ""));
 });
@@ -239,6 +256,7 @@ test("hooknudge: Grep PreToolUse JSON => additionalContext nudge", () => {
   assert.equal(parsed.hookSpecificOutput.hookEventName, "PreToolUse");
   assert.match(parsed.hookSpecificOutput.additionalContext, /mcp__gtir__search_code/);
   assert.match(parsed.hookSpecificOutput.additionalContext, /mcp__gtir__find_code/);
+  assert.match(parsed.hookSpecificOutput.additionalContext, /mcp__gtir__context/);
 });
 
 test("hooknudge: Glob => nudge too", () => {
@@ -524,4 +542,131 @@ test("runInstall idempotency with richer gtir: install twice => no change to .mc
   runInstall({ repo });
   const after2 = readFileSync(join(repo, ".mcp.json"), "utf8");
   assert.equal(after2, after1, ".mcp.json unchanged on second install");
+});
+
+// --- verify predicates ---------------------------------------------------------
+
+test("mcpHasGtir: true only when mcpServers.gtir is present", () => {
+  assert.equal(mcpHasGtir({ mcpServers: { gtir: gtirMcpEntry(BIN) } }), true);
+  assert.equal(mcpHasGtir({ mcpServers: { other: {} } }), false);
+  assert.equal(mcpHasGtir({}), false);
+  assert.equal(mcpHasGtir({ mcpServers: "x" }), false); // malformed
+  assert.equal(mcpHasGtir(null), false);
+});
+
+test("settingsHasHook: true only when a PreToolUse hook command contains the match key", () => {
+  const withHook = addPreToolUseHook({}, gtirHookEntry(BIN), HOOK_MATCH_KEY);
+  assert.equal(settingsHasHook(withHook), true);
+  assert.equal(settingsHasHook({ hooks: { PreToolUse: [{ matcher: "Bash", hooks: [{ command: "echo" }] }] } }), false);
+  assert.equal(settingsHasHook({}), false);
+  assert.equal(settingsHasHook({ hooks: "x" }), false); // malformed
+});
+
+test("markedSectionPresent: true only when both gtir marks present", () => {
+  const withSection = upsertMarkedSection("# Doc\n", GTIR_START, GTIR_END, "BODY");
+  assert.equal(markedSectionPresent(withSection), true);
+  assert.equal(markedSectionPresent("# Doc\nno marks\n"), false);
+  assert.equal(markedSectionPresent(""), false);
+  assert.equal(markedSectionPresent(undefined), false);
+});
+
+// --- multi-assistant wiring -------------------------------------------------
+
+test("runInstall: always writes AGENTS.md nav section (universal)", () => {
+  const repo = tmp();
+  runInstall({ repo });
+  const agents = readFileSync(join(repo, "AGENTS.md"), "utf8");
+  assert.match(agents, new RegExp(GTIR_START));
+  assert.match(agents, /mcp__gtir__context/);
+});
+
+test("runInstall: no .cursor/ present => Cursor files NOT written (Claude baseline only)", () => {
+  const repo = tmp();
+  runInstall({ repo });
+  assert.ok(!existsSync(join(repo, ".cursor", "mcp.json")), "cursor mcp not written when undetected");
+  assert.ok(!existsSync(join(repo, ".cursor", "rules", "gtir.mdc")), "cursor rule not written when undetected");
+  assert.ok(existsSync(join(repo, ".mcp.json")));
+});
+
+test("runInstall assistants:{cursor} => writes .cursor/mcp.json + owned rule file, skips Claude", () => {
+  const repo = tmp();
+  runInstall({ repo, assistants: { claude: false, cursor: true } });
+  const cmcp = JSON.parse(readFileSync(join(repo, ".cursor", "mcp.json"), "utf8"));
+  assert.ok(cmcp.mcpServers.gtir, "gtir registered in .cursor/mcp.json");
+  const rule = readFileSync(join(repo, ".cursor", "rules", "gtir.mdc"), "utf8");
+  assert.match(rule, /alwaysApply: true/);
+  assert.match(rule, /mcp__gtir__context/);
+  assert.ok(!existsSync(join(repo, ".mcp.json")), "Claude .mcp.json not written when claude:false");
+  assert.ok(existsSync(join(repo, "AGENTS.md")));
+});
+
+test("runInstall then uninstall (cursor): owned rule file deleted, shared cursor mcp keeps other servers", () => {
+  const repo = tmp();
+  mkdirSync(join(repo, ".cursor"), { recursive: true });
+  writeFileSync(join(repo, ".cursor", "mcp.json"),
+    JSON.stringify({ mcpServers: { other: { command: "x", args: [] } } }, null, 2) + "\n");
+  const sel = { claude: false, cursor: true };
+  runInstall({ repo, assistants: sel });
+  assert.ok(existsSync(join(repo, ".cursor", "rules", "gtir.mdc")), "rule written");
+
+  runInstall({ repo, uninstall: true, assistants: sel });
+  assert.ok(!existsSync(join(repo, ".cursor", "rules", "gtir.mdc")), "owned rule deleted on uninstall");
+  const cmcp = JSON.parse(readFileSync(join(repo, ".cursor", "mcp.json"), "utf8"));
+  assert.ok(!cmcp.mcpServers.gtir, "gtir removed from cursor mcp");
+  assert.deepEqual(cmcp.mcpServers.other, { command: "x", args: [] }, "unrelated cursor server intact");
+});
+
+test("runInstall --uninstall on a bare repo creates NO files (AGENTS.md included)", () => {
+  const repo = tmp();
+  runInstall({ repo, uninstall: true });
+  assert.ok(!existsSync(join(repo, "AGENTS.md")), "AGENTS.md not created on bare uninstall");
+  assert.ok(!existsSync(join(repo, ".cursor")), ".cursor/ not created on bare uninstall");
+});
+
+// --- CLI orchestration (no Ollama: use --no-index, and --verify) -------------
+
+test("CLI `gtir install --no-index`: wires Claude + AGENTS.md without building an index", () => {
+  const repo = tmp();
+  execFileSync("node", [BIN, "install", "--repo", repo, "--no-index"], { encoding: "utf8" });
+  assert.ok(existsSync(join(repo, ".mcp.json")), ".mcp.json written");
+  assert.ok(existsSync(join(repo, "AGENTS.md")), "AGENTS.md written");
+  assert.ok(!existsSync(join(repo, ".gtir", "index.lance")), "no index built under --no-index");
+});
+
+test("CLI `gtir install --no-index --all`: also writes Cursor files", () => {
+  const repo = tmp();
+  execFileSync("node", [BIN, "install", "--repo", repo, "--no-index", "--all"], { encoding: "utf8" });
+  assert.ok(existsSync(join(repo, ".cursor", "mcp.json")), "cursor mcp written under --all");
+  assert.ok(existsSync(join(repo, ".cursor", "rules", "gtir.mdc")), "cursor rule written under --all");
+});
+
+test("CLI `gtir install --verify`: exit 1 when not wired, exit 0 after wiring", () => {
+  const repo = tmp();
+  let failed = false;
+  try { execFileSync("node", [BIN, "install", "--repo", repo, "--verify"], { encoding: "utf8" }); }
+  catch (e) { failed = true; assert.equal(e.status, 1); }
+  assert.ok(failed, "verify on an unwired repo exits 1");
+
+  execFileSync("node", [BIN, "install", "--repo", repo, "--no-index"], { encoding: "utf8" });
+  mkdirSync(join(repo, ".gtir", "index.lance"), { recursive: true });
+  const out = execFileSync("node", [BIN, "install", "--repo", repo, "--verify"], { encoding: "utf8" });
+  assert.ok(typeof out === "string");
+});
+
+test("CLI `gtir install --assistant=` (empty) falls through to default (Claude wired)", () => {
+  const repo = tmp();
+  execFileSync("node", [BIN, "install", "--repo", repo, "--no-index", "--assistant="], { encoding: "utf8" });
+  // Empty set must NOT silently skip Claude — default keeps Claude on.
+  assert.ok(existsSync(join(repo, ".mcp.json")), "Claude .mcp.json written (empty --assistant= ignored)");
+  assert.ok(existsSync(join(repo, "AGENTS.md")), "AGENTS.md written");
+});
+
+test("CLI `gtir install --verify --all`: exercises cursor verify items, exit 0 when fully wired", () => {
+  const repo = tmp();
+  execFileSync("node", [BIN, "install", "--repo", repo, "--no-index", "--all"], { encoding: "utf8" });
+  mkdirSync(join(repo, ".gtir", "index.lance"), { recursive: true });
+  // --all makes verify check the cursor items too; all present => exit 0.
+  const out = execFileSync("node", [BIN, "install", "--repo", repo, "--verify", "--all"], { encoding: "utf8" });
+  // execFileSync throws on non-zero exit; reaching here = exit 0
+  assert.ok(typeof out === "string");
 });
