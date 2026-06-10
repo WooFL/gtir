@@ -1058,6 +1058,9 @@ async function main() {
         if (r.error) { process.stderr.write(`gtir stale: ${r.error}\n`); process.exitCode = 2; break; }
         if (args.json) { process.stdout.write(JSON.stringify(r, null, 2) + "\n"); break; }
         if (sub === "sync") {
+          if (args.init && !args._[1] && !args.all) {
+            process.stderr.write("gtir stale sync: --init needs a note path or --all (nothing seeded)\n");
+          }
           for (const s of r.synced || []) {
             const ack = s.acked.length ? `  acked: ${s.acked.join(", ")}` : "";
             const flag = s.flagged.length ? `  ⚠ flagged: ${s.flagged.join(", ")}` : "";

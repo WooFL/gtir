@@ -151,22 +151,22 @@ export async function syncQuery(wikiCfg, codeCfg, { sha = "unknown", init = fals
     try {
       const curRows = current[note] || [];
       const driftRows = staleByNote.get(note) || [];
-      // sevBySym is keyed by symbol only (the drift rows from diffBaseline carry no kind). A same-name
-      // collision across kinds errs toward FLAGGING (body/removed wins), never toward masking — safe.
-      const sevBySym = new Map(driftRows.map((r) => [r.symbol, r.severity]));
-      const curBySym = new Map(curRows.map((r) => [`${r.symbol}#${r.kind}`, r]));
+      // sevBySym: keyed by symbol for symbol-kind rows, by codePath for file-kind rows (symbol is undefined).
+      // curBySym: keyed by `${symbol ?? path}#kind` so file rows don't all collapse onto `undefined#file`.
+      const sevBySym = new Map(driftRows.map((r) => [r.symbol ?? r.codePath, r.severity]));
+      const curBySym = new Map(curRows.map((r) => [`${r.symbol ?? r.path}#${r.kind}`, r]));
 
       text = upsertRefsBlock(text, curRows, sha);
 
       // per-symbol re-baseline: signature/no-drift → adopt current row; body/removed → keep baseline (flagged)
       const merged = (doc.links[note] || []).map((b) => {
-        const sev = sevBySym.get(b.symbol);
+        const sev = sevBySym.get(b.symbol ?? b.path);
         if (sev === "body" || sev === "removed") return b;
-        return curBySym.get(`${b.symbol}#${b.kind}`) || b;
+        return curBySym.get(`${b.symbol ?? b.path}#${b.kind}`) || b;
       });
 
-      const acked = driftRows.filter((r) => r.severity === "signature").map((r) => r.symbol);
-      const flagged = driftRows.filter((r) => r.severity === "body" || r.severity === "removed").map((r) => r.symbol);
+      const acked = driftRows.filter((r) => r.severity === "signature").map((r) => r.symbol ?? r.codePath);
+      const flagged = driftRows.filter((r) => r.severity === "body" || r.severity === "removed").map((r) => r.symbol ?? r.codePath);
 
       if (flagged.length) {
         text = upsertStaleCallout(text, flagged);

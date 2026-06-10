@@ -74,6 +74,22 @@ test("syncQuery: missing baseline => error", async () => {
   assert.match(out.error, /no baseline/);
 });
 
+test("syncQuery: two file-kind refs in one note don't collide (no baseline cross-contamination)", async () => {
+  const FA = snapshotRow({ kind: "file", path: "src/a.mjs", text: "AAA" });
+  const FB = snapshotRow({ kind: "file", path: "src/b.mjs", text: "BBB" });
+  const wikiCfg = seed({ "modules/f.md": [FA, FB] });
+  const files = new Map([["modules/f.md", "# f\n\ncites files\n\n<!-- gtir:refs -->\n<!-- /gtir:refs -->\n"]]);
+  await syncQuery(wikiCfg, { indexDir: "x" }, {
+    sha: "s",
+    deps: { resolve: async () => ({ "modules/f.md": [FA, FB] }), readNote: (p) => files.get(p) ?? null, writeNote: (p, t) => files.set(p, t) },
+  });
+  const baseline = JSON.parse(readFileSync(join(wikiCfg.gtirDir, "stale-baselines.json"), "utf8"));
+  const rows = baseline.links["modules/f.md"];
+  const a = rows.find((r) => r.path === "src/a.mjs"), b = rows.find((r) => r.path === "src/b.mjs");
+  assert.ok(a && b, "both files present in baseline");
+  assert.notEqual(a.bodyHash, b.bodyHash, "each file kept its OWN hash (no collision)");
+});
+
 test("CLI `gtir stale sync` errors clearly with no baseline (exit non-zero, JSON)", () => {
   const repo = mkdtempSync(join(tmpdir(), "gtir-sync-cli-"));
   mkdirSync(join(repo, ".gtir"), { recursive: true });

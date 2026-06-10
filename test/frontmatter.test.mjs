@@ -26,3 +26,13 @@ test("idempotent: same fields twice is byte-identical", () => {
   const twice = setFrontmatterFields(once, { stale: true });
   assert.equal(twice, once);
 });
+
+test("CRLF note: updates in place, no double fence, idempotent", () => {
+  const src = "---\r\ntitle: T\r\n---\r\n\r\n# body\r\n";
+  const out = setFrontmatterFields(src, { stale: true });
+  // exactly one fence = exactly two lines that are just '---'
+  assert.equal((out.match(/^---\s*$/gm) || []).length, 2, "still exactly one frontmatter fence");
+  assert.match(out, /title: T/);
+  assert.match(out, /stale: true/);
+  assert.equal(setFrontmatterFields(out, { stale: true }), out, "idempotent on CRLF");
+});
