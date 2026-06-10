@@ -16,6 +16,24 @@ test("formatDriftNudge lists the edited file + note names", () => {
   assert.match(t, /x\.md/);
 });
 
+test("driftnudge: honors the wiki's staleIgnore — archived notes dropped from the nudge", async () => {
+  const deps = {
+    loadConfig: () => ({ repo: "/code", wiki: "../wiki", staleIgnore: [".raw/"] }),
+    reverseLinks: async () => fakeRev({ "src/a.ts": [{ note: "modules/a.md" }, { note: ".raw/x.md" }] }),
+  };
+  const ctx = JSON.parse(await driftnudge(payload("Edit", "/code/src/a.ts"), { cwd: "/code", deps })).hookSpecificOutput.additionalContext;
+  assert.match(ctx, /modules\/a\.md/);
+  assert.ok(!ctx.includes(".raw/x.md"), "archived .raw note excluded from the nudge");
+});
+
+test("driftnudge: silent when every documenting note is staleIgnore'd", async () => {
+  const deps = {
+    loadConfig: () => ({ repo: "/code", wiki: "../wiki", staleIgnore: [".raw/"] }),
+    reverseLinks: async () => fakeRev({ "src/a.ts": [{ note: ".raw/only.md" }] }),
+  };
+  assert.equal(await driftnudge(payload("Edit", "/code/src/a.ts"), { cwd: "/code", deps }), "");
+});
+
 test("driftnudge: edit of a documented file => PostToolUse additionalContext naming the notes", async () => {
   const out = await driftnudge(payload("Edit", "/code/src/a.ts"), { cwd: "/code", deps: docDeps });
   const j = JSON.parse(out);
