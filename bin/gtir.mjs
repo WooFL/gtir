@@ -28,7 +28,7 @@ import { buildGraph, renderHtml, renderMermaid } from "../src/graph.mjs";
 import { impactQuery, orphansQuery, cyclesQuery, pathQuery, graphForSearch } from "../src/graph-queries.mjs";
 import { cochangeQuery, hotspotsQuery } from "../src/git-metrics-run.mjs";
 import { communitiesQuery } from "../src/communities-run.mjs";
-import { baselineQuery, checkQuery, ackQuery, muteQuery, emitBriefs } from "../src/stale-run.mjs";
+import { baselineQuery, checkQuery, ackQuery, muteQuery, emitBriefs, syncQuery } from "../src/stale-run.mjs";
 import {
   gtirMcpEntry,
   gtirHookEntry,
@@ -114,7 +114,7 @@ export async function runCommunities({ repo, symbolLevel, includeAmbiguous, minS
 // `gtir stale <baseline|check|ack|mute>`: drive the note-staleness layer (src/stale-run.mjs).
 // `repo` is the note vault; `linkRepo` is the code repo. For `check` with `emitDir`, also write
 // per-note briefs to that queue dir, stamped with the code repo's current HEAD sha.
-export async function runStale(sub, { repo, linkRepo, emitDir, notePath, muteTarget } = {}) {
+export async function runStale(sub, { repo, linkRepo, emitDir, notePath, muteTarget, init = false, all = false } = {}) {
   const wikiCfg = loadConfig(repo);
   const codeCfg = linkRepo ? loadConfig(linkRepo) : null;
   if (sub === "baseline") return baselineQuery(wikiCfg, codeCfg);
@@ -131,6 +131,12 @@ export async function runStale(sub, { repo, linkRepo, emitDir, notePath, muteTar
   if (sub === "mute") {
     const [n, sym] = String(muteTarget || "").split("#");
     return muteQuery(wikiCfg, n, sym);
+  }
+  if (sub === "sync") {
+    let sha = "unknown";
+    const shaRepo = codeCfg?.repo ?? repo;
+    try { sha = execFileSync("git", ["-C", shaRepo, "rev-parse", "--short", "HEAD"], { encoding: "utf8" }).trim(); } catch { /* leave "unknown" */ }
+    return syncQuery(wikiCfg, codeCfg, { sha, init, all, notePath });
   }
   return { error: `unknown stale subcommand: ${sub}` };
 }
@@ -432,6 +438,7 @@ function parseArgs(argv) {
     else if (a === "--force") args.force = true;
     else if (a === "--verify") args.verify = true;
     else if (a === "--all") args.all = true;
+    else if (a === "--init") args.init = true;
     else if (a.startsWith("--assistant=")) {
       args.assistant = new Set(a.slice("--assistant=".length).split(",").map((s) => s.trim()).filter(Boolean));
     }
@@ -1033,8 +1040,8 @@ async function main() {
       }
       case "stale": {
         const sub = args._[0];
-        if (!["baseline", "check", "ack", "mute"].includes(sub)) {
-          process.stderr.write("usage: gtir stale <baseline|check|ack|mute> [--repo <wiki>] [--link-repo <code>] [--emit-briefs <dir>] [--json]\n");
+        if (!["baseline", "check", "ack", "mute", "sync"].includes(sub)) {
+          process.stderr.write("usage: gtir stale <baseline|check|ack|mute|sync> [--repo <wiki>] [--link-repo <code>] [--emit-briefs <dir>] [--init] [--all] [--json]\n");
           process.exitCode = 2;
           break;
         }
@@ -1046,10 +1053,20 @@ async function main() {
         }
         const r = await runStale(sub, {
           repo: args.repo || ".", linkRepo: args.linkRepo, emitDir: args.emitBriefs,
-          notePath: target, muteTarget: target,
+          notePath: target, muteTarget: target, init: !!args.init, all: !!args.all,
         });
         if (r.error) { process.stderr.write(`gtir stale: ${r.error}\n`); process.exitCode = 2; break; }
         if (args.json) { process.stdout.write(JSON.stringify(r, null, 2) + "\n"); break; }
+        if (sub === "sync") {
+          for (const s of r.synced || []) {
+            const ack = s.acked.length ? `  acked: ${s.acked.join(", ")}` : "";
+            const flag = s.flagged.length ? `  ⚠ flagged: ${s.flagged.join(", ")}` : "";
+            process.stderr.write(`gtir stale sync: ${s.note} — refs refreshed${ack}${flag}\n`);
+          }
+          process.stderr.write(`gtir stale sync: ${(r.synced || []).length} note(s) synced, ${(r.needsProse || []).length} need prose review\n`);
+          if (r.writeErrors?.length) process.exitCode = 1;
+          break;
+        }
         if (sub === "baseline") process.stdout.write(`baselined ${r.notes} notes, ${r.links} code links\n`);
         else if (sub === "ack") console.log(`re-baselined ${r.acked} (${r.links} code links tracked)`);
         else if (sub === "mute") {

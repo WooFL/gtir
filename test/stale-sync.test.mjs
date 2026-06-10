@@ -3,8 +3,12 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { snapshotRow } from "../src/stale.mjs";
 import { syncQuery } from "../src/stale-run.mjs";
+
+const BIN = fileURLToPath(new URL("../bin/gtir.mjs", import.meta.url));
 
 function seed(baselineLinks) {
   const repo = mkdtempSync(join(tmpdir(), "gtir-sync-"));
@@ -68,4 +72,17 @@ test("syncQuery: missing baseline => error", async () => {
   const wikiCfg = { repo, gtirDir: join(repo, ".gtir"), indexDir: join(repo, ".gtir", "index.lance") };
   const out = await syncQuery(wikiCfg, { indexDir: "x" }, { deps: { resolve: async () => ({}) } });
   assert.match(out.error, /no baseline/);
+});
+
+test("CLI `gtir stale sync` errors clearly with no baseline (exit non-zero, JSON)", () => {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-sync-cli-"));
+  mkdirSync(join(repo, ".gtir"), { recursive: true });
+  writeFileSync(join(repo, ".gtir", "config.json"), JSON.stringify({ model: "nomic-embed-text" }) + "\n");
+  let stdout = "";
+  try {
+    stdout = execFileSync("node", [BIN, "stale", "sync", "--repo", repo, "--link-repo", repo, "--json"], { encoding: "utf8" });
+  } catch (e) {
+    stdout = (e.stdout || "") + (e.stderr || "");
+  }
+  assert.match(stdout, /no baseline|stale needs a code index/);
 });
