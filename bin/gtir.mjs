@@ -1002,7 +1002,10 @@ async function main() {
           const body = r.stale.reduce((n, s) => n + s.rows.filter((x) => x.severity === "body").length, 0);
           const rem = r.stale.reduce((n, s) => n + s.rows.filter((x) => x.severity === "removed").length, 0);
           process.stdout.write(`${r.staleNotes} stale notes (${sig} signature, ${body} body, ${rem} removed)\n`);
-          for (const s of r.stale) for (const row of s.rows) process.stdout.write(`  [${row.severity}] ${s.note}  <- ${row.symbol} @ ${row.codePath}:${row.lines}\n`);
+          for (const s of r.stale) for (const row of s.rows) {
+            const where = row.lines ? `${row.codePath}:${row.lines}` : row.codePath;
+            process.stdout.write(`  [${row.severity}] ${s.note}  <- ${row.symbol || "(file)"} @ ${where}\n`);
+          }
           if (r.written) process.stdout.write(`emitted ${r.written.length} brief(s)\n`);
         }
         break;

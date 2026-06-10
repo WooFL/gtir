@@ -32,6 +32,28 @@ test("emitBriefs writes one brief per stale note with the right shape", () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+test("emitBriefs renders a file-kind row without leaking undefined", () => {
+  const dir = mkdtempSync(join(tmpdir(), "queue-"));
+  const report = {
+    stale: [{
+      note: "modules/@engine-nodes.md",
+      rows: [{
+        symbol: undefined, codePath: "packages/engine-nodes/src/index.ts", lines: undefined,
+        severity: "body", priority: "medium",
+        before: { sig: undefined, snippet: "import …", lines: undefined },
+        after: { sig: undefined, snippet: "import …", lines: undefined },
+      }],
+    }],
+    staleNotes: 1, staleLinks: 1,
+  };
+  const written = emitBriefs(report, dir, { sha: "abc123" });
+  const body = readFileSync(join(dir, written[0]), "utf8");
+  assert.doesNotMatch(body, /undefined/);                          // no leaked undefined anywhere
+  assert.doesNotMatch(body, /index\.ts:undefined/);                // no ":undefined" line ref
+  assert.match(body, /packages\/engine-nodes\/src\/index\.ts/);    // the file path is shown
+  rmSync(dir, { recursive: true, force: true });
+});
+
 test("emitBriefs dedupes a second call for the same note", () => {
   const dir = mkdtempSync(join(tmpdir(), "queue-"));
   emitBriefs(REPORT, dir, { sha: "deadbeef" });

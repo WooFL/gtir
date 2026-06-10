@@ -119,7 +119,8 @@ function briefBody(note, rows, sha) {
   const blocks = rows.map((r, i) => {
     const now = r.after ? `${r.after.sig || r.after.snippet || ""}` : "symbol no longer exists";
     const was = r.before ? `${r.before.sig || r.before.snippet || ""}` : "";
-    return `${i + 2}. **Code changed** at \`${r.codePath}:${r.lines}\` — severity **${r.severity}**:
+    const where = r.lines ? `${r.codePath}:${r.lines}` : r.codePath;
+    return `${i + 2}. **Code changed** at \`${where}\` — severity **${r.severity}**:
    - BEFORE (baseline): \`${was}\`
    - NOW: \`${now}\``;
   }).join("\n");
