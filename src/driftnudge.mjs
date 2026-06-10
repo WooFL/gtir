@@ -2,10 +2,20 @@
 // that wiki notes document, return a factual additionalContext nudge naming those notes (so updating the
 // KB is ambient, not remembered). Wiki-gated + baseline-bounded; never throws -> silent ("").
 import { resolve, relative } from "node:path";
+import ignore from "ignore";
 import { loadConfig as realLoadConfig } from "./config.mjs";
 import { reverseLinks as realReverseLinks } from "./crosslinks.mjs";
 
 const EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit"]);
+
+// Drop notes the wiki excludes from drift maintenance (its `staleIgnore` globs): the write-back nudge
+// must not ask the agent to reconcile archived/source notes (matches `gtir stale check`'s view filter).
+// The read leg (context/notes_for) deliberately does NOT apply this — historical docs are useful context.
+function dropIgnored(notes, patterns) {
+  if (!patterns || !patterns.length) return notes;
+  const ig = ignore().add(patterns);
+  return notes.filter((n) => !ig.ignores(n.note));
+}
 
 // Pure: the nudge text from the edited path + its documenting notes.
 export function formatDriftNudge(relPath, notes) {
@@ -32,8 +42,8 @@ export async function driftnudge(inputString, { cwd = process.cwd(), deps = {} }
     if (!rel || rel.startsWith("..")) return "";
     const wikiCfg = loadConfig(resolve(cfg.repo, cfg.wiki));
     const rev = await reverseLinks(wikiCfg, cfg, { baselineOnly: true });
-    const notes = rev.byPath.get(rel);
-    if (!notes || !notes.length) return "";
+    const notes = dropIgnored(rev.byPath.get(rel) || [], wikiCfg.staleIgnore);
+    if (!notes.length) return "";
     return JSON.stringify({
       hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: formatDriftNudge(rel, notes) },
     });
