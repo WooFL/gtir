@@ -75,6 +75,10 @@ export const DEFAULTS = {
     "Debug", "debug", "Release", "release", "x64", ".vs", "obj",  // common C/C++/C# build output
   ],
   skipSuffixes: [".excalidraw.md", ".lock", ".min.js", ".min.css", ".map"],
+  // `gtir stale`: gitignore-style globs (matched against repo-relative note paths) to exclude from
+  // drift checks — e.g. archived/ingest sources whose code citations are historical (`[".raw/"]`).
+  // A report-time view filter: the baseline still records every note, so editing this needs no re-baseline.
+  staleIgnore: [],
 };
 
 export function loadConfig(repoPath) {
