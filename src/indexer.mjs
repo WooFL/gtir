@@ -448,6 +448,7 @@ export async function buildIndex(cfg, { rebuild = false, paths = null } = {}) {
   // it on a fresh/rebuilt table or one that already has the column, so appending to a pre-scope table
   // (which lacks it) never trips a schema mismatch.
   const writeScope = rebuild || !tableExists || (await store.chunkColumns())?.has("scope_json") === true;
+  const writeSymbols = rebuild || !tableExists || (await store.chunkColumns())?.has("symbols_json") === true;
   const rows = allChunks.map((c, i) => ({
     id: stableId(c), path: c.path, language: c.language,
     chunk_start: c.chunkStart, chunk_end: c.chunkEnd,
@@ -456,6 +457,7 @@ export async function buildIndex(cfg, { rebuild = false, paths = null } = {}) {
     mtime_ms: c.mtimeMs, embedding: vecs[i],
     ...(writeHash ? { content_hash: hashes[i] } : {}),
     ...(writeScope ? { scope_json: JSON.stringify(c.scope ?? []) } : {}),
+    ...(writeSymbols ? { symbols_json: JSON.stringify(c.symbols ?? []) } : {}),
   }));
   await store.upsertRows(rows);
   await store.writeMeta({ model: cfg.model, dim, version: cfg.version });

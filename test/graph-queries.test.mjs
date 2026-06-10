@@ -140,6 +140,67 @@ test("orphansQuery: callable-only inventory + ambiguous inbound counts as refere
 
 import { graphForSearch, clearGraphCache } from "../src/graph-queries.mjs";
 
+const chunkSym = (id, path, ls, le, text, symbols) => ({
+  id, path, line_start: ls, line_end: le, language: "js", text,
+  embedding: [0.1, 0.2], mtime_ms: 1, content_hash: "h" + id,
+  symbols_json: JSON.stringify(symbols),
+});
+
+test("buildSymbolInventory (code): precise per-symbol sites from symbols_json", async () => {
+  const cfg = tmpCfg();
+  try {
+    const store = await openStore(cfg);
+    await store.upsertRows([
+      chunkSym("1", "a.mjs", 1, 2, "function alpha(x){ return x; }\nfunction beta(y){ return y; }",
+        [{ name: "alpha", lineStart: 1, lineEnd: 1 }, { name: "beta", lineStart: 2, lineEnd: 2 }]),
+    ]);
+    const inv = await buildSymbolInventory(store, "code");
+    assert.equal(inv.flat.length, 2);
+    const alpha = inv.byName.get("alpha")[0];
+    const beta = inv.byName.get("beta")[0];
+    assert.equal(alpha.line_start, 1); assert.equal(alpha.line_end, 1);
+    assert.equal(beta.line_start, 2); assert.equal(beta.line_end, 2);
+    assert.match(alpha.text, /function alpha/);
+    assert.ok(!/function beta/.test(alpha.text), "alpha's text excludes beta (per-symbol slice)");
+  } finally { rmSync(cfg._root, { recursive: true, force: true }); }
+});
+
+test("buildSymbolInventory (code): falls back to declaredSymbols when symbols_json absent", async () => {
+  const cfg = tmpCfg();
+  try {
+    const store = await openStore(cfg);
+    await store.upsertRows([chunk("1", "a.mjs", 1, 3, "function foo(){}")]);
+    const inv = await buildSymbolInventory(store, "code");
+    assert.deepEqual(inv.byName.get("foo").map((d) => d.path), ["a.mjs"]);
+  } finally { rmSync(cfg._root, { recursive: true, force: true }); }
+});
+
+test("buildSymbolInventory (callables): ignores symbols_json, uses declaredCallables", async () => {
+  const cfg = tmpCfg();
+  try {
+    const store = await openStore(cfg);
+    await store.upsertRows([
+      chunkSym("1", "a.mjs", 1, 1, "interface Foo { x: number }", [{ name: "Foo", lineStart: 1, lineEnd: 1 }]),
+    ]);
+    const inv = await buildSymbolInventory(store, "code", { callables: true });
+    assert.ok(!inv.byName.has("Foo"), "callables path uses declaredCallables (no interface), not symbols_json");
+  } finally { rmSync(cfg._root, { recursive: true, force: true }); }
+});
+
+test("buildSymbolInventory: out-of-range symbol span falls back to whole-chunk text", async () => {
+  const cfg = tmpCfg();
+  try {
+    const store = await openStore(cfg);
+    // chunk spans lines 10-12, but the symbol claims lines 99-100 (out of range)
+    await store.upsertRows([
+      chunkSym("1", "a.mjs", 10, 12, "function wide(){ return 1; }", [{ name: "wide", lineStart: 99, lineEnd: 100 }]),
+    ]);
+    const inv = await buildSymbolInventory(store, "code");
+    const site = inv.byName.get("wide")[0];
+    assert.match(site.text, /function wide/, "out-of-range span returns the whole chunk text, not empty");
+  } finally { rmSync(cfg._root, { recursive: true, force: true }); }
+});
+
 test("graphForSearch builds {graph,degree}, caches, and clears", async () => {
   const cfg = tmpCfg();
   try {

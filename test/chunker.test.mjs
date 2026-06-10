@@ -312,3 +312,35 @@ test("contextScope: false suppresses the code scope breadcrumb (plain synthetic)
   assert.ok(!cx.embedText.includes("› Service"), `scope must be suppressed: ${cx.embedText.slice(0, 60)}`);
   assert.ok(cx.embedText.startsWith("svc.py — "), `should be plain synthetic: ${cx.embedText.slice(0, 60)}`);
 });
+
+test("chunkFile (js): a merged AST chunk carries per-symbol spans in `symbols`", async () => {
+  const js = [
+    "function alpha(x) { return x + 1; }",   // line 1
+    "function beta(y) { return y * 2; }",     // line 2
+  ].join("\n");
+  const chunks = await chunkFile("m.mjs", ".mjs", js, astCfg);
+  const syms = chunks.flatMap((c) => c.symbols || []);
+  assert.deepEqual(syms.map((s) => s.name).sort(), ["alpha", "beta"]);
+  const alpha = syms.find((s) => s.name === "alpha");
+  const beta = syms.find((s) => s.name === "beta");
+  assert.equal(alpha.lineStart, 1); assert.equal(alpha.lineEnd, 1);
+  assert.equal(beta.lineStart, 2); assert.equal(beta.lineEnd, 2);
+});
+
+test("chunkRecursive (non-AST) chunks have no `symbols`", () => {
+  const chunks = chunkRecursive("f.txt", "text", Array.from({ length: 12 }, (_, i) => `line ${i} of some text here`).join("\n"), cfg);
+  for (const c of chunks) assert.equal(c.symbols, undefined);
+});
+
+test("chunkFile: an oversize function split into windows tags each window with its symbol", async () => {
+  const tinyCfg = { maxChars: 80, minChars: 20, overlapChars: 10 };
+  const body = Array.from({ length: 8 }, (_, i) => `  const v${i} = ${i} + someValueThatPads;`).join("\n");
+  const js = `function bigFn(a) {\n${body}\n  return a;\n}`;
+  const chunks = await chunkFile("big.mjs", ".mjs", js, tinyCfg);
+  // at least one chunk, and every chunk that has symbols names bigFn
+  const withSyms = chunks.filter((c) => c.symbols && c.symbols.length);
+  assert.ok(withSyms.length >= 1, "expected at least one window tagged with a symbol");
+  for (const c of withSyms) {
+    assert.ok(c.symbols.every((s) => s.name === "bigFn"), "oversize-leaf windows name the leaf symbol");
+  }
+});
