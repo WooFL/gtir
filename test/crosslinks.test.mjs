@@ -262,6 +262,7 @@ test("serve makeHandlers augments /connections + /graph with code when linkCfg i
 
     const g = await handlers["/graph"]({ path: "design.md" });
     assert.ok(g.nodes.some((n) => n.kind === "code"), "/graph has a code node");
+    assert.ok(g.nodes.some((n) => n.kind === "file"), "graph carries file nodes");
 
     // /health advertises whether a code index is linked (the plugin uses this to avoid adopting a non-linked daemon)
     assert.equal((await handlers["/health"]()).linked, true);
