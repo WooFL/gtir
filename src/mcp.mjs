@@ -1,5 +1,6 @@
 import { resolve, basename, relative } from "node:path";
 import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "./config.mjs";
 import { search } from "./search.mjs";
@@ -11,7 +12,7 @@ import { buildAdjacency, callersOf, calleesOf, neighborsOf } from "./edges.mjs";
 import { impactQuery, orphansQuery, cyclesQuery, pathQuery, graphForSearch, clearGraphCache } from "./graph-queries.mjs";
 import { contextFor } from "./graph-retrieval.mjs";
 import { buildContext } from "./context.mjs";
-import { checkQuery as staleCheckQuery, ackQuery as staleAckQuery } from "./stale-run.mjs";
+import { checkQuery as staleCheckQuery, ackQuery as staleAckQuery, syncQuery as staleSyncQuery } from "./stale-run.mjs";
 
 export function sanitizeLabel(s) {
   return String(s).toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "index";
@@ -227,6 +228,18 @@ export function buildTools(indexes) {
     description: "Re-baseline a wiki note after you reconciled it to current code, so the same drift stops flagging.",
     inputSchema: { type: "object", properties: { note: { type: "string", description: "the note path to re-baseline" } }, required: ["note"] },
   });
+  tools.push({
+    name: "stale_sync",
+    description: "After writing code AND updating note prose, deterministically refresh gtir-managed refs " +
+      "blocks + stale flags in wiki notes. Returns which symbols were auto-acked (signature shown in the " +
+      "table) vs still need prose review (body/removed). Use init to seed a refs block into a note. " +
+      "Requires both a notes index and a code index.",
+    inputSchema: { type: "object", properties: {
+      note: { type: "string", description: "scope init to one note path (optional)" },
+      init: { type: "boolean", description: "seed a refs block into note(s) lacking one" },
+      all: { type: "boolean", description: "with init: seed every code-citing note" },
+    } },
+  });
   return tools;
 }
 
@@ -327,6 +340,11 @@ export async function dispatchToolCall(params, ctx) {
     }
     if (name === "stale_ack") {
       const out = await ctx.staleAckFn(args.note);
+      if (out.error) return { content: [{ type: "text", text: out.error }], isError: true };
+      return reply(JSON.stringify(out, null, 2), out);
+    }
+    if (name === "stale_sync") {
+      const out = await ctx.staleSyncFn(args);
       if (out.error) return { content: [{ type: "text", text: out.error }], isError: true };
       return reply(JSON.stringify(out, null, 2), out);
     }
@@ -607,6 +625,16 @@ export function defaultStaleAckFn(indexes) {
     return staleAckQuery(wiki.cfg, code.cfg, note);
   };
 }
+export function defaultStaleSyncFn(indexes) {
+  return async (args = {}) => {
+    const { wiki, code } = findWikiAndCode(indexes);
+    if (!wiki) return { error: "stale needs a notes index — configure a notes (wiki) repo" };
+    if (!code) return { error: "stale needs a code index — configure a code repo to link the notes to" };
+    let sha = "unknown";
+    try { sha = execFileSync("git", ["-C", code.cfg.repo, "rev-parse", "--short", "HEAD"], { encoding: "utf8" }).trim(); } catch { /* leave "unknown" */ }
+    return staleSyncQuery(wiki.cfg, code.cfg, { sha, init: !!args.init, all: !!args.all, notePath: args.note || null });
+  };
+}
 
 export function defaultImpactFn(indexes) {
   return async (label, opts) => {
@@ -674,6 +702,7 @@ export function serveStdio(indexes, { version } = {}) {
     contextFn: defaultContextFn(indexes),
     staleCheckFn: defaultStaleCheckFn(indexes),
     staleAckFn: defaultStaleAckFn(indexes),
+    staleSyncFn: defaultStaleSyncFn(indexes),
   };
   let buf = "";
   process.stdin.setEncoding("utf8");
