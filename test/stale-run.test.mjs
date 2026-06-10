@@ -39,6 +39,24 @@ test("baseline -> check flags drift -> ack clears it", async () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+test("checkQuery skips notes matching staleIgnore globs (view filter; baseline unchanged)", async () => {
+  const { code, dir } = setup();
+  const cfg = { gtirDir: dir, staleIgnore: [".raw/"] };
+  const row = (s, b, sig) => ({ symbol: "f", path: "a.ts", lines: "1-3", kind: "symbol", sigHash: s, bodyHash: b, sig, snippet: sig + " {" });
+  const v1 = { "a.md": [row("s1", "b1", "f()")], ".raw/x.md": [row("s1", "b1", "g()")] };
+  const v2 = { "a.md": [row("s2", "b2", "f(x)")], ".raw/x.md": [row("s2", "b2", "g(x)")] };
+
+  await baselineQuery(cfg, code, { resolve: async () => v1 });
+  const flagged = await checkQuery(cfg, code, { resolve: async () => v2 });
+  assert.equal(flagged.staleNotes, 1, "only a.md flagged; .raw/x.md ignored");
+  assert.equal(flagged.stale[0].note, "a.md");
+
+  // same baseline, no ignore list => both notes flagged (proves it's a report-time view filter)
+  const noIgnore = await checkQuery({ gtirDir: dir }, code, { resolve: async () => v2 });
+  assert.equal(noIgnore.staleNotes, 2);
+  rmSync(dir, { recursive: true, force: true });
+});
+
 test("mute persists and suppresses a note's drift on the next check", async () => {
   const { cfg, code, dir } = setup();
   const v1 = { "a.md": [{ symbol: "f", path: "a.ts", lines: "1-3", kind: "symbol", sigHash: "s1", bodyHash: "b1", sig: "f()", snippet: "f() {" }] };

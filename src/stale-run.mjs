@@ -3,6 +3,7 @@
 // claude-obsidian command-center briefs. Query fns accept injectable deps for testability.
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, renameSync } from "node:fs";
 import { join, dirname } from "node:path";
+import ignore from "ignore";
 import { openStore } from "./store.mjs";
 import { codeIndexFor, crossLinks } from "./crosslinks.mjs";
 import { snapshotRow, diffBaseline } from "./stale.mjs";
@@ -11,6 +12,17 @@ import { setFrontmatterFields } from "./frontmatter.mjs";
 
 const BASELINE_NAME = "stale-baselines.json";
 function baselinePath(wikiCfg) { return join(wikiCfg.gtirDir, BASELINE_NAME); }
+
+// Drop notes whose path matches a gitignore-style pattern in staleIgnore (a report-time view filter —
+// the baseline keeps every note, so toggling the list needs no re-baseline). Patterns are matched
+// against repo-relative, forward-slash note paths (the manifest's key format).
+function filterIgnoredNotes(linksByNote, patterns) {
+  if (!patterns || !patterns.length) return linksByNote;
+  const ig = ignore().add(patterns);
+  const out = {};
+  for (const [note, rows] of Object.entries(linksByNote)) if (!ig.ignores(note)) out[note] = rows;
+  return out;
+}
 
 function readBaseline(wikiCfg) {
   const p = baselinePath(wikiCfg);
@@ -82,7 +94,8 @@ export async function checkQuery(wikiCfg, codeCfg, deps = {}) {
   if (needCode(codeCfg) && !deps.resolve) return { error: "stale needs a code index — pass --link-repo <codeRepo>" };
   const resolve = deps.resolve || (() => resolveAllNoteRefs(wikiCfg, codeCfg));
   const current = await resolve();
-  const report = diffBaseline(doc.links, current, doc.muted || {});
+  const baseLinks = filterIgnoredNotes(doc.links, wikiCfg.staleIgnore);
+  const report = diffBaseline(baseLinks, current, doc.muted || {});
   return report;
 }
 
