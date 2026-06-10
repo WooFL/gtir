@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { fileURLToPath } from "node:url";
-import { realpathSync, readFileSync, existsSync, writeFileSync } from "node:fs";
+import { realpathSync, readFileSync, existsSync, writeFileSync, rmSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { loadConfig } from "../src/config.mjs";
@@ -30,10 +30,23 @@ import { cochangeQuery, hotspotsQuery } from "../src/git-metrics-run.mjs";
 import { communitiesQuery } from "../src/communities-run.mjs";
 import { baselineQuery, checkQuery, ackQuery, muteQuery, emitBriefs } from "../src/stale-run.mjs";
 import {
-  gtirMcpEntry, gtirHookEntry, gtirNavBody,
-  addMcpServer, removeMcpServer, addPreToolUseHook, removePreToolUseHook,
-  upsertMarkedSection, removeMarkedSection, hooknudge,
-  GTIR_START, GTIR_END, HOOK_MATCH_KEY,
+  gtirMcpEntry,
+  gtirHookEntry,
+  gtirNavBody,
+  gtirCursorRuleBody,
+  addMcpServer,
+  removeMcpServer,
+  addPreToolUseHook,
+  removePreToolUseHook,
+  upsertMarkedSection,
+  removeMarkedSection,
+  hooknudge,
+  mcpHasGtir,
+  settingsHasHook,
+  markedSectionPresent,
+  GTIR_START,
+  GTIR_END,
+  HOOK_MATCH_KEY,
 } from "../src/install.mjs";
 import { mkdirSync } from "node:fs";
 
@@ -243,26 +256,14 @@ export async function runScipEval({ repo, scip, json = false, sampleN = 10, _edg
   return res;
 }
 
-// `gtir install [--repo <path>] [--uninstall] [--force]`: wire a repo so Claude Code (main
-// agent AND subagents) prefers gtir's MCP tools over raw Grep/Glob. Writes three merge-
-// preserving, idempotent targets via the pure helpers in src/install.mjs:
-//   <repo>/.mcp.json              — add mcpServers.gtir (this bin, `mcp --repo . --watch`)
-//   <repo>/.claude/settings.json  — add a Grep|Glob PreToolUse hook → `gtir hooknudge`
-//   <repo>/CLAUDE.md              — upsert a marked section nudging the MCP tools
-// --uninstall calls the remove* counterparts. Tolerant of missing files (starts from {}/"")
-// and never deletes a file on uninstall (leaves {}/empty). Returns a summary of changes.
-//
-// Preserve semantics (install only, not uninstall):
-//   If mcpServers.gtir already exists and !force → skip writing .mcp.json entirely (so a
-//   locked/EPERM file is never touched) and log that the existing entry was preserved.
-//   The hook (.claude/settings.json) and CLAUDE.md are always written regardless.
-//   --force overwrites the existing gtir entry with the default single-repo entry.
-//
-// Per-file error handling: each write is attempted independently. A failure (e.g. EPERM on
-// the MCP file held by a running server) is reported with the filename but does NOT abort the
-// remaining writes. If any write failed the function returns with writeErrors set.
-export function runInstall({ repo = process.cwd(), uninstall = false, force = false, log = (m) => process.stderr.write(m + "\n") } = {}) {
+export function runInstall({ repo = process.cwd(), uninstall = false, force = false,
+                            assistants = null, verify = false,
+                            log = (m) => process.stderr.write(m + "\n") } = {}) {
   const absBin = fileURLToPath(import.meta.url); // the real path to this bin/gtir.mjs
+
+  // Selection: Claude is the baseline (default on); Cursor is detected via .cursor/ unless an
+  // explicit set was passed; AGENTS.md is always written. Callers (the CLI) pass a resolved set.
+  const sel = assistants ?? { claude: true, cursor: existsSync(path.join(repo, ".cursor")) };
 
   const readJson = (file) => {
     if (!existsSync(file)) return {};
@@ -271,81 +272,108 @@ export function runInstall({ repo = process.cwd(), uninstall = false, force = fa
   };
   const readText = (file) => (existsSync(file) ? readFileSync(file, "utf8") : "");
   const writeJson = (file, obj) => writeFileSync(file, JSON.stringify(obj, null, 2) + "\n");
+  const rel = (file) => path.relative(repo, file).split("\\").join("/");
 
-  const mcpFile = path.join(repo, ".mcp.json");
-  const claudeDir = path.join(repo, ".claude");
-  const settingsFile = path.join(claudeDir, "settings.json");
-  const claudeMdFile = path.join(repo, "CLAUDE.md");
-
-  // On uninstall we must not litter: if a target file was absent there is nothing of ours
-  // to remove, so don't create an empty `{}`/empty file (or the `.claude/` dir) for it. If
-  // it existed, write the cleaned result as before (even an empty `{}`/"" — never delete it).
-  // Install (non-uninstall) always creates the files.
-  const mcpExisted = existsSync(mcpFile);
-  const settingsExisted = existsSync(settingsFile);
-  const claudeMdExisted = existsSync(claudeMdFile);
+  if (verify) return verifyInstall({ repo, sel, log });
 
   const writeErrors = [];
 
-  // .mcp.json
-  if (!uninstall || mcpExisted) {
-    const mcp0 = readJson(mcpFile);
+  // Shared .mcp.json-shaped file (used for both .mcp.json and .cursor/mcp.json). Preserves an
+  // existing gtir entry unless force; never touches an absent file on uninstall.
+  const mcpFileWrite = (file) => {
+    const existed = existsSync(file);
+    if (uninstall && !existed) return;
+    try {
+      mkdirSync(path.dirname(file), { recursive: true });
+      const m0 = readJson(file);
+      if (uninstall) { writeJson(file, removeMcpServer(m0, "gtir")); return; }
+      const existing = m0?.mcpServers?.gtir;
+      const hasExisting = existing && typeof existing === "object" && !Array.isArray(existing);
+      if (hasExisting && !force) { log(`${rel(file)} — left existing gtir entry (use --force to overwrite)`); return; }
+      writeJson(file, addMcpServer(m0, "gtir", gtirMcpEntry(absBin), { force }));
+    } catch (e) { writeErrors.push(file); log(`gtir install: WARNING — could not write ${file}: ${e.message}`); }
+  };
 
+  // Claude settings.json PreToolUse hook.
+  const settingsWrite = (file) => {
+    const existed = existsSync(file);
+    if (uninstall && !existed) return;
+    try {
+      mkdirSync(path.dirname(file), { recursive: true });
+      const s0 = readJson(file);
+      const s1 = uninstall ? removePreToolUseHook(s0, HOOK_MATCH_KEY) : addPreToolUseHook(s0, gtirHookEntry(absBin), HOOK_MATCH_KEY);
+      writeJson(file, s1);
+    } catch (e) { writeErrors.push(file); log(`gtir install: WARNING — could not write ${file}: ${e.message}`); }
+  };
+
+  // Shared markdown file with a gtir marked section (CLAUDE.md, AGENTS.md).
+  const sectionWrite = (file) => {
+    const existed = existsSync(file);
+    if (uninstall && !existed) return;
+    try {
+      mkdirSync(path.dirname(file), { recursive: true });
+      const t0 = readText(file);
+      const t1 = uninstall ? removeMarkedSection(t0, GTIR_START, GTIR_END) : upsertMarkedSection(t0, GTIR_START, GTIR_END, gtirNavBody());
+      writeFileSync(file, t1);
+    } catch (e) { writeErrors.push(file); log(`gtir install: WARNING — could not write ${file}: ${e.message}`); }
+  };
+
+  // gtir-owned file: written whole on install, deleted on uninstall.
+  const ownedWrite = (file, content) => {
+    const existed = existsSync(file);
     if (uninstall) {
-      // Uninstall: always attempt to remove the gtir key and write.
-      try { writeJson(mcpFile, removeMcpServer(mcp0, "gtir")); }
-      catch (e) { writeErrors.push(mcpFile); log(`gtir install: WARNING — could not write ${mcpFile}: ${e.message}`); }
-    } else {
-      // Install: check whether gtir already exists and we should preserve it.
-      const existingGtir = mcp0?.mcpServers?.gtir;
-      const hasExistingEntry = existingGtir && typeof existingGtir === "object" && !Array.isArray(existingGtir);
-      if (hasExistingEntry && !force) {
-        // Skip the write entirely — the existing entry may be richer (multiple --repo flags,
-        // type:stdio, etc.) and touching a locked file would abort the whole install.
-        log(`.mcp.json — left existing gtir entry (use --force to overwrite)`);
-      } else {
-        const mcp1 = addMcpServer(mcp0, "gtir", gtirMcpEntry(absBin), { force });
-        try { writeJson(mcpFile, mcp1); }
-        catch (e) { writeErrors.push(mcpFile); log(`gtir install: WARNING — could not write ${mcpFile}: ${e.message}`); }
-      }
+      if (existed) { try { rmSync(file); } catch (e) { writeErrors.push(file); log(`gtir install: WARNING — could not remove ${file}: ${e.message}`); } }
+      return;
     }
-  }
+    try { mkdirSync(path.dirname(file), { recursive: true }); writeFileSync(file, content); }
+    catch (e) { writeErrors.push(file); log(`gtir install: WARNING — could not write ${file}: ${e.message}`); }
+  };
 
-  // .claude/settings.json
-  if (!uninstall || settingsExisted) {
-    try {
-      mkdirSync(claudeDir, { recursive: true }); // only create .claude/ when we're actually writing settings
-      const settings0 = readJson(settingsFile);
-      const settings1 = uninstall
-        ? removePreToolUseHook(settings0, HOOK_MATCH_KEY)
-        : addPreToolUseHook(settings0, gtirHookEntry(absBin), HOOK_MATCH_KEY);
-      writeJson(settingsFile, settings1);
-    } catch (e) {
-      writeErrors.push(settingsFile);
-      log(`gtir install: WARNING — could not write ${settingsFile}: ${e.message}`);
-    }
+  const wrote = [];
+  if (sel.claude) {
+    mcpFileWrite(path.join(repo, ".mcp.json"));
+    settingsWrite(path.join(repo, ".claude", "settings.json"));
+    sectionWrite(path.join(repo, "CLAUDE.md"));
+    wrote.push("claude");
   }
-
-  // CLAUDE.md
-  if (!uninstall || claudeMdExisted) {
-    try {
-      const md0 = readText(claudeMdFile);
-      const md1 = uninstall
-        ? removeMarkedSection(md0, GTIR_START, GTIR_END)
-        : upsertMarkedSection(md0, GTIR_START, GTIR_END, gtirNavBody());
-      writeFileSync(claudeMdFile, md1);
-    } catch (e) {
-      writeErrors.push(claudeMdFile);
-      log(`gtir install: WARNING — could not write ${claudeMdFile}: ${e.message}`);
-    }
+  if (sel.cursor) {
+    mcpFileWrite(path.join(repo, ".cursor", "mcp.json"));
+    ownedWrite(path.join(repo, ".cursor", "rules", "gtir.mdc"), gtirCursorRuleBody());
+    wrote.push("cursor");
   }
+  sectionWrite(path.join(repo, "AGENTS.md")); // universal, always
+  wrote.push("agents");
 
   const verb = uninstall ? "removed" : "wired";
-  log(`gtir install: ${verb} gtir for Claude Code in ${repo}`);
-  log(`  .mcp.json              ${uninstall ? "- gtir server removed" : "+ gtir MCP server"}`);
-  log(`  .claude/settings.json  ${uninstall ? "- Grep|Glob hook removed" : "+ Grep|Glob → hooknudge"}`);
-  log(`  CLAUDE.md              ${uninstall ? "- gtir section removed" : "+ gtir nav nudge"}`);
-  return { repo, uninstall, writeErrors, files: { mcp: mcpFile, settings: settingsFile, claudeMd: claudeMdFile } };
+  log(`gtir install: ${verb} gtir for [${wrote.join(", ")}] in ${repo}`);
+  return { repo, uninstall, sel, wrote, writeErrors };
+}
+
+// Check-only verification: inspect the repo and report PASS/FAIL per item. No writes.
+function verifyInstall({ repo, sel, log }) {
+  const readJson = (file) => { if (!existsSync(file)) return {}; try { return JSON.parse(readFileSync(file, "utf8")); } catch { return {}; } };
+  const readText = (file) => (existsSync(file) ? readFileSync(file, "utf8") : "");
+  const items = [];
+
+  const idxOk = existsSync(path.join(repo, ".gtir", "index.lance"));
+  items.push({ name: "index", ok: idxOk, detail: idxOk ? "present" : "missing — run `gtir install` (without --verify)" });
+
+  if (sel.claude) {
+    items.push({ name: ".mcp.json", ok: mcpHasGtir(readJson(path.join(repo, ".mcp.json"))), detail: "gtir server" });
+    items.push({ name: "PreToolUse hook", ok: settingsHasHook(readJson(path.join(repo, ".claude", "settings.json"))), detail: "Grep|Glob → hooknudge" });
+    items.push({ name: "CLAUDE.md", ok: markedSectionPresent(readText(path.join(repo, "CLAUDE.md"))), detail: "nav section" });
+  }
+  if (sel.cursor) {
+    items.push({ name: ".cursor/mcp.json", ok: mcpHasGtir(readJson(path.join(repo, ".cursor", "mcp.json"))), detail: "gtir server" });
+    items.push({ name: ".cursor/rules/gtir.mdc", ok: existsSync(path.join(repo, ".cursor", "rules", "gtir.mdc")), detail: "rule file" });
+  }
+  items.push({ name: "AGENTS.md", ok: markedSectionPresent(readText(path.join(repo, "AGENTS.md"))), detail: "nav section" });
+
+  const ready = items.every((i) => i.ok);
+  log(`gtir install --verify (${repo})`);
+  for (const i of items) log(`  ${i.name.padEnd(22)} ${i.ok ? "✓" : "✗"} ${i.detail}`);
+  log(`overall: ${ready ? "ready ✓" : "NOT ready ✗"}`);
+  return { repo, verify: true, ready, items };
 }
 
 // --- argv parsing ---

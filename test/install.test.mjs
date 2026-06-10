@@ -569,3 +569,56 @@ test("markedSectionPresent: true only when both gtir marks present", () => {
   assert.equal(markedSectionPresent(""), false);
   assert.equal(markedSectionPresent(undefined), false);
 });
+
+// --- multi-assistant wiring -------------------------------------------------
+
+test("runInstall: always writes AGENTS.md nav section (universal)", () => {
+  const repo = tmp();
+  runInstall({ repo });
+  const agents = readFileSync(join(repo, "AGENTS.md"), "utf8");
+  assert.match(agents, new RegExp(GTIR_START));
+  assert.match(agents, /mcp__gtir__context/);
+});
+
+test("runInstall: no .cursor/ present => Cursor files NOT written (Claude baseline only)", () => {
+  const repo = tmp();
+  runInstall({ repo });
+  assert.ok(!existsSync(join(repo, ".cursor", "mcp.json")), "cursor mcp not written when undetected");
+  assert.ok(!existsSync(join(repo, ".cursor", "rules", "gtir.mdc")), "cursor rule not written when undetected");
+  assert.ok(existsSync(join(repo, ".mcp.json")));
+});
+
+test("runInstall assistants:{cursor} => writes .cursor/mcp.json + owned rule file, skips Claude", () => {
+  const repo = tmp();
+  runInstall({ repo, assistants: { claude: false, cursor: true } });
+  const cmcp = JSON.parse(readFileSync(join(repo, ".cursor", "mcp.json"), "utf8"));
+  assert.ok(cmcp.mcpServers.gtir, "gtir registered in .cursor/mcp.json");
+  const rule = readFileSync(join(repo, ".cursor", "rules", "gtir.mdc"), "utf8");
+  assert.match(rule, /alwaysApply: true/);
+  assert.match(rule, /mcp__gtir__context/);
+  assert.ok(!existsSync(join(repo, ".mcp.json")), "Claude .mcp.json not written when claude:false");
+  assert.ok(existsSync(join(repo, "AGENTS.md")));
+});
+
+test("runInstall then uninstall (cursor): owned rule file deleted, shared cursor mcp keeps other servers", () => {
+  const repo = tmp();
+  mkdirSync(join(repo, ".cursor"), { recursive: true });
+  writeFileSync(join(repo, ".cursor", "mcp.json"),
+    JSON.stringify({ mcpServers: { other: { command: "x", args: [] } } }, null, 2) + "\n");
+  const sel = { claude: false, cursor: true };
+  runInstall({ repo, assistants: sel });
+  assert.ok(existsSync(join(repo, ".cursor", "rules", "gtir.mdc")), "rule written");
+
+  runInstall({ repo, uninstall: true, assistants: sel });
+  assert.ok(!existsSync(join(repo, ".cursor", "rules", "gtir.mdc")), "owned rule deleted on uninstall");
+  const cmcp = JSON.parse(readFileSync(join(repo, ".cursor", "mcp.json"), "utf8"));
+  assert.ok(!cmcp.mcpServers.gtir, "gtir removed from cursor mcp");
+  assert.deepEqual(cmcp.mcpServers.other, { command: "x", args: [] }, "unrelated cursor server intact");
+});
+
+test("runInstall --uninstall on a bare repo creates NO files (AGENTS.md included)", () => {
+  const repo = tmp();
+  runInstall({ repo, uninstall: true });
+  assert.ok(!existsSync(join(repo, "AGENTS.md")), "AGENTS.md not created on bare uninstall");
+  assert.ok(!existsSync(join(repo, ".cursor")), ".cursor/ not created on bare uninstall");
+});
