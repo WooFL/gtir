@@ -99,18 +99,32 @@ test("codeLinksFor resolves a note's code references against the code index", as
 
 import { augmentGraphWithCode } from "../src/crosslinks.mjs";
 
-test("augmentGraphWithCode adds code nodes + center->code edges", () => {
+test("augmentGraphWithCode adds file-labeled symbols, file nodes, containment + note edges", () => {
   const graph = { center: "a.md", nodes: [{ path: "a.md", label: "a", group: "", weight: 1, center: true }], edges: [] };
   const codeLinks = [
     { kind: "symbol", symbol: "WidgetRegistry", path: "src/registry.ts", lines: "10-40", snippet: "class WidgetRegistry" },
     { kind: "file", path: "src/util.ts", snippet: "" },
   ];
-  const g = augmentGraphWithCode(graph, codeLinks);
-  const codeNodes = g.nodes.filter((n) => n.kind === "code");
-  assert.equal(codeNodes.length, 2);
-  assert.ok(codeNodes.some((n) => n.label === "WidgetRegistry" && n.codePath === "src/registry.ts"));
-  assert.ok(g.edges.some((e) => e.from === "a.md" && e.kind === "code"));
-  assert.ok(g.nodes.some((n) => n.path === "a.md" && n.center));
+  const g = augmentGraphWithCode(graph, codeLinks, { callEdges: [] });
+  const sym = g.nodes.find((n) => n.kind === "code");
+  assert.equal(sym.label, "WidgetRegistry · registry.ts");      // file-labeled
+  assert.equal(sym.codePath, "src/registry.ts");
+  const files = g.nodes.filter((n) => n.kind === "file").map((n) => n.codePath).sort();
+  assert.deepEqual(files, ["src/registry.ts", "src/util.ts"]);  // symbol's file + the directly-cited file
+  assert.ok(g.edges.some((e) => e.from === "a.md" && e.to === sym.path && e.kind === "code"));        // note->symbol
+  assert.ok(g.edges.some((e) => e.from === sym.path && e.kind === "code-file"));                       // containment
+  assert.ok(g.edges.some((e) => e.from === "a.md" && e.to === "codefile:src/util.ts" && e.kind === "code")); // note->file
+});
+
+test("augmentGraphWithCode emits a code-call edge between two shown symbols", () => {
+  const graph = { center: "a.md", nodes: [{ path: "a.md", label: "a", group: "", weight: 1, center: true }], edges: [] };
+  const codeLinks = [
+    { kind: "symbol", symbol: "foo", path: "m.ts" },
+    { kind: "symbol", symbol: "bar", path: "m.ts" },
+  ];
+  const struct = { callEdges: [{ fromPath: "m.ts", fromSymbol: "foo", toPath: "m.ts", toSymbol: "bar" }] };
+  const g = augmentGraphWithCode(graph, codeLinks, struct);
+  assert.ok(g.edges.some((e) => e.from === "code:m.ts#foo" && e.to === "code:m.ts#bar" && e.kind === "code-call"));
 });
 
 test("augmentGraphWithCode with no links returns the graph unchanged", () => {
@@ -193,6 +207,44 @@ test("reverseLinks baselineOnly: no baseline => empty maps, never opens the wiki
   assert.notEqual(rev2, rev, "baselineOnly result must not be cached");
 });
 
+import { codeStructure } from "../src/crosslinks.mjs";
+import { clearGraphCache } from "../src/graph-queries.mjs";
+
+test("codeStructure keeps call edges only between two shown symbols", async () => {
+  // foo() calls bar() and qux(); bar() calls baz(). Mirrors the codeRepo()/loadConfig harness
+  // already used by the codeLinksFor test above (loadConfig takes a repo PATH; fetch is stubbed
+  // in the _before block, so buildIndex/indexEdges run offline).
+  const repo = mkdtempSync(join(tmpdir(), "gtir-cs-"));
+  mkdirSync(join(repo, "src"), { recursive: true });
+  writeFileSync(join(repo, "src", "m.ts"),
+    "export function bar(){ return baz(); }\n" +
+    "export function baz(){ return 1; }\n" +
+    "export function qux(){ return 2; }\n" +
+    "export function foo(){ return bar() + qux(); }\n");
+  const cfg = { ...loadConfig(repo), model: "qwen3-embedding:0.6b", ollamaUrl: "http://localhost:11434" };
+  try {
+    await buildIndex(cfg, { rebuild: true });
+    await indexEdges(cfg, { rebuild: true, collect: false });
+    clearGraphCache(cfg.indexDir);
+    // Shown = foo, bar (NOT qux, NOT baz). foo->bar survives; foo->qux dropped (qux not shown);
+    // bar->baz dropped (baz not shown).
+    const shown = [
+      { kind: "symbol", symbol: "foo", path: "src/m.ts" },
+      { kind: "symbol", symbol: "bar", path: "src/m.ts" },
+    ];
+    const { callEdges } = await codeStructure(cfg, shown);
+    assert.equal(callEdges.length, 1);
+    assert.deepEqual(callEdges[0], { fromPath: "src/m.ts", fromSymbol: "foo", toPath: "src/m.ts", toSymbol: "bar" });
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("codeStructure returns no edges when fewer than 2 symbols are shown", async () => {
+  const { callEdges } = await codeStructure({ indexDir: "unused" }, [{ kind: "symbol", symbol: "x", path: "a.ts" }]);
+  assert.deepEqual(callEdges, []);
+});
+
 import { makeHandlers } from "../src/serve.mjs";
 
 test("serve makeHandlers augments /connections + /graph with code when linkCfg is set", async () => {
@@ -210,6 +262,7 @@ test("serve makeHandlers augments /connections + /graph with code when linkCfg i
 
     const g = await handlers["/graph"]({ path: "design.md" });
     assert.ok(g.nodes.some((n) => n.kind === "code"), "/graph has a code node");
+    assert.ok(g.nodes.some((n) => n.kind === "file"), "graph carries file nodes");
 
     // /health advertises whether a code index is linked (the plugin uses this to avoid adopting a non-linked daemon)
     assert.equal((await handlers["/health"]()).linked, true);

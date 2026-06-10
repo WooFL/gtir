@@ -5,7 +5,7 @@ import { createServer } from "node:http";
 import { openStore } from "./store.mjs";
 import { computeConnections, graphNeighborhood } from "./connections.mjs";
 import { search } from "./search.mjs";
-import { codeLinksFor, augmentGraphWithCode } from "./crosslinks.mjs";
+import { codeLinksFor, augmentGraphWithCode, codeStructure } from "./crosslinks.mjs";
 import { watchRepo as startWatcher } from "./watch.mjs";
 
 const POST_ROUTES = new Set(["/connections", "/search", "/graph"]);
@@ -63,8 +63,11 @@ export function makeHandlers(cfg, { linkCfg = null } = {}) {
     "/graph": async (body) => {
       let g = await graphNeighborhood(cfg, { path: body.path, k: body.k, hops: body.hops, max: body.max });
       if (linkCfg && body.path && !g.error && Array.isArray(g.nodes) && g.nodes.length) {
-        try { g = augmentGraphWithCode(g, await codeLinksFor(cfg, linkCfg, body.path)); }
-        catch (e) { process.stderr.write(`gtir serve: cross-links failed: ${e.message}\n`); }
+        try {
+          const codeLinks = await codeLinksFor(cfg, linkCfg, body.path);
+          const struct = await codeStructure(linkCfg, codeLinks);
+          g = augmentGraphWithCode(g, codeLinks, struct);
+        } catch (e) { process.stderr.write(`gtir serve: cross-links failed: ${e.message}\n`); }
       }
       return g;
     },
