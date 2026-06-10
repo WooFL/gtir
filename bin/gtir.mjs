@@ -107,7 +107,7 @@ export async function runStale(sub, { repo, linkRepo, emitDir, notePath, muteTar
   if (sub === "baseline") return baselineQuery(wikiCfg, codeCfg);
   if (sub === "check") {
     const report = await checkQuery(wikiCfg, codeCfg);
-    if (!report.error && emitDir) {
+    if (!report.error && emitDir && codeCfg) {
       let sha = "unknown";
       try { sha = execFileSync("git", ["-C", codeCfg.repo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(); } catch { /* leave "unknown" */ }
       report.written = emitBriefs(report, emitDir, { sha, detectedAt: new Date().toISOString(), now: Date.now() });
@@ -976,18 +976,27 @@ async function main() {
         const sub = args._[0];
         if (!["baseline", "check", "ack", "mute"].includes(sub)) {
           process.stderr.write("usage: gtir stale <baseline|check|ack|mute> [--repo <wiki>] [--link-repo <code>] [--emit-briefs <dir>] [--json]\n");
-          process.exit(2);
+          process.exitCode = 2;
+          break;
         }
         const target = args._[1]; // note path (ack) or note#symbol (mute)
+        if ((sub === "ack" || sub === "mute") && !args._[1]) {
+          process.stderr.write(`gtir stale ${sub}: a note path is required\n`);
+          process.exitCode = 2;
+          break;
+        }
         const r = await runStale(sub, {
           repo: args.repo || ".", linkRepo: args.linkRepo, emitDir: args.emitBriefs,
           notePath: target, muteTarget: target,
         });
-        if (r.error) { process.stderr.write(`${r.error}\n`); process.exit(2); }
+        if (r.error) { process.stderr.write(`gtir stale: ${r.error}\n`); process.exitCode = 2; break; }
         if (args.json) { process.stdout.write(JSON.stringify(r, null, 2) + "\n"); break; }
         if (sub === "baseline") process.stdout.write(`baselined ${r.notes} notes, ${r.links} code links\n`);
-        else if (sub === "ack") process.stdout.write(`re-baselined ${r.acked} (${r.links} links)\n`);
-        else if (sub === "mute") process.stdout.write(`muted ${JSON.stringify(r.muted)}\n`);
+        else if (sub === "ack") console.log(`re-baselined ${r.acked} (${r.links} code links tracked)`);
+        else if (sub === "mute") {
+          const [note, syms] = Object.entries(r.muted)[0];
+          console.log(syms.includes("*") ? `muted all of ${note}` : `muted ${syms.join(", ")} in ${note}`);
+        }
         else {
           const sig = r.stale.reduce((n, s) => n + s.rows.filter((x) => x.severity === "signature").length, 0);
           const body = r.stale.reduce((n, s) => n + s.rows.filter((x) => x.severity === "body").length, 0);
