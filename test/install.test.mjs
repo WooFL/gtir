@@ -622,3 +622,33 @@ test("runInstall --uninstall on a bare repo creates NO files (AGENTS.md included
   assert.ok(!existsSync(join(repo, "AGENTS.md")), "AGENTS.md not created on bare uninstall");
   assert.ok(!existsSync(join(repo, ".cursor")), ".cursor/ not created on bare uninstall");
 });
+
+// --- CLI orchestration (no Ollama: use --no-index, and --verify) -------------
+
+test("CLI `gtir install --no-index`: wires Claude + AGENTS.md without building an index", () => {
+  const repo = tmp();
+  execFileSync("node", [BIN, "install", "--repo", repo, "--no-index"], { encoding: "utf8" });
+  assert.ok(existsSync(join(repo, ".mcp.json")), ".mcp.json written");
+  assert.ok(existsSync(join(repo, "AGENTS.md")), "AGENTS.md written");
+  assert.ok(!existsSync(join(repo, ".gtir", "index.lance")), "no index built under --no-index");
+});
+
+test("CLI `gtir install --no-index --all`: also writes Cursor files", () => {
+  const repo = tmp();
+  execFileSync("node", [BIN, "install", "--repo", repo, "--no-index", "--all"], { encoding: "utf8" });
+  assert.ok(existsSync(join(repo, ".cursor", "mcp.json")), "cursor mcp written under --all");
+  assert.ok(existsSync(join(repo, ".cursor", "rules", "gtir.mdc")), "cursor rule written under --all");
+});
+
+test("CLI `gtir install --verify`: exit 1 when not wired, exit 0 after wiring", () => {
+  const repo = tmp();
+  let failed = false;
+  try { execFileSync("node", [BIN, "install", "--repo", repo, "--verify"], { encoding: "utf8" }); }
+  catch (e) { failed = true; assert.equal(e.status, 1); }
+  assert.ok(failed, "verify on an unwired repo exits 1");
+
+  execFileSync("node", [BIN, "install", "--repo", repo, "--no-index"], { encoding: "utf8" });
+  mkdirSync(join(repo, ".gtir", "index.lance"), { recursive: true });
+  const out = execFileSync("node", [BIN, "install", "--repo", repo, "--verify"], { encoding: "utf8" });
+  assert.ok(typeof out === "string");
+});

@@ -376,6 +376,14 @@ function verifyInstall({ repo, sel, log }) {
   return { repo, verify: true, ready, items };
 }
 
+// Resolve which assistants to wire from CLI flags. Claude is the baseline (on unless an explicit
+// --assistant set omits it); Cursor is on via --all, an explicit set, or a detected .cursor/ dir.
+function resolveAssistants(repo, args) {
+  if (args.all) return { claude: true, cursor: true };
+  if (args.assistant) return { claude: args.assistant.has("claude"), cursor: args.assistant.has("cursor") };
+  return { claude: true, cursor: existsSync(path.join(repo, ".cursor")) };
+}
+
 // --- argv parsing ---
 
 function parseArgs(argv) {
@@ -407,6 +415,14 @@ function parseArgs(argv) {
     else if (a === "--remove") args.remove = true;
     else if (a === "--uninstall") args.uninstall = true;
     else if (a === "--force") args.force = true;
+    else if (a === "--verify") args.verify = true;
+    else if (a === "--all") args.all = true;
+    else if (a.startsWith("--assistant=")) {
+      args.assistant = new Set(a.slice("--assistant=".length).split(",").map((s) => s.trim()).filter(Boolean));
+    }
+    else if (a === "--assistant") {
+      args.assistant = new Set((argv[++i] ?? "").split(",").map((s) => s.trim()).filter(Boolean));
+    }
     else if (a === "--notes") args.notes = true;
     else if (a === "--code") args.code = true;
     else if (a === "--link-repo") args.linkRepo = argv[++i];
@@ -1067,7 +1083,20 @@ async function main() {
         break;
       }
       case "install": {
-        const result = runInstall({ repo, uninstall: !!args.uninstall, force: !!args.force });
+        const sel = resolveAssistants(repo, args);
+        if (args.verify) {
+          const r = runInstall({ repo, verify: true, assistants: sel });
+          process.exitCode = r.ready ? 0 : 1;
+          break;
+        }
+        if (!args.uninstall) {
+          // Phase 1 — onboard: config + gitignore + index (unless --no-index) + git auto-refresh hook.
+          const init = await runInit({ repo, index: !args.noIndex, hook: true });
+          if (args.noIndex) process.stderr.write("gtir install: onboarded (index skipped)\n");
+          else process.stderr.write(`gtir install: onboarded (${init.indexed.chunks} chunks, dim=${init.indexed.dim})\n`);
+        }
+        // Phase 2 — wire the selected assistants.
+        const result = runInstall({ repo, uninstall: !!args.uninstall, force: !!args.force, assistants: sel });
         if (result.writeErrors?.length) process.exitCode = 1;
         break;
       }
@@ -1275,7 +1304,7 @@ async function main() {
           "  gtir doctor  [--repo <project>] [--no-pull]   # check Ollama, pull the model, verify readiness",
           "  gtir setup   --repo <project>",
           "  gtir hook    --repo <project> [--remove]",
-          "  gtir install --repo <project> [--uninstall] [--force]   # wire Claude Code (.mcp.json + PreToolUse hook + CLAUDE.md); preserves existing gtir MCP entry unless --force",
+          "  gtir install --repo <project> [--no-index] [--assistant=claude,cursor] [--all] [--uninstall] [--force] [--verify]   # onboard (index + git hook) and wire assistants (.mcp.json/.claude + .cursor + AGENTS.md)",
           "  gtir hooknudge   # PreToolUse hook: reads stdin, nudges agents toward gtir's MCP tools on Grep/Glob (internal)",
           "  gtir fetch-grammars   # download prebuilt shader grammars (HLSL/GLSL, ~5MB, no toolchain)",
           "  gtir serve   --repo <project> [--port 7411] [--host 127.0.0.1] [--token <t>] [--watch] [--link-repo <codeRepo>]   # local HTTP API for the Obsidian plugin; link a code index for note->code cross-links",
