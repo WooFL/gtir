@@ -16,6 +16,27 @@ test("formatDriftNudge lists the edited file + note names", () => {
   assert.match(t, /x\.md/);
 });
 
+test("formatDriftNudge caps the list and appends a (+N more) count", () => {
+  const notes = Array.from({ length: 25 }, (_, i) => ({ note: `n${i}.md` }));
+  const t = formatDriftNudge("src/a.ts", notes, 8);
+  assert.match(t, /n0\.md/);
+  assert.match(t, /n7\.md/);
+  assert.ok(!t.includes("n8.md"), "9th note not listed");
+  assert.match(t, /\(\+17 more\)/);
+});
+
+test("driftnudge: caps the nudge to cfg.relatedNotesCap (central files don't dump dozens)", async () => {
+  const many = Array.from({ length: 30 }, (_, i) => ({ note: `concepts/c${i}.md` }));
+  const deps = {
+    loadConfig: () => ({ repo: "/code", wiki: "../wiki", relatedNotesCap: 5 }),
+    reverseLinks: async () => fakeRev({ "src/a.ts": many }),
+  };
+  const ctx = JSON.parse(await driftnudge(payload("Edit", "/code/src/a.ts"), { cwd: "/code", deps })).hookSpecificOutput.additionalContext;
+  assert.match(ctx, /concepts\/c0\.md/);
+  assert.ok(!ctx.includes("concepts/c5.md"), "6th note not listed (cap 5)");
+  assert.match(ctx, /\(\+25 more\)/);
+});
+
 test("driftnudge: honors the wiki's staleIgnore — archived notes dropped from the nudge", async () => {
   const deps = {
     loadConfig: () => ({ repo: "/code", wiki: "../wiki", staleIgnore: [".raw/"] }),

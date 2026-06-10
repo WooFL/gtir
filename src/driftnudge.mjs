@@ -17,10 +17,13 @@ function dropIgnored(notes, patterns) {
   return notes.filter((n) => !ig.ignores(n.note));
 }
 
-// Pure: the nudge text from the edited path + its documenting notes.
-export function formatDriftNudge(relPath, notes) {
-  const names = notes.map((n) => `\`${n.note}\``).join(", ");
-  return `gtir: you edited \`${relPath}\`. Wiki notes that document this code: ${names}. ` +
+// Pure: the nudge text from the edited path + its documenting notes. Caps the list (central files can be
+// cited by dozens of notes) and appends a `(+N more)` count — the agent runs `gtir stale check` for the full set.
+export function formatDriftNudge(relPath, notes, cap = 8) {
+  const shown = notes.slice(0, Math.max(1, cap));
+  const names = shown.map((n) => `\`${n.note}\``).join(", ");
+  const more = notes.length > shown.length ? ` (+${notes.length - shown.length} more)` : "";
+  return `gtir: you edited \`${relPath}\`. Wiki notes that document this code: ${names}${more}. ` +
     `If your change altered behaviour they describe, reconcile them — update the prose, then run ` +
     `\`gtir stale sync <note>\` (or the stale_sync MCP tool). \`gtir stale check\` verifies the drift cleared.`;
 }
@@ -45,7 +48,7 @@ export async function driftnudge(inputString, { cwd = process.cwd(), deps = {} }
     const notes = dropIgnored(rev.byPath.get(rel) || [], wikiCfg.staleIgnore);
     if (!notes.length) return "";
     return JSON.stringify({
-      hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: formatDriftNudge(rel, notes) },
+      hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: formatDriftNudge(rel, notes, cfg.relatedNotesCap ?? 8) },
     });
   } catch { return ""; }
 }
