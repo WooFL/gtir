@@ -143,6 +143,42 @@ test("buildContext targets mode: a path:lines span resolves to that span", async
   }
 });
 
+import { clearReverseCache } from "../src/crosslinks.mjs";
+
+function codeRepoWR() {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-ctxwr-code-"));
+  writeFileSync(join(repo, "registry.ts"),
+    "export class WidgetRegistry {\n" +
+    "  // Registers widgets for the runtime described in the wiki design note.\n" +
+    "  register(): void {}\n}\n");
+  return repo;
+}
+function wikiRepoWR() {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-ctxwr-wiki-"));
+  writeFileSync(join(repo, "design.md"),
+    "# Design\n\nThis note explains how WidgetRegistry works and references registry.ts.\n");
+  return repo;
+}
+
+test("buildContext attaches `notes` for a cited symbol; omits the field with no wiki", async () => {
+  const code = codeRepoWR(), wiki = wikiRepoWR();
+  const codeCfg = { ...loadConfig(code), model: "qwen3-embedding:0.6b", ollamaUrl: "http://localhost:11434" };
+  const wikiCfg = { ...loadConfig(wiki), model: "nomic-embed-text", ollamaUrl: "http://localhost:11434" };
+  try {
+    await buildIndex(codeCfg, { rebuild: true }); await indexEdges(codeCfg, { rebuild: true, collect: false });
+    await buildIndex(wikiCfg, { rebuild: true });
+    clearReverseCache();
+
+    const out = await buildContext(codeCfg, { targets: ["WidgetRegistry"], wiki: { wikiCfg, codeCfg } });
+    const it = out.items.find((i) => i.path && /registry\.ts$/.test(i.path));
+    assert.ok(it, "WidgetRegistry resolved");
+    assert.ok(it.notes && it.notes.some((n) => n.note === "design.md"), "design.md attached as a related note");
+
+    const noWiki = await buildContext(codeCfg, { targets: ["WidgetRegistry"] });
+    assert.equal(noWiki.items.find((i) => /registry\.ts$/.test(i.path)).notes, undefined, "no wiki -> notes field omitted");
+  } finally { rmSync(code, { recursive: true, force: true }); rmSync(wiki, { recursive: true, force: true }); }
+});
+
 import { handleRequest, defaultContextFn } from "../src/mcp.mjs";
 
 test("MCP context_<label> returns the bundle via handleRequest", async () => {

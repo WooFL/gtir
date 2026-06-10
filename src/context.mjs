@@ -6,6 +6,7 @@ import { search, isNotesMode } from "./search.mjs";
 import { graphForSearch, buildSymbolInventory } from "./graph-queries.mjs";
 import { contextFor } from "./graph-retrieval.mjs";
 import { openStore } from "./store.mjs";
+import { reverseLinks, notesFor } from "./crosslinks.mjs";
 
 // Heuristic, scale-independent confidence. Query mode uses the relative top-vs-#2 RRF margin;
 // targets mode uses resolution success. Pure.
@@ -33,7 +34,21 @@ export function retrievalQuality(items, mode, cfg = {}) {
   };
 }
 
-export async function buildContext(cfg, { query = null, targets = null, k, contextLines } = {}) {
+// Resolve the reverse (code->note) map for a paired wiki, or null. Never throws into a context call.
+async function loadRev(wiki) {
+  if (!wiki) return null;
+  try { return await reverseLinks(wiki.wikiCfg, wiki.codeCfg); } catch { return null; }
+}
+// Attach `notes` to an item when the reverse map yields any; omit the field otherwise. Mutates + returns.
+function withNotes(item, rev, keys, cap) {
+  if (rev && !item.error) {
+    const n = notesFor(rev, keys, cap);
+    if (n.length) item.notes = n;
+  }
+  return item;
+}
+
+export async function buildContext(cfg, { query = null, targets = null, k, contextLines, wiki = null } = {}) {
   const hasTargets = Array.isArray(targets) && targets.length > 0;
   if (!query && !hasTargets) return { error: "query or targets required" };
   const K = Math.max(1, Math.min(20, (k ?? cfg.contextK ?? 5) | 0 || 5));
@@ -46,14 +61,16 @@ export async function buildContext(cfg, { query = null, targets = null, k, conte
     } catch (e) {
       return { error: e.message };
     }
-    const items = hits.map((h) => ({
+    const rev = await loadRev(wiki);
+    const cap = cfg.relatedNotesCap ?? 8;
+    const items = hits.map((h) => withNotes({
       path: h.path, lines: h.lines, language: h.language, score: h.score, vec_rank: h.vec_rank,
       source: h.snippet, callers: h.callers ?? [], callees: h.callees ?? [],
-    }));
+    }, rev, { path: h.path }, cap));
     return { ...retrievalQuality(items, "query", cfg), items };
   }
 
-  return await buildTargetsContext(cfg, targets, contextLines); // real impl in Task 4
+  return await buildTargetsContext(cfg, targets, contextLines, wiki);
 }
 
 // A target is a "path:lines" span when it has a ":" followed by a digit; otherwise a symbol name.
@@ -89,7 +106,7 @@ async function siblingsFor(store, path) {
   return rows.map((r) => ({ line_start: Number(r.line_start), line_end: Number(r.line_end), signature: sigLine(r.text) }));
 }
 
-async function buildTargetsContext(cfg, targets, contextLines) {
+async function buildTargetsContext(cfg, targets, contextLines, wiki) {
   const store = await openStore(cfg);
   const tbl = await store.chunksTable();
   if (!tbl) return { error: "no index — run: gtir index" };
@@ -97,6 +114,8 @@ async function buildTargetsContext(cfg, targets, contextLines) {
   const { graph } = await graphForSearch(cfg);
   const inv = await buildSymbolInventory(store, mode);
   const cap = cfg.contextCap ?? 5;
+  const rev = await loadRev(wiki);
+  const notesCap = cfg.relatedNotesCap ?? 8;
 
   const items = [];
   for (const t of targets) {
@@ -104,21 +123,21 @@ async function buildTargetsContext(cfg, targets, contextLines) {
       if (isSpanTarget(t)) {
         const { path, start, end } = parseSpan(t);
         const span = readSpan(cfg, path, start, end, contextLines);
-        items.push({
+        items.push(withNotes({
           path, lines: span.lines, language: cfg.language ?? null, source: span.text,
           ...contextFor(span.text, path, graph, { cap }),
           siblings: await siblingsFor(store, path),
-        });
+        }, rev, { path }, notesCap));
       } else {
         const sites = inv.byName.get(t) || [];
         if (sites.length === 0) { items.push({ target: t, error: "not found" }); continue; }
         for (const s of sites) {
           const lines = s.line_start != null ? `${s.line_start}-${s.line_end}` : null;
-          items.push({
+          items.push(withNotes({
             path: s.path, lines, language: cfg.language ?? null, source: s.text,
             ...contextFor(s.text, s.path, graph, { cap }),
             siblings: await siblingsFor(store, s.path),
-          });
+          }, rev, { symbol: t, path: s.path }, notesCap));
         }
       }
     } catch (e) {
