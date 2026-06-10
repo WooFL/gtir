@@ -65,7 +65,11 @@ export function makeHandlers(cfg, { linkCfg = null } = {}) {
       if (linkCfg && body.path && !g.error && Array.isArray(g.nodes) && g.nodes.length) {
         try {
           const codeLinks = await codeLinksFor(cfg, linkCfg, body.path);
-          const struct = await codeStructure(linkCfg, codeLinks);
+          // call edges are best-effort: if codeStructure fails, still augment with the symbol/file
+          // layer (no call edges) rather than dropping the whole code layer.
+          let struct = { callEdges: [] };
+          try { struct = await codeStructure(linkCfg, codeLinks); }
+          catch (e) { process.stderr.write(`gtir serve: codeStructure failed: ${e.message}\n`); }
           g = augmentGraphWithCode(g, codeLinks, struct);
         } catch (e) { process.stderr.write(`gtir serve: cross-links failed: ${e.message}\n`); }
       }
