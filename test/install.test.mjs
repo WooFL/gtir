@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   gtirMcpEntry,
+  mcpHasWikiPair,
   gtirHookEntry,
   gtirNavBody,
   gtirCursorRuleBody,
@@ -709,4 +710,23 @@ test("removePostToolUseHook: removes gtir's, keeps others; idempotent", () => {
 test("settingsHasPostHook: false when absent or empty", () => {
   assert.equal(settingsHasPostHook({}), false);
   assert.equal(settingsHasPostHook({ hooks: { PostToolUse: [] } }), false);
+});
+
+// --- gtirMcpEntry wiki pairing + mcpHasWikiPair --------------------------------
+
+test("gtirMcpEntry: no wiki => single --repo . + --watch (unchanged)", () => {
+  const e = gtirMcpEntry("/b/gtir.mjs");
+  assert.deepEqual(e.args, ["/b/gtir.mjs", "mcp", "--repo", ".", "--watch"]);
+});
+
+test("gtirMcpEntry: with wiki => a second --repo <wiki> before --watch", () => {
+  const e = gtirMcpEntry("/b/gtir.mjs", "../wiki");
+  assert.deepEqual(e.args, ["/b/gtir.mjs", "mcp", "--repo", ".", "--repo", "../wiki", "--watch"]);
+  assert.equal(e.args.filter((a) => a === "--repo").length, 2);
+});
+
+test("mcpHasWikiPair: true iff the gtir server has >= 2 --repo args", () => {
+  assert.equal(mcpHasWikiPair({ mcpServers: { gtir: { args: ["x", "--repo", ".", "--repo", "../wiki", "--watch"] } } }), true);
+  assert.equal(mcpHasWikiPair({ mcpServers: { gtir: { args: ["x", "--repo", ".", "--watch"] } } }), false);
+  assert.equal(mcpHasWikiPair({}), false);
 });
