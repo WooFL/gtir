@@ -1,7 +1,7 @@
 // src/stale-run.mjs — impure orchestrator for `gtir stale`. Resolves note->code links via the mention-
 // bridge, snapshots symbol-body hashes to <wiki>/.gtir/stale-baselines.json, diffs on demand, and emits
 // claude-obsidian command-center briefs. Query fns accept injectable deps for testability.
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { openStore } from "./store.mjs";
 import { codeIndexFor, crossLinks } from "./crosslinks.mjs";
@@ -16,7 +16,10 @@ function readBaseline(wikiCfg) {
   try { return JSON.parse(readFileSync(p, "utf8")); } catch { return null; }
 }
 function writeBaseline(wikiCfg, doc) {
-  writeFileSync(baselinePath(wikiCfg), JSON.stringify(doc, null, 2), "utf8");
+  const p = baselinePath(wikiCfg);
+  const tmp = p + ".tmp";
+  writeFileSync(tmp, JSON.stringify(doc, null, 2), "utf8");
+  renameSync(tmp, p);
 }
 
 // Resolve EVERY note in the wiki index to its cited code symbols/files, hydrated with full body text and
@@ -40,8 +43,8 @@ export async function resolveAllNoteRefs(wikiCfg, codeCfg) {
         const site = sites.find((s) => s.path === link.path) || sites[0];
         if (!site) continue;
         snapped.push(snapshotRow({
-          kind: "symbol", symbol: link.symbol, path: link.path,
-          lines: site.line_start != null ? `${site.line_start}-${site.line_end}` : link.lines,
+          kind: "symbol", symbol: link.symbol, path: site.path,
+          lines: site.line_start != null && site.line_end != null ? `${site.line_start}-${site.line_end}` : link.lines,
           text: site.text || "",
         }));
       } else { // file
@@ -60,7 +63,7 @@ function needCode(codeCfg) {
 }
 
 export async function baselineQuery(wikiCfg, codeCfg, deps = {}) {
-  if (needCode(codeCfg)) return { error: "stale needs a code index — pass --link-repo <codeRepo>" };
+  if (needCode(codeCfg) && !deps.resolve) return { error: "stale needs a code index — pass --link-repo <codeRepo>" };
   const resolve = deps.resolve || (() => resolveAllNoteRefs(wikiCfg, codeCfg));
   const links = await resolve();
   const prior = readBaseline(wikiCfg);
@@ -105,8 +108,8 @@ export function muteQuery(wikiCfg, notePath, symbol) {
 function slug(s) { return String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60); }
 
 function alreadyQueued(queueDir, note) {
-  const needle = `code-drift-${slug(note)}`;
-  for (const f of readdirSync(queueDir)) if (f.includes(needle)) return true;
+  const needle = `code-drift-${slug(note)}.md`;
+  for (const f of readdirSync(queueDir)) if (f.endsWith(needle)) return true;
   return false;
 }
 
@@ -125,7 +128,7 @@ The code \`${note}\` cites has changed. Reconcile the affected section(s), then 
 
 **Required updates**:
 
-1. **Open \`${note}\`.** The drift is in the section/claim referencing \`${rows.map((r) => r.symbol).join("`, `")}\`.
+1. **Open \`${note}\`.** The drift is in the section/claim referencing \`${rows.map((r) => r.symbol || r.codePath).join("`, `")}\`.
 ${blocks}
 ${rows.length + 2}. **Update the note** so its description matches current code. Keep voice/structure; change only what the code change invalidated (signature → param/return claims; removed → note the removal / find the replacement; body → re-verify behavior claims).
 ${rows.length + 3}. **Re-baseline** so this stops flagging: \`gtir stale ack "${note}"\`.
