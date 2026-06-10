@@ -13,10 +13,15 @@ function indexByName(flat) {
   return m;
 }
 
-// Full defined-symbol inventory, rebuilt at query time from chunk text (the same declaredSymbols
-// heuristic the indexer uses). Returns { flat, byName }. Notes mode: one entry per note file.
+// Full defined-symbol inventory, rebuilt at query time. When symbols_json is present (and not in
+// callables mode), uses precise per-symbol line spans from the stored column; otherwise falls back
+// to the declaredSymbols heuristic over chunk text. Notes mode: one entry per note file.
 export async function buildSymbolInventory(store, mode, { callables = false } = {}) {
-  const rows = await store.allChunkRows(["path", "line_start", "line_end", "text"]);
+  const hasSymbols = !callables && (await store.chunkColumns())?.has("symbols_json") === true;
+  const cols = hasSymbols
+    ? ["path", "line_start", "line_end", "text", "symbols_json"]
+    : ["path", "line_start", "line_end", "text"];
+  const rows = await store.allChunkRows(cols);
   const flat = [];
   if (mode === "notes") {
     const seen = new Set();
@@ -25,14 +30,44 @@ export async function buildSymbolInventory(store, mode, { callables = false } = 
     const declared = callables ? declaredCallables : declaredSymbols;
     const seen = new Set();
     for (const r of rows) {
-      for (const name of declared(r.text)) {
-        const k = `${r.path}#${name}`;
-        if (seen.has(k)) continue; seen.add(k);
-        flat.push({ name, path: r.path, line_start: Number(r.line_start), line_end: Number(r.line_end), text: r.text });
+      const entries = hasSymbols ? parseSymbols(r.symbols_json) : null;
+      if (entries && entries.length) {
+        const chunkLineStart = Number(r.line_start);
+        for (const s of entries) {
+          if (!s || !s.name) continue;
+          const k = `${r.path}#${s.name}`;
+          if (seen.has(k)) continue; seen.add(k);
+          flat.push({
+            name: s.name, path: r.path,
+            line_start: Number(s.lineStart), line_end: Number(s.lineEnd),
+            text: sliceByLines(r.text, chunkLineStart, Number(s.lineStart), Number(s.lineEnd)),
+          });
+        }
+      } else {
+        for (const name of declared(r.text)) {
+          const k = `${r.path}#${name}`;
+          if (seen.has(k)) continue; seen.add(k);
+          flat.push({ name, path: r.path, line_start: Number(r.line_start), line_end: Number(r.line_end), text: r.text });
+        }
       }
     }
   }
   return { flat, byName: indexByName(flat) };
+}
+
+// Parse a stored symbols_json array; never throw on malformed/legacy values.
+function parseSymbols(json) {
+  if (!json) return null;
+  try { const a = JSON.parse(json); return Array.isArray(a) ? a : null; } catch { return null; }
+}
+
+// Slice a chunk's text to a symbol's file-line span. Chunk text line 0 == chunkLineStart. Deterministic
+// per chunk (so baseline and check produce the same slice — no spurious drift). Out-of-range → whole chunk.
+function sliceByLines(chunkText, chunkLineStart, lineStart, lineEnd) {
+  const lines = String(chunkText || "").split("\n");
+  const a = Math.max(0, lineStart - chunkLineStart);
+  const b = Math.min(lines.length, lineEnd - chunkLineStart + 1);
+  return a < b ? lines.slice(a, b).join("\n") : String(chunkText || "");
 }
 
 async function loadGraph(store, includeAmbiguous) {
