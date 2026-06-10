@@ -755,3 +755,23 @@ test("runInstall --wiki then uninstall: removes the PostToolUse hook", () => {
   runInstall({ repo, uninstall: true });
   assert.ok(!settingsHasPostHook(JSON.parse(readFileSync(join(repo, ".claude", "settings.json"), "utf8"))));
 });
+
+// --- verifyInstall wiki-conditional items (Task 3) ----------------------------
+
+test("verifyInstall: when a wiki is configured, checks the PostToolUse hook + MCP wiki pairing", () => {
+  const repo = tmp();
+  runInstall({ repo, wiki: "../wiki" });
+  mkdirSync(join(repo, ".gtir", "index.lance"), { recursive: true }); // satisfy the index item
+  const r = runInstall({ repo, verify: true });
+  assert.equal(r.ready, true);
+  assert.ok(r.items.some((i) => i.name === "PostToolUse hook" && i.ok));
+  assert.ok(r.items.some((i) => i.name === ".mcp.json wiki pair" && i.ok));
+});
+
+test("verifyInstall: no wiki configured => no PostToolUse/pairing items", () => {
+  const repo = tmp();
+  runInstall({ repo });
+  const r = runInstall({ repo, verify: true });
+  assert.ok(!r.items.some((i) => i.name === "PostToolUse hook"));
+  assert.ok(!r.items.some((i) => i.name === ".mcp.json wiki pair"));
+});

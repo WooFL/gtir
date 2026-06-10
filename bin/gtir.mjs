@@ -51,6 +51,8 @@ import {
   removePostToolUseHook,
   gtirPostHookEntry,
   POST_HOOK_MATCH_KEY,
+  settingsHasPostHook,
+  mcpHasWikiPair,
 } from "../src/install.mjs";
 import { mkdirSync } from "node:fs";
 
@@ -407,6 +409,12 @@ function verifyInstall({ repo, sel, log }) {
     items.push({ name: ".cursor/rules/gtir.mdc", ok: existsSync(path.join(repo, ".cursor", "rules", "gtir.mdc")), detail: "rule file" });
   }
   items.push({ name: "AGENTS.md", ok: markedSectionPresent(readText(path.join(repo, "AGENTS.md"))), detail: "nav section" });
+
+  const cfgWiki = readJson(path.join(repo, ".gtir", "config.json")).wiki;
+  if (sel.claude && cfgWiki) {
+    items.push({ name: "PostToolUse hook", ok: settingsHasPostHook(readJson(path.join(repo, ".claude", "settings.json"))), detail: "Edit|Write|MultiEdit → driftnudge" });
+    items.push({ name: ".mcp.json wiki pair", ok: mcpHasWikiPair(readJson(path.join(repo, ".mcp.json"))), detail: `--repo ${cfgWiki}` });
+  }
 
   const ready = items.every((i) => i.ok);
   log(`gtir install --verify (${repo})`);
