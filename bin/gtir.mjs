@@ -30,7 +30,7 @@ import { cochangeQuery, hotspotsQuery } from "../src/git-metrics-run.mjs";
 import { communitiesQuery } from "../src/communities-run.mjs";
 import { baselineQuery, checkQuery, ackQuery, muteQuery, emitBriefs } from "../src/stale-run.mjs";
 import {
-  gtirMcpEntry, gtirHookEntry, gtirClaudeMdBody,
+  gtirMcpEntry, gtirHookEntry, gtirNavBody,
   addMcpServer, removeMcpServer, addPreToolUseHook, removePreToolUseHook,
   upsertMarkedSection, removeMarkedSection, hooknudge,
   GTIR_START, GTIR_END, HOOK_MATCH_KEY,
@@ -332,7 +332,7 @@ export function runInstall({ repo = process.cwd(), uninstall = false, force = fa
       const md0 = readText(claudeMdFile);
       const md1 = uninstall
         ? removeMarkedSection(md0, GTIR_START, GTIR_END)
-        : upsertMarkedSection(md0, GTIR_START, GTIR_END, gtirClaudeMdBody());
+        : upsertMarkedSection(md0, GTIR_START, GTIR_END, gtirNavBody());
       writeFileSync(claudeMdFile, md1);
     } catch (e) {
       writeErrors.push(claudeMdFile);

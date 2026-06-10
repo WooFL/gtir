@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import {
   gtirMcpEntry,
   gtirHookEntry,
-  gtirClaudeMdBody,
+  gtirNavBody,
   addMcpServer,
   removeMcpServer,
   addPreToolUseHook,
@@ -47,8 +47,9 @@ test("gtirHookEntry: Grep|Glob matcher, command contains hooknudge, forward-slas
   assert.equal(h.command, 'node "C:/abs/bin/gtir.mjs" hooknudge');
 });
 
-test("gtirClaudeMdBody: factual nudge naming both MCP tools", () => {
-  const body = gtirClaudeMdBody();
+test("gtirNavBody: factual nudge naming context + both search tools", () => {
+  const body = gtirNavBody();
+  assert.match(body, /mcp__gtir__context/);
   assert.match(body, /mcp__gtir__search_code/);
   assert.match(body, /mcp__gtir__find_code/);
   assert.match(body, /Grep/);
@@ -225,7 +226,7 @@ test("removeMarkedSection: absent => no-op (returns text unchanged modulo traili
 
 test("upsert then remove round-trips to the original prose (modulo trailing whitespace)", () => {
   const original = "# Doc\n\nsome prose here\n";
-  const added = upsertMarkedSection(original, GTIR_START, GTIR_END, gtirClaudeMdBody());
+  const added = upsertMarkedSection(original, GTIR_START, GTIR_END, gtirNavBody());
   const removed = removeMarkedSection(added, GTIR_START, GTIR_END);
   assert.equal(removed.replace(/\s+$/, ""), original.replace(/\s+$/, ""));
 });
@@ -239,6 +240,7 @@ test("hooknudge: Grep PreToolUse JSON => additionalContext nudge", () => {
   assert.equal(parsed.hookSpecificOutput.hookEventName, "PreToolUse");
   assert.match(parsed.hookSpecificOutput.additionalContext, /mcp__gtir__search_code/);
   assert.match(parsed.hookSpecificOutput.additionalContext, /mcp__gtir__find_code/);
+  assert.match(parsed.hookSpecificOutput.additionalContext, /mcp__gtir__context/);
 });
 
 test("hooknudge: Glob => nudge too", () => {

@@ -33,18 +33,22 @@ export function gtirHookEntry(absBinPath) {
   };
 }
 
-// The CLAUDE.md marked-section body. FACTUAL, not imperative (per Claude Code hook
-// guidance): state what the tools do and that they often beat raw Grep/Glob here.
-export function gtirClaudeMdBody() {
+// The shared nav-nudge body. FACTUAL, not imperative (per Claude Code hook guidance): state what
+// the tools do and that they often beat raw Grep/Glob/Read here. Used by CLAUDE.md, AGENTS.md, and
+// the Cursor rule file so all assistants advertise the same tools.
+export function gtirNavBody() {
   return [
     "## Code navigation: prefer gtir's MCP tools",
     "",
     "This repo has a gtir semantic+lexical code index available over MCP. For navigating code,",
-    "these usually beat raw Grep/Glob:",
+    "these usually beat raw Grep/Glob/Read:",
     "",
+    "- `mcp__gtir__context` — pull a full bundle for a symbol or query (definition + source span +",
+    "  callers/callees + siblings) in ONE call, instead of several Read/Grep round-trips.",
     "- `mcp__gtir__search_code` — find code by meaning (a concept, or \"where does X happen\").",
-    "  Reach for it for paraphrased / fuzzy recall instead of guessing Grep patterns.",
     "- `mcp__gtir__find_code` — jump to an exact symbol's definition and references.",
+    "",
+    "For repos paired with an Obsidian wiki, `mcp__gtir__stale_check` flags notes whose cited code drifted.",
     "",
     "Grep/Glob remain fine for exact string matches and file-name globs.",
   ].join("\n");
@@ -168,9 +172,9 @@ export function removeMarkedSection(text, startMark, endMark) {
 
 // Factual nudge text surfaced to the agent when it reaches for Grep/Glob.
 export const HOOKNUDGE_TEXT =
-  "gtir MCP is available in this repo: mcp__gtir__search_code finds code by meaning "
-  + "(a concept, or \"where does X happen\"); mcp__gtir__find_code jumps to a symbol's "
-  + "definition/references. They often beat raw Grep/Glob for navigating this codebase.";
+  "gtir MCP is available in this repo: mcp__gtir__context bundles a symbol's definition + source "
+  + "+ callers/callees in one call; mcp__gtir__search_code finds code by meaning; mcp__gtir__find_code "
+  + "jumps to a symbol's definition/references. They often beat raw Grep/Glob for navigating this codebase.";
 
 // Given the raw PreToolUse hook JSON (as a string), return the stdout the hook should
 // print: an additionalContext nudge for Grep/Glob, otherwise "" (no output). Never
