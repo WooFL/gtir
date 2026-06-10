@@ -145,6 +145,52 @@ export function removePreToolUseHook(json, matchKey) {
   return out;
 }
 
+// --- hooks.PostToolUse merge (ambient write-back drift nudge) -----------------
+
+// gtir's PostToolUse hook always invokes the `driftnudge` subcommand.
+export const POST_HOOK_MATCH_KEY = "driftnudge";
+
+// The PostToolUse hook entry: on Edit/Write/MultiEdit, run `gtir driftnudge` (reads the hook JSON from
+// stdin, emits an additionalContext nudge naming the wiki notes that document the edited file).
+export function gtirPostHookEntry(absBinPath) {
+  const binFwd = absBinPath.replace(/\\/g, "/");
+  return {
+    matcher: "Edit|Write|MultiEdit",
+    hooks: [{ type: "command", command: `node "${binFwd}" driftnudge`, timeout: 5 }],
+  };
+}
+
+// Add gtir's PostToolUse hook under `hooks.PostToolUse`, preserving other entries; replace-in-place if
+// already present (add-twice == add-once).
+export function addPostToolUseHook(json, hookEntry, matchKey) {
+  const out = { ...asObject(json) };
+  out.hooks = { ...asObject(out.hooks) };
+  const existing = Array.isArray(out.hooks.PostToolUse) ? out.hooks.PostToolUse : [];
+  const others = existing.filter((e) => !isGtirHookEntry(e, matchKey));
+  out.hooks.PostToolUse = [...others, hookEntry];
+  return out;
+}
+
+// Remove gtir's PostToolUse hook (entries whose command contains matchKey), keeping all others.
+// Leaves `hooks.PostToolUse` present (possibly empty). Idempotent. Normalizes malformed shapes.
+export function removePostToolUseHook(json, matchKey) {
+  const out = { ...asObject(json) };
+  if (out.hooks === undefined || out.hooks === null) return out;
+  const hooks = { ...asObject(out.hooks) };
+  if (hooks.PostToolUse === undefined || hooks.PostToolUse === null) { out.hooks = hooks; return out; }
+  const existing = Array.isArray(hooks.PostToolUse) ? hooks.PostToolUse : [];
+  hooks.PostToolUse = existing.filter((e) => !isGtirHookEntry(e, matchKey));
+  out.hooks = hooks;
+  return out;
+}
+
+// True iff `json` has a PostToolUse entry whose command contains gtir's post-hook key.
+export function settingsHasPostHook(json) {
+  const arr = json?.hooks?.PostToolUse;
+  return Array.isArray(arr) && arr.some((e) =>
+    Array.isArray(e?.hooks) && e.hooks.some((h) => typeof h?.command === "string" && h.command.includes(POST_HOOK_MATCH_KEY)));
+}
+
 // --- CLAUDE.md marked section ------------------------------------------------
 
 // Generic marked-section helpers now live in their own module; re-exported for back-compat

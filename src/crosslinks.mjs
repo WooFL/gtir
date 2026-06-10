@@ -135,7 +135,7 @@ function readBaselineFile(wikiCfg) {
 
 // code key -> notes that cite it, cached per (wiki,code) index pair for the process lifetime.
 // Source: the precise stale baseline when present; else live crossLinks over every note (slower).
-export async function reverseLinks(wikiCfg, codeCfg, { deps = {} } = {}) {
+export async function reverseLinks(wikiCfg, codeCfg, { deps = {}, baselineOnly = false } = {}) {
   const key = revKey(wikiCfg, codeCfg);
   if (_revCache.has(key)) return _revCache.get(key);
 
@@ -143,6 +143,8 @@ export async function reverseLinks(wikiCfg, codeCfg, { deps = {} } = {}) {
   let linksByNote;
   if (base && base.links && Object.keys(base.links).length) {
     linksByNote = base.links;
+  } else if (baselineOnly) {
+    return invertLinks({}); // hook fast-path: no baseline -> empty, never the live scan; not cached
   } else {
     const wikiStore = await openStore(wikiCfg);
     const rows = await wikiStore.allChunkRows(["path"]);
