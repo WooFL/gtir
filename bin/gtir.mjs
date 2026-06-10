@@ -1150,6 +1150,23 @@ async function main() {
         process.stdin.on("error", () => process.exit(0));
         return; // keep the process alive until stdin closes; do not fall through to exit
       }
+      case "driftnudge": {
+        // PostToolUse hook command: read all of stdin, emit an additionalContext nudge naming the wiki
+        // notes that document the edited file (else nothing). Async (does I/O). Never throws -> silent exit 0.
+        let input = "";
+        process.stdin.setEncoding("utf8");
+        process.stdin.on("data", (c) => { input += c; });
+        process.stdin.on("end", async () => {
+          try {
+            const { driftnudge } = await import("../src/driftnudge.mjs");
+            const out = await driftnudge(input);
+            if (out) process.stdout.write(out);
+          } catch { /* exit 0 silently */ }
+          process.exit(0);
+        });
+        process.stdin.on("error", () => process.exit(0));
+        return; // keep the process alive until stdin closes; do not fall through to exit
+      }
       case "watch": {
         const cfg = loadConfig(repo);
         const debounceMs = args.debounce ?? 1500;
