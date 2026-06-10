@@ -352,7 +352,7 @@ export function runInstall({ repo = process.cwd(), uninstall = false, force = fa
 // Check-only verification: inspect the repo and report PASS/FAIL per item. No writes.
 function verifyInstall({ repo, sel, log }) {
   const readJson = (file) => { if (!existsSync(file)) return {}; try { return JSON.parse(readFileSync(file, "utf8")); } catch { return {}; } };
-  const readText = (file) => (existsSync(file) ? readFileSync(file, "utf8") : "");
+  const readText = (file) => { try { return existsSync(file) ? readFileSync(file, "utf8") : ""; } catch { return ""; } };
   const items = [];
 
   const idxOk = existsSync(path.join(repo, ".gtir", "index.lance"));
