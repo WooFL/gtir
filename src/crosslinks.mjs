@@ -179,6 +179,9 @@ export async function codeLinksFor(wikiCfg, codeCfg, notePath, { cap } = {}) {
 export async function codeStructure(codeCfg, codeLinks) {
   const symbols = (codeLinks || []).filter((c) => (c.kind === undefined || c.kind === "symbol") && c.symbol);
   if (symbols.length < 2) return { callEdges: [] };
+  // graphForSearch caches by indexDir; a config missing it would silently share one cache slot
+  // across repos. Fail fast instead.
+  if (!codeCfg?.indexDir) throw new Error("codeStructure: codeCfg.indexDir required");
   const { graph } = await graphForSearch(codeCfg);
   const keyMeta = new Map(); // nodeKey -> { path, symbol }
   for (const s of symbols) keyMeta.set(nodeKey(s.path, s.symbol), { path: s.path, symbol: s.symbol });
