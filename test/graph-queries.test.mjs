@@ -201,6 +201,36 @@ test("buildSymbolInventory: out-of-range symbol span falls back to whole-chunk t
   } finally { rmSync(cfg._root, { recursive: true, force: true }); }
 });
 
+test("buildSymbolInventory: invalid symbol line numbers => no line span, whole-chunk text", async () => {
+  const cfg = tmpCfg();
+  try {
+    const store = await openStore(cfg);
+    // legacy/corrupt symbols_json: lineStart 0 / lineEnd -1 must not render as "0--1"
+    await store.upsertRows([
+      chunkSym("1", "a.mjs", 5, 7, "function zero(){ return 0; }", [{ name: "zero", lineStart: 0, lineEnd: -1 }]),
+    ]);
+    const inv = await buildSymbolInventory(store, "code");
+    const site = inv.byName.get("zero")[0];
+    assert.equal(site.line_start, undefined, "invalid lines => undefined, not 0");
+    assert.equal(site.line_end, undefined);
+    assert.match(site.text, /function zero/, "falls back to whole-chunk text");
+  } finally { rmSync(cfg._root, { recursive: true, force: true }); }
+});
+
+test("buildSymbolInventory: symbol starting before its chunk => whole-chunk text, not a truncated slice", async () => {
+  const cfg = tmpCfg();
+  try {
+    const store = await openStore(cfg);
+    // chunk spans lines 10-12; symbol claims 8-11 (starts before the chunk) — partial slice would drop line12
+    await store.upsertRows([
+      chunkSym("1", "a.mjs", 10, 12, "line10\nline11\nline12", [{ name: "split", lineStart: 8, lineEnd: 11 }]),
+    ]);
+    const inv = await buildSymbolInventory(store, "code");
+    assert.equal(inv.byName.get("split")[0].text, "line10\nline11\nline12",
+      "out-of-range start => whole chunk (docstring contract), not a top-of-chunk slice");
+  } finally { rmSync(cfg._root, { recursive: true, force: true }); }
+});
+
 test("graphForSearch builds {graph,degree}, caches, and clears", async () => {
   const cfg = tmpCfg();
   try {

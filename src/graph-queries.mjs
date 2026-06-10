@@ -37,10 +37,15 @@ export async function buildSymbolInventory(store, mode, { callables = false } = 
           if (!s || !s.name) continue;
           const k = `${r.path}#${s.name}`;
           if (seen.has(k)) continue; seen.add(k);
+          // Guard legacy/corrupt spans: a non-positive or inverted range yields no line label
+          // (avoids rendering "0--1") and falls back to the whole chunk for text.
+          const ls = Number(s.lineStart), le = Number(s.lineEnd);
+          const valid = Number.isInteger(ls) && Number.isInteger(le) && ls > 0 && le >= ls;
           flat.push({
             name: s.name, path: r.path,
-            line_start: Number(s.lineStart), line_end: Number(s.lineEnd),
-            text: sliceByLines(r.text, chunkLineStart, Number(s.lineStart), Number(s.lineEnd)),
+            line_start: valid ? ls : undefined,
+            line_end: valid ? le : undefined,
+            text: valid ? sliceByLines(r.text, chunkLineStart, ls, le) : String(r.text || ""),
           });
         }
       } else {
@@ -64,10 +69,14 @@ function parseSymbols(json) {
 // Slice a chunk's text to a symbol's file-line span. Chunk text line 0 == chunkLineStart. Deterministic
 // per chunk (so baseline and check produce the same slice — no spurious drift). Out-of-range → whole chunk.
 function sliceByLines(chunkText, chunkLineStart, lineStart, lineEnd) {
-  const lines = String(chunkText || "").split("\n");
-  const a = Math.max(0, lineStart - chunkLineStart);
+  const whole = String(chunkText || "");
+  // A symbol starting before this chunk is out-of-range → whole chunk (don't return a truncated
+  // top-of-chunk slice when lineStart clamps to 0 but lineEnd lands inside).
+  if (!(lineStart >= chunkLineStart)) return whole;
+  const lines = whole.split("\n");
+  const a = lineStart - chunkLineStart;
   const b = Math.min(lines.length, lineEnd - chunkLineStart + 1);
-  return a < b ? lines.slice(a, b).join("\n") : String(chunkText || "");
+  return a < b ? lines.slice(a, b).join("\n") : whole;
 }
 
 async function loadGraph(store, includeAmbiguous) {
