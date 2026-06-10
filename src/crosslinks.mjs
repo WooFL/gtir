@@ -60,6 +60,47 @@ export function crossLinks(codeInv, codeFiles, noteText, { cap = 15 } = {}) {
   return links.slice(0, Math.max(0, cap)).map(({ _rank, ...l }) => l);
 }
 
+// Invert per-note code links into code-keyed maps. Pure. NoteRef = { note, lines?, snippet? }.
+// linksByNote: { [notePath]: Array<{ kind?, symbol?, path, lines?, snippet? }> }
+export function invertLinks(linksByNote) {
+  const bySymbol = new Map();
+  const byPath = new Map();
+  const push = (map, key, ref) => {
+    if (!key) return;
+    let a = map.get(key);
+    if (!a) { a = []; map.set(key, a); }
+    if (!a.some((r) => r.note === ref.note)) a.push(ref);
+  };
+  for (const [note, rows] of Object.entries(linksByNote || {})) {
+    for (const row of rows || []) {
+      const ref = {
+        note,
+        ...(row.lines ? { lines: row.lines } : {}),
+        ...(row.snippet ? { snippet: row.snippet } : {}),
+      };
+      if ((row.kind === undefined || row.kind === "symbol") && row.symbol) push(bySymbol, row.symbol, ref);
+      if (row.path) push(byPath, row.path, ref);
+    }
+  }
+  return { bySymbol, byPath };
+}
+
+// Notes that document a code site: union of name + path matches, deduped per note, capped. Pure.
+export function notesFor(rev, { symbol = null, path = null } = {}, cap = 8) {
+  const out = [];
+  const seen = new Set();
+  const add = (refs) => {
+    for (const r of refs || []) {
+      if (seen.has(r.note)) continue;
+      seen.add(r.note);
+      out.push(r);
+    }
+  };
+  if (symbol) add(rev.bySymbol.get(symbol));   // symbol matches first (carry the symbol's lines)
+  if (path) add(rev.byPath.get(path));
+  return out.slice(0, Math.max(0, cap));
+}
+
 const _codeCache = new Map(); // indexDir -> { inv, files }
 
 // Build (once per code index) the symbol inventory + file set the resolver needs. Heavy on a big

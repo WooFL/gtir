@@ -40,6 +40,7 @@ export const DEFAULTS = {
   centralityK: 8,           // half-saturation degree for the centrality multiplier
   centralityTieEps: 0.000001, // `--centrality` is tiebreaker-only: reorder hits only within this RRF-score band. Must be << the inter-rank RRF gap (~2.6e-4) so only genuine ties move; larger values demote exact matches (measured: 0.001 cost 25pp recall@1, a score-multiplier cost ~4.5pp).
   contextCap: 5,            // `--edges`/edges:true: max callers + max callees attached per hit
+  relatedNotesCap: 8,      // `context`/`notes_for`: max wiki notes attached per code item
   metricsWindow: 1000,          // commits scanned by cochange/hotspots
   cochangeMinSupport: 3,        // min co-change count to report a pair
   metricsMaxCommitFiles: 25,    // skip commits touching more files than this (weak signal)
