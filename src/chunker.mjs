@@ -125,11 +125,15 @@ function mergeSiblings(nodes, text, langId, relPath, cfg) {
     const body = text.slice(group.startIndex, group.endIndex).trim();
     if (body.length >= cfg.minChars) {
       const scope = scopeBreadcrumb(group.node);
+      const symbols = group.members
+        .map((n) => ({ name: nodeName(n), lineStart: n.startPosition.row + 1, lineEnd: n.endPosition.row + 1 }))
+        .filter((s) => s.name);
       out.push({
         path: relPath, language: langId,
         chunkStart: group.startIndex, chunkEnd: group.endIndex,
         lineStart: group.startRow + 1, lineEnd: group.endRow + 1, text: body,
         ...(scope.length ? { scope } : {}),
+        ...(symbols.length ? { symbols } : {}),
       });
     }
     group = null;
@@ -160,24 +164,27 @@ function mergeSiblings(nodes, text, langId, relPath, cfg) {
           // since each window's first line is an interior line, not the declaration.
           const own = nodeName(n);
           const leafScope = [...scopeBreadcrumb(n), ...(own ? [own] : [])];
+          const winLineStart = s.lineStart + n.startPosition.row;
+          const winLineEnd = s.lineEnd + n.startPosition.row;
           out.push({
             ...s,
             chunkStart: trimmedStart,
             chunkEnd: trimmedStart + s.text.length,
-            lineStart: s.lineStart + n.startPosition.row,
-            lineEnd: s.lineEnd + n.startPosition.row,
+            lineStart: winLineStart,
+            lineEnd: winLineEnd,
             ...(leafScope.length ? { scope: leafScope } : {}),
+            ...(own ? { symbols: [{ name: own, lineStart: winLineStart, lineEnd: winLineEnd }] } : {}),
           });
         }
       }
       continue;
     }
     if (group && (n.endIndex - group.startIndex) <= cfg.maxChars) {
-      group.endIndex = n.endIndex; group.endRow = n.endPosition.row; group.node = n;
+      group.endIndex = n.endIndex; group.endRow = n.endPosition.row; group.node = n; group.members.push(n);
     } else {
       flush();
       group = { startIndex: n.startIndex, endIndex: n.endIndex,
-        startRow: n.startPosition.row, endRow: n.endPosition.row, node: n };
+        startRow: n.startPosition.row, endRow: n.endPosition.row, node: n, members: [n] };
     }
   }
   flush();

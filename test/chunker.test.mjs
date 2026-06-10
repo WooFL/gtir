@@ -312,3 +312,22 @@ test("contextScope: false suppresses the code scope breadcrumb (plain synthetic)
   assert.ok(!cx.embedText.includes("› Service"), `scope must be suppressed: ${cx.embedText.slice(0, 60)}`);
   assert.ok(cx.embedText.startsWith("svc.py — "), `should be plain synthetic: ${cx.embedText.slice(0, 60)}`);
 });
+
+test("chunkFile (js): a merged AST chunk carries per-symbol spans in `symbols`", async () => {
+  const js = [
+    "function alpha(x) { return x + 1; }",   // line 1
+    "function beta(y) { return y * 2; }",     // line 2
+  ].join("\n");
+  const chunks = await chunkFile("m.mjs", ".mjs", js, astCfg);
+  const syms = chunks.flatMap((c) => c.symbols || []);
+  assert.deepEqual(syms.map((s) => s.name).sort(), ["alpha", "beta"]);
+  const alpha = syms.find((s) => s.name === "alpha");
+  const beta = syms.find((s) => s.name === "beta");
+  assert.equal(alpha.lineStart, 1); assert.equal(alpha.lineEnd, 1);
+  assert.equal(beta.lineStart, 2); assert.equal(beta.lineEnd, 2);
+});
+
+test("chunkRecursive (non-AST) chunks have no `symbols`", () => {
+  const chunks = chunkRecursive("f.txt", "text", Array.from({ length: 12 }, (_, i) => `line ${i} of some text here`).join("\n"), cfg);
+  for (const c of chunks) assert.equal(c.symbols, undefined);
+});
