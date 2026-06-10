@@ -217,3 +217,14 @@ test("MCP notes_for returns the wiki notes documenting a symbol", async () => {
     assert.ok(res.result.structuredContent.notes.some((n) => n.note === "design.md"), "design.md returned");
   } finally { rmSync(code, { recursive: true, force: true }); rmSync(wiki, { recursive: true, force: true }); }
 });
+
+test("MCP notes_for returns empty when no wiki is paired (code-only server)", async () => {
+  const code = codeRepoWR();
+  const codeCfg = { ...loadConfig(code), model: "qwen3-embedding:0.6b", ollamaUrl: "http://localhost:11434" };
+  try {
+    await buildIndex(codeCfg, { rebuild: true }); await indexEdges(codeCfg, { rebuild: true, collect: false });
+    const indexes = [{ label: "code", repo: codeCfg.repo, cfg: codeCfg }];
+    const fn = defaultNotesForFn(indexes);
+    assert.deepEqual(await fn({ symbol: "WidgetRegistry" }), { notes: [] }, "no wiki paired -> empty notes, no crash");
+  } finally { rmSync(code, { recursive: true, force: true }); }
+});
