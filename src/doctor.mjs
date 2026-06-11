@@ -2,7 +2,7 @@
 // model if it's missing, verifies embeddings work, and prints a ✓/✗ readiness report. Removes the
 // manual `ollama pull …` step that used to sit between install and first index.
 import { probeDim } from "./embed.mjs";
-import { probeDim as tfProbeDim } from "./transformers-embed.mjs";
+import { probeDim as tfProbeDim, probeRerank as tfProbeRerank } from "./transformers-embed.mjs";
 import { embedIdentity } from "./config.mjs";
 
 // Is `model` in the /api/tags list? Ollama reports "name:tag"; tolerate a missing ":latest".
@@ -102,6 +102,17 @@ export async function runDoctor(cfg, { pull = true, log = () => {} } = {}) {
           ? " — model not staged for offline use; run `gtir doctor` once with transformersLocalOnly off (or with network) to warm the cache, then re-enable it"
           : "";
       checks.push({ name: "transformers embeddings", ok: false, detail: e.message + hint });
+    }
+    // Rerank is opt-in (cfg.rerank); only when on does the cross-encoder need to load. Probe it so doctor
+    // warms/verifies the reranker model too. A failure is a warning, not fatal — rerank degrades to RRF order.
+    if (cfg.rerank) {
+      try {
+        const ok = await tfProbeRerank(cfg);
+        checks.push({ name: "transformers rerank (cross-encoder)", ok: ok ? true : "warn",
+          detail: ok ? null : "reranker returned no ranking — searches will use hybrid (RRF) order" });
+      } catch (e) {
+        checks.push({ name: "transformers rerank (cross-encoder)", ok: "warn", detail: `${e.message} — searches will use hybrid (RRF) order` });
+      }
     }
     const { text, ready } = formatReport(checks);
     return { ready, dim, checks, report: text };

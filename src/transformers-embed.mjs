@@ -48,23 +48,27 @@ async function loadLib() {
 // the result, so concurrent first calls share a single load.
 const _pipelines = new Map();
 
+// Apply the gtir-owned cache + zero-egress settings to the shared transformers.js env. Used by both the
+// embedder and the reranker so they agree on cache location and offline policy.
+//   - cacheDir is the on-disk model cache (default is deep under node_modules) = the offline bundle: warm it
+//     once with remote allowed (`gtir doctor`), and a later localOnly run reads the same files with no network.
+//   - transformersLocalOnly forbids the HF-hub fetch transformers.js does by default (a path net-guard can't
+//     see); the library then serves only from cacheDir or a pre-staged localModelPath — restoring zero-egress.
+function applyEnv(env, cfg) {
+  if (cfg.transformersCacheDir) env.cacheDir = cfg.transformersCacheDir;
+  if (cfg.transformersLocalOnly) {
+    env.allowRemoteModels = false;
+    if (cfg.transformersModelDir) env.localModelPath = cfg.transformersModelDir;
+  }
+}
+
 function getExtractor(cfg, repo, dtype) {
   const key = `${repo}::${dtype}`;
   let p = _pipelines.get(key);
   if (p) return p;
   p = (async () => {
     const { pipeline, env } = await loadLib();
-    // Pin the on-disk model cache to a stable, gtir-owned dir (default is deep under node_modules). This dir
-    // IS the offline bundle: warm it once with remote allowed (`gtir doctor`), and a later localOnly run reads
-    // the same files with no network. Always applied so warm + serve agree on one location.
-    if (cfg.transformersCacheDir) env.cacheDir = cfg.transformersCacheDir;
-    // Zero-egress: by default transformers.js fetches the model from the HF hub on first run — a network path
-    // net-guard does NOT see. transformersLocalOnly forbids that; transformers.js then serves only from the
-    // local cache (cacheDir, warmed earlier) or a pre-staged localModelPath, restoring the no-egress guarantee.
-    if (cfg.transformersLocalOnly) {
-      env.allowRemoteModels = false;
-      if (cfg.transformersModelDir) env.localModelPath = cfg.transformersModelDir;
-    }
+    applyEnv(env, cfg);
     return pipeline("feature-extraction", repo, { dtype });
   })();
   _pipelines.set(key, p);
@@ -92,5 +96,77 @@ export async function probeDim(cfg) {
   return v.length;
 }
 
-// Test/model-switch hook: drop the cached pipelines.
-export function _resetPipelines() { _pipelines.clear(); }
+// --- Cross-encoder reranker (the in-process counterpart of rerank.mjs's llama-server /rerank) ---
+
+// Known llama-server rerank model tags → their transformers.js ONNX repo. An unknown tag (or an explicit
+// transformersRerankRepo) is used as a direct HF repo id / local path.
+const RERANK_PROFILES = {
+  "bge-reranker-v2-m3": { repo: "onnx-community/bge-reranker-v2-m3-ONNX" },
+};
+
+function rerankRepoFor(cfg) {
+  if (cfg.transformersRerankRepo) return cfg.transformersRerankRepo;
+  return RERANK_PROFILES[cfg.rerankModel]?.repo ?? cfg.rerankModel;
+}
+
+// One loaded (model, tokenizer) per (repo, dtype), memoized like the embed pipelines.
+const _rerankers = new Map();
+
+function getReranker(cfg, repo, dtype) {
+  const key = `${repo}::${dtype}`;
+  let p = _rerankers.get(key);
+  if (p) return p;
+  p = (async () => {
+    const { AutoModelForSequenceClassification, AutoTokenizer, env } = await loadLib();
+    applyEnv(env, cfg);
+    const [model, tokenizer] = await Promise.all([
+      // graphOptimizationLevel:"disabled" sidesteps an onnxruntime-node graph-fusion bug that crashes
+      // initialization of the bge-reranker fp16 export (SimplifiedLayerNormFusion on a missing node arg).
+      // Rerank runs over ~24 candidates, so skipping fusion optimizations costs nothing noticeable.
+      AutoModelForSequenceClassification.from_pretrained(repo, { dtype, session_options: { graphOptimizationLevel: "disabled" } }),
+      AutoTokenizer.from_pretrained(repo),
+    ]);
+    return { model, tokenizer };
+  })();
+  _rerankers.set(key, p);
+  return p;
+}
+
+// Build a rerankImpl: (query, docs: string[]) => Promise<[{index, score}] | null>, sorted by score desc.
+// Mirrors rerank.mjs's contract exactly — it NEVER throws fatally: on any failure (dep missing, model not
+// staged offline, bad output) it returns null so search() silently falls back to RRF hybrid order. bge-reranker
+// is a single-logit cross-encoder; the raw logit is the relevance score (sigmoid would be monotonic, so the
+// ranking is identical — we keep the logit).
+export function makeRerankImpl(cfg) {
+  const repo = rerankRepoFor(cfg);
+  // Default fp16: a single-file export (~1.1 GB). fp32 is split (model.onnx + a 2.3 GB .onnx_data sidecar
+  // transformers.js does not auto-fetch), so it is NOT a safe default here — unlike the embed model.
+  const dtype = cfg.transformersRerankDtype ?? "fp16";
+  const cap = cfg.rerankMaxChars ?? 2000;
+  return async function rerank(query, docs) {
+    if (!docs.length) return [];
+    try {
+      const { model, tokenizer } = await getReranker(cfg, repo, dtype);
+      const passages = docs.map((d) => String(d).slice(0, cap));
+      const inputs = tokenizer(new Array(passages.length).fill(query), { text_pair: passages, padding: true, truncation: true });
+      const { logits } = await model(inputs);
+      const scores = logits.tolist().map((row) => row[0]);   // [n, 1] → n relevance logits
+      if (scores.length !== docs.length) return null;
+      return scores
+        .map((score, index) => ({ index, score }))
+        .sort((a, b) => b.score - a.score);
+    } catch (err) {
+      process.stderr.write(`[gtir] transformers rerank unavailable (${err.message}), using hybrid order\n`);
+      return null;
+    }
+  };
+}
+
+// Probe the reranker for `gtir doctor`: score one trivial pair, return true iff it produced a ranking.
+export async function probeRerank(cfg) {
+  const ranked = await makeRerankImpl(cfg)("ping", ["pong"]);
+  return Array.isArray(ranked) && ranked.length === 1;
+}
+
+// Test/model-switch hook: drop the cached pipelines + rerankers.
+export function _resetPipelines() { _pipelines.clear(); _rerankers.clear(); }

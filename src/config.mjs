@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { langFor } from "./languages.mjs";
-import { makeEmbedImpl } from "./transformers-embed.mjs";
+import { makeEmbedImpl, makeRerankImpl } from "./transformers-embed.mjs";
 
 // `model` is the Ollama tag served via /api/embed; pull it with `ollama pull <model>`
 // (or `gtir doctor`). Default is qwen3-embedding:0.6b — an embedding-native model Ollama
@@ -21,6 +21,8 @@ export const DEFAULTS = {
   transformersLocalOnly: false,   // true = forbid HF-hub fetch; serve only from cacheDir/modelDir (zero-egress)
   transformersCacheDir: null,     // gtir-owned on-disk model cache (the offline bundle); null = library default
   transformersModelDir: null,     // dir of pre-staged ONNX models (env.localModelPath) when transformersLocalOnly
+  transformersRerankRepo: null,   // ONNX cross-encoder repo for rerank; null = map from rerankModel (bge-reranker-v2-m3)
+  transformersRerankDtype: null,  // rerank dtype; null = fp16 (single-file export; fp32 needs an un-fetched sidecar)
   ollamaUrl: process.env.OLLAMA_URL || "http://localhost:11434",
   maxChars: 2000,
   minChars: 100,
@@ -108,6 +110,9 @@ export function loadConfig(repoPath) {
   // optional @huggingface/transformers dep until the first embed call, so loadConfig stays sync + dep-free.
   if (merged.embedBackend === "transformers" && !merged.embedImpl) {
     merged.embedImpl = makeEmbedImpl(merged);
+    // Route rerank through the in-process cross-encoder too, so the transformers backend needs no
+    // llama-server. Harmless when rerank is off — search only calls rerankImpl when cfg.rerank is set.
+    if (!merged.rerankImpl) merged.rerankImpl = makeRerankImpl(merged);
   }
   return merged;
 }
