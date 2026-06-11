@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { langFor } from "./languages.mjs";
+import { makeEmbedImpl } from "./transformers-embed.mjs";
 
 // `model` is the Ollama tag served via /api/embed; pull it with `ollama pull <model>`
 // (or `gtir doctor`). Default is qwen3-embedding:0.6b — an embedding-native model Ollama
@@ -12,6 +13,14 @@ import { langFor } from "./languages.mjs";
 // Override per-repo in .gtir/config.json (e.g. qwen3-embedding:4b for higher recall).
 export const DEFAULTS = {
   model: "qwen3-embedding:0.6b",
+  // Embedding backend: "ollama" (default, /api/embed server) or "transformers" (in-process ONNX, no server —
+  // see transformers-embed.mjs). The transformers path needs the optional @huggingface/transformers dep and
+  // currently covers embeddings only; rerank stays on the llama-server path (and degrades to null if absent).
+  embedBackend: "ollama",
+  transformersDtype: "fp32",      // transformers backend: fp32 (parity) | fp16 | q8 (smaller/faster)
+  transformersLocalOnly: false,   // true = forbid HF-hub fetch; serve only from cacheDir/modelDir (zero-egress)
+  transformersCacheDir: null,     // gtir-owned on-disk model cache (the offline bundle); null = library default
+  transformersModelDir: null,     // dir of pre-staged ONNX models (env.localModelPath) when transformersLocalOnly
   ollamaUrl: process.env.OLLAMA_URL || "http://localhost:11434",
   maxChars: 2000,
   minChars: 100,
@@ -93,7 +102,26 @@ export function loadConfig(repoPath) {
   merged.repo = repo;
   merged.gtirDir = join(repo, ".gtir");
   merged.indexDir = join(repo, ".gtir", "index.lance");
+  // Transformers backend: attach the in-process embedder so every consumer (search.mjs, indexer.mjs) picks it
+  // up via their existing `cfg.embedImpl ?? embedTexts` fallback — no other call site changes. Honor an
+  // embedImpl already injected by a caller (tests / runInit). makeEmbedImpl is lazy: it does not import the
+  // optional @huggingface/transformers dep until the first embed call, so loadConfig stays sync + dep-free.
+  if (merged.embedBackend === "transformers" && !merged.embedImpl) {
+    merged.embedImpl = makeEmbedImpl(merged);
+  }
   return merged;
+}
+
+// The embedding identity an index's cached vectors belong to. Two indexes share vectors only if their
+// identities match. For Ollama this is the bare model tag (so existing indexes — built before backends
+// existed — keep matching: back-compatible). For the in-process transformers backend the runtime + dtype
+// change the actual numbers a given model emits, so they join the key: switching ollama↔transformers, or
+// q8↔fp32, yields a different identity and forces a full re-embed instead of silently reusing stale vectors.
+export function embedIdentity(cfg) {
+  if (cfg.embedBackend === "transformers") {
+    return `${cfg.model}|transformers|${cfg.transformersDtype ?? "fp32"}`;
+  }
+  return cfg.model;
 }
 
 // Real programming-language grammar ids (excludes markdown + data/markup like json/yaml/css/html).

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadConfig, DEFAULTS, pickEmbedModel, resolveAutoModel } from "../src/config.mjs";
+import { loadConfig, DEFAULTS, pickEmbedModel, resolveAutoModel, embedIdentity } from "../src/config.mjs";
 
 test("loadConfig returns defaults when no override file", () => {
   const repo = mkdtempSync(join(tmpdir(), "gtir-cfg-"));
@@ -23,6 +23,35 @@ test("loadConfig merges .gtir/config.json over defaults", () => {
   assert.equal(cfg.model, "jina-code-embeddings-1.5b");
   assert.equal(cfg.maxChars, 3000);
   assert.equal(cfg.minChars, DEFAULTS.minChars); // untouched default preserved
+});
+
+test("embedIdentity: ollama (default) is the bare model tag — back-compatible with pre-backend indexes", () => {
+  assert.equal(embedIdentity({ embedBackend: "ollama", model: "qwen3-embedding:0.6b" }), "qwen3-embedding:0.6b");
+  // an absent embedBackend behaves like ollama (defaults applied elsewhere)
+  assert.equal(embedIdentity({ model: "nomic-embed-text" }), "nomic-embed-text");
+});
+
+test("embedIdentity: transformers folds backend + dtype into the key so a switch invalidates the cache", () => {
+  const m = "qwen3-embedding:0.6b";
+  assert.equal(embedIdentity({ embedBackend: "transformers", model: m, transformersDtype: "fp32" }), `${m}|transformers|fp32`);
+  assert.equal(embedIdentity({ embedBackend: "transformers", model: m, transformersDtype: "q8" }), `${m}|transformers|q8`);
+  // dtype omitted → defaults to fp32 (matches DEFAULTS.transformersDtype)
+  assert.equal(embedIdentity({ embedBackend: "transformers", model: m }), `${m}|transformers|fp32`);
+  // every pair distinct: ollama vs fp32 vs q8 are three different identities for the same model
+  const ids = new Set([
+    embedIdentity({ embedBackend: "ollama", model: m }),
+    embedIdentity({ embedBackend: "transformers", model: m, transformersDtype: "fp32" }),
+    embedIdentity({ embedBackend: "transformers", model: m, transformersDtype: "q8" }),
+  ]);
+  assert.equal(ids.size, 3);
+});
+
+test("loadConfig: transformers backend attaches an embedImpl; ollama default does not", () => {
+  const repo = mkdtempSync(join(tmpdir(), "gtir-cfg-"));
+  assert.equal(typeof loadConfig(repo).embedImpl, "undefined");
+  mkdirSync(join(repo, ".gtir"), { recursive: true });
+  writeFileSync(join(repo, ".gtir", "config.json"), JSON.stringify({ embedBackend: "transformers" }));
+  assert.equal(typeof loadConfig(repo).embedImpl, "function");
 });
 
 test("noCache defaults to false", () => {

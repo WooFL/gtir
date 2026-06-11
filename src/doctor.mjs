@@ -2,6 +2,8 @@
 // model if it's missing, verifies embeddings work, and prints a ✓/✗ readiness report. Removes the
 // manual `ollama pull …` step that used to sit between install and first index.
 import { probeDim } from "./embed.mjs";
+import { probeDim as tfProbeDim } from "./transformers-embed.mjs";
+import { embedIdentity } from "./config.mjs";
 
 // Is `model` in the /api/tags list? Ollama reports "name:tag"; tolerate a missing ":latest".
 export function modelPresent(tags, model) {
@@ -79,6 +81,31 @@ export async function runDoctor(cfg, { pull = true, log = () => {} } = {}) {
 
   const nodeMajor = Number(process.versions.node.split(".")[0]);
   checks.push({ name: `Node ${process.versions.node}`, ok: nodeMajor >= 20, detail: nodeMajor >= 20 ? null : "gtir needs Node ≥ 20" });
+
+  // Transformers backend: no Ollama server to check. Readiness = the @huggingface/transformers dep is
+  // installed and the model loads (which warms the on-disk cache when remote is allowed, or proves the
+  // offline bundle is staged when transformersLocalOnly). The same probe doubles as a warmup.
+  if (cfg.embedBackend === "transformers") {
+    checks.push({ name: `embed backend: transformers (in-process ONNX, no server)`, ok: true,
+      detail: `${embedIdentity(cfg)}${cfg.transformersLocalOnly ? " · local-only" : ""}${cfg.transformersCacheDir ? ` · cache ${cfg.transformersCacheDir}` : ""}` });
+    let dim = null;
+    try {
+      if (cfg.transformersLocalOnly) log("verifying staged model (offline)…");
+      else log("loading model (first run downloads it; this warms the offline cache)…");
+      dim = await tfProbeDim(cfg);
+      checks.push({ name: `transformers embeddings (dim=${dim})`, ok: true });
+    } catch (e) {
+      const missingDep = /Cannot find (package|module)|@huggingface\/transformers/i.test(e.message);
+      const hint = missingDep
+        ? " — run: npm i @huggingface/transformers"
+        : cfg.transformersLocalOnly
+          ? " — model not staged for offline use; run `gtir doctor` once with transformersLocalOnly off (or with network) to warm the cache, then re-enable it"
+          : "";
+      checks.push({ name: "transformers embeddings", ok: false, detail: e.message + hint });
+    }
+    const { text, ready } = formatReport(checks);
+    return { ready, dim, checks, report: text };
+  }
 
   let reachable = false;
   try { await getJSON(`${cfg.ollamaUrl}/api/version`, fetchImpl); reachable = true; checks.push({ name: `Ollama reachable at ${cfg.ollamaUrl}`, ok: true }); }

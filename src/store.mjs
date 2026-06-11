@@ -61,7 +61,7 @@ export async function openStore(cfg) {
     if (tbl) await tbl.delete(`path IN (${inList(paths)})`);
   }
 
-  async function writeMeta({ model, dim, version }) {
+  async function writeMeta({ model, embedKey, dim, version }) {
     const names = await tableNames();
     const rows = [
       { key: "model", value: String(model) },
@@ -69,6 +69,10 @@ export async function openStore(cfg) {
       { key: "version", value: String(version) },
       { key: "built_at", value: String(Math.floor(Date.now() / 1000)) },
     ];
+    // embedKey = the embedding identity (model + backend + dtype) the vectors belong to; absent on
+    // pre-backend indexes, where reuse falls back to the bare model tag. Optional so callers that don't
+    // track it still write a valid meta table.
+    if (embedKey != null) rows.push({ key: "embedKey", value: String(embedKey) });
     if (names.includes("meta")) {
       const t = await db.openTable("meta");
       await t.delete("true");

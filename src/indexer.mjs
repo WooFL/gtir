@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { extname, join } from "node:path";
-import { resolveAutoModel } from "./config.mjs";
+import { resolveAutoModel, embedIdentity } from "./config.mjs";
 import { walkRepo, statPaths } from "./walker.mjs";
 import { langFor } from "./languages.mjs";
 import { grammarMissing, OPTIONAL_GRAMMARS, getParser } from "./parser.mjs";
@@ -336,16 +336,19 @@ export async function buildIndex(cfg, { rebuild = false, paths = null } = {}) {
   const live = new Set(files.map((f) => f.relPath));
 
   // Auto-select the embedding model from the file mix (a notes vault → nomic) unless the user pinned
-  // one. Only on a full walk — a targeted watcher refresh trusts the already-persisted choice. A model
-  // flip on an existing index forces a rebuild (embedding dim changes, so vectors must be re-embedded).
+  // one. Only on a full walk — a targeted watcher refresh trusts the already-persisted choice. Then, if
+  // the existing index's embedding identity (model + backend + dtype) no longer matches the current cfg,
+  // force a rebuild: the persisted vectors were produced by a different embedder (a model flip changes the
+  // dim; an ollama↔transformers or q8↔fp32 switch changes the numbers), so they must be fully re-embedded
+  // rather than partially reused. embedKey is absent on pre-backend indexes → fall back to the stored model
+  // tag, which equals embedIdentity() for the ollama default, so those keep matching with no rebuild.
   if (!targeted) {
     const auto = resolveAutoModel(cfg, files.map((f) => f.relPath));
-    if (auto !== cfg.model) {
-      cfg.model = auto;
-      if (tableExists) {
-        const metaModel = (await store.readMeta()).model;
-        if (metaModel && metaModel !== cfg.model) rebuild = true;
-      }
+    if (auto !== cfg.model) cfg.model = auto;
+    if (tableExists && !rebuild) {
+      const meta = await store.readMeta();
+      const storedId = meta.embedKey ?? meta.model;
+      if (storedId && storedId !== embedIdentity(cfg)) rebuild = true;
     }
   }
 
@@ -416,7 +419,8 @@ export async function buildIndex(cfg, { rebuild = false, paths = null } = {}) {
   // Load the cache BEFORE any eviction/drop: reuse the prior index's embeddings when the
   // model matches and the existing table carries content_hash.
   const tableHasHash = await store.hasContentHash();
-  const useCache = !cfg.noCache && tableHasHash && (await store.readMeta()).model === cfg.model;
+  const cacheMeta = await store.readMeta();
+  const useCache = !cfg.noCache && tableHasHash && (cacheMeta.embedKey ?? cacheMeta.model) === embedIdentity(cfg);
   // Refresh: reuse only the changed files' prior vectors (O(changed)) — not the whole corpus.
   // Rebuild: load every vector (null) so unchanged content anywhere in the repo is reused.
   const cache = useCache ? await store.loadEmbedCache(rebuild ? null : changedPaths) : new Map();
@@ -460,7 +464,7 @@ export async function buildIndex(cfg, { rebuild = false, paths = null } = {}) {
     ...(writeSymbols ? { symbols_json: JSON.stringify(c.symbols ?? []) } : {}),
   }));
   await store.upsertRows(rows);
-  await store.writeMeta({ model: cfg.model, dim, version: cfg.version });
+  await store.writeMeta({ model: cfg.model, embedKey: embedIdentity(cfg), dim, version: cfg.version });
 
   try { await indexEdges(cfg, store, toIndex, { rebuild, deleted: rebuild ? [] : stale }); }
   catch (e) { warnings.push(`edge index skipped: ${e.message}`); }
