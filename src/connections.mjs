@@ -75,11 +75,23 @@ export function lexicalQuery(path, ownChunks) {
   return [title, ...headings].join("\n");
 }
 
-// Unique lowercase tokens of length >= 4 (drops stopword-ish short words).
+// Structural/boilerplate heading words shared by templated notes (module pages etc). Overlap on these
+// is noise — they label sections, they aren't distinctive concepts — so they're dropped from the term
+// annotations (`why` tags + `terms[]` highlights). This does NOT affect lexical ranking: the FTS query
+// is built from the raw title+headings string (lexicalQuery), not from queryTermsOf.
+const STRUCTURAL_TERMS = new Set([
+  "purpose", "responsibilities", "responsibility", "overview", "summary", "threading", "related",
+  "decisions", "decision", "public", "shipped", "used", "status", "definition", "section", "sections",
+  "coupling", "runtime", "model", "data", "state", "dependencies", "context", "references", "notes",
+  "body", "shape", "canonical", "milestone", "callout", "frontmatter", "example", "examples", "usage",
+  "background", "motivation", "scope", "responsibility", "consumer", "consumers", "module", "modules",
+]);
+
+// Unique lowercase tokens of length >= 4 (drops stopword-ish short words and structural heading boilerplate).
 export function queryTermsOf(text) {
   const seen = new Set();
   for (const t of String(text || "").toLowerCase().match(/[a-z0-9]+/g) || []) {
-    if (t.length >= 4) seen.add(t);
+    if (t.length >= 4 && !STRUCTURAL_TERMS.has(t)) seen.add(t);
   }
   return [...seen];
 }
@@ -92,6 +104,13 @@ export function bestTerm(text, terms) {
     if (hay.includes(t) && (best === null || t.length > best.length)) best = t;
   }
   return best;
+}
+
+// Every query term that appears in `text` (case-insensitive), longest first — the full shared vocabulary
+// that links the two notes. Powers per-node word highlighting in the editor/graph.
+export function allTerms(text, terms) {
+  const hay = String(text || "").toLowerCase();
+  return (terms || []).filter((t) => hay.includes(t)).sort((a, b) => b.length - a.length);
 }
 
 // Pure fusion. RRF over the semantic and lexical ranks (equal weight), then a bounded
@@ -122,6 +141,7 @@ export function fuseConnections(entries, proximity, cfg = {}) {
       snippet: snippetOf(repr.text),
       lines: `${repr.lineStart}-${repr.lineEnd}`,
       why,
+      terms: e.lex?.terms ?? [],   // shared vocabulary (open-note title/heading terms present in this note)
     };
   });
   out.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
@@ -170,7 +190,7 @@ export async function computeConnections(cfg, { path, k } = {}) {
     catch { try { rows = await tbl.query().nearestToText(queryText).limit(fanout).toArray(); } catch { rows = []; } }
     for (const r of rows) {
       if (r.path === path || lex.has(r.path)) continue;
-      lex.set(r.path, { lineStart: Number(r.line_start), lineEnd: Number(r.line_end), text: r.text, term: bestTerm(r.text, qTerms) });
+      lex.set(r.path, { lineStart: Number(r.line_start), lineEnd: Number(r.line_end), text: r.text, term: bestTerm(r.text, qTerms), terms: allTerms(r.text, qTerms) });
     }
   }
 
@@ -214,9 +234,10 @@ export async function graphNeighborhood(cfg, { path, k, hops, max } = {}) {
   const ownRows = await tbl.query().where(`path = ${sqlStr(path)}`).limit(1).toArray();
   if (ownRows.length === 0) return { center: path, nodes: [], edges: [], status: "not-indexed" };
 
-  // 1. ranked related notes (semantic ⊕ lexical ⊕ link-graph)
+  // 1. ranked related notes (semantic ⊕ lexical ⊕ link-graph). Keep the full result per path (not just
+  // the score) so graph nodes can surface WHAT triggered the link — section, why[], rank — on hover.
   const conn = await computeConnections(cfg, { path, k: K });
-  const related = new Map((conn.results || []).map((r) => [r.path, r.score]));
+  const related = new Map((conn.results || []).map((r, i) => [r.path, { score: r.score, section: r.section, why: r.why, snippet: r.snippet, rank: i + 1, terms: r.terms }]));
 
   // 2. wikilink graph (notes are bare-path nodes)
   const graph = (await store.hasEdges()) ? buildGraph(await store.loadEdges()) : { fwd: new Map(), rev: new Map() };
@@ -262,13 +283,17 @@ export async function graphNeighborhood(cfg, { path, k, hops, max } = {}) {
   }
 
   // 6. node objects (weight: related→score-scaled, pure-link→degree-scaled), center first, cap
-  const maxScore = Math.max(0.0001, ...[...related.values()].filter((v) => v != null));
+  const maxScore = Math.max(0.0001, ...[...related.values()].map((v) => v?.score).filter((v) => v != null));
   const nodeList = [...nodes].map((p) => {
-    const score = related.get(p);
+    const rel = related.get(p);
+    const score = rel?.score;
     const weight = score != null
       ? 0.4 + 0.6 * (score / maxScore)
       : Math.min(1, 0.2 + 0.1 * (degree.get(p) || 0));
-    return { path: p, label: noteLabel(p), group: topDir(p), weight: Number(weight.toFixed(3)), center: p === path };
+    const node = { path: p, label: noteLabel(p), group: topDir(p), weight: Number(weight.toFixed(3)), center: p === path };
+    // Hover trigger info (only for ranked-related notes; pure-link/hop nodes have no "why").
+    if (rel) { node.section = rel.section; node.why = rel.why; node.score = Number((rel.score ?? 0).toFixed(3)); node.rank = rel.rank; node.terms = rel.terms; }
+    return node;
   }).sort((a, b) => Number(b.center) - Number(a.center) || b.weight - a.weight).slice(0, MAX);
 
   const kept = new Set(nodeList.map((n) => n.path));
