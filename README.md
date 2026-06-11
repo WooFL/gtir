@@ -6,7 +6,9 @@ Search code and notes by meaning. Ask *"where do we retry failed requests?"* and
 function even when it's called `backoffFetch` and never says the word "retry."
 
 A small command-line tool that indexes your repositories and Obsidian vaults and runs entirely on your
-machine — a local Ollama model, no cloud, no API keys.
+machine. The embedding model runs **in-process** (ONNX via `@huggingface/transformers`) — no separate
+server, no cloud, no API keys. (A local [Ollama](#embedding-backends) server is still supported as an
+opt-in backend.)
 
 > *gtir* — Armenian *գտնել*, "to find."
 
@@ -16,11 +18,11 @@ machine — a local Ollama model, no cloud, no API keys.
   in plain English (*"evict the least-recently-used cache entry"*, *"rotate a 3D vector"*).
 - **Code and notes, one tool.** `gtir init` detects repo vs Obsidian vault and picks the right model (a
   code embedder for repos, a prose one for notes).
-- **Local.** Everything runs through Ollama. Native on Windows, macOS, Linux.
+- **Local.** The model runs in-process (ONNX) — nothing to start, no daemon. Native on Windows, macOS, Linux.
 - **In your editor.** Ships an MCP server so Claude or Cursor can search your codebase mid-session.
 
 Under the hood: split files into chunks (tree-sitter for code, headings for Markdown), embed each with a
-local model, and answer a query by fusing semantic (vector) and keyword (BM25) search.
+local model running in-process, and answer a query by fusing semantic (vector) and keyword (BM25) search.
 
 ### Why it saves an agent tokens
 
@@ -46,20 +48,23 @@ grep and gtir are complementary: grep for an exact string you know, gtir for fin
   data-driven, not eyeballed.
 - **Query-adaptive ranking** — a bare identifier lets keyword search lead, a plain-English question lets
   the embedder lead, and a question that names a symbol gets both.
-- **One runtime, every OS** — a single local Ollama model, no Python/torch/API keys, prebuilt
-  vector-store binaries; installs the same on Windows, Linux, macOS.
+- **One runtime, every OS** — the model runs in-process via ONNX (no server, no Python/torch/API keys),
+  with prebuilt vector-store + onnxruntime binaries; installs the same on Windows, Linux, macOS.
 - **AST-aligned chunks** — whole functions, classes, structs (including shaders), not fixed-size windows.
 - **Traversable in an editor** — search, read a span, outline a file, find similar chunks, jump to a
   symbol's definition or references.
 
 ## 🔒 Privacy — zero egress
 
-During index, search, and `mcp-serve`, gtir makes outbound network requests **only** to the local
-endpoints you configure: `ollamaUrl` (embeddings, default `http://localhost:11434`) and, when rerank
-is on, `rerankUrl` (default `http://127.0.0.1:8088`). Nothing else — no telemetry, analytics,
-auto-update, or cloud/vendor calls, ever. (Point `OLLAMA_URL` at a LAN host if you want; that's your
-explicit choice and still not vendor egress.) Grammars are **bundled** at pack time, so there's no
-runtime grammar fetch either (`gtir fetch-grammars` is an explicit one-time setup step).
+On the default in-process backend, index/search/`mcp-serve` make **no** network requests at all once the
+model is on disk — embedding and rerank run inside the Node process. The model is downloaded from the
+Hugging Face hub **once** on first use (a one-time fetch, like `ollama pull`); set
+`transformersLocalOnly: true` against a warmed cache to forbid even that and run fully offline
+(`allowRemoteModels=false`). On the opt-in Ollama backend, the only outbound requests are to the local
+endpoints you configure: `ollamaUrl` (embeddings, default `http://localhost:11434`) and, when rerank is
+on, `rerankUrl` (default `http://127.0.0.1:8088`). Either way: no telemetry, analytics, auto-update, or
+cloud/vendor calls, ever. Grammars are **bundled** at pack time, so there's no runtime grammar fetch
+either (`gtir fetch-grammars` is an explicit one-time setup step).
 
 This is a tested guarantee, not a promise: `test/no-egress.test.mjs` spies on global `fetch` while
 running the real index → search → MCP flows and asserts every contacted host is one of your configured
@@ -73,7 +78,7 @@ walk repo (.gitignore-aware)
   → tree-sitter AST chunks (+ cAST sibling-merge; line-window fallback for grammarless files)
   → markdown: heading-aware sections, each carrying its heading breadcrumb + frontmatter tags
   → contextual prefix per chunk (code: path › enclosing class/module; markdown: heading breadcrumb)
-  → embed via Ollama /api/embed  (qwen3-embedding:0.6b)
+  → embed in-process via ONNX  (qwen3-embedding:0.6b; or Ollama /api/embed if that backend is selected)
   → LanceDB upsert (vectors + BM25 FTS over a path/scope/decl-weighted text)
 search: query → embed → vector branch + BM25 branch → query-adaptive Reciprocal Rank Fusion (k=60)
 ```
@@ -114,9 +119,11 @@ npm install
 npm link            # exposes `gtir` globally
 ```
 
-Requires **Node ≥20** and **Ollama ≥0.24** running locally. LanceDB ships prebuilt native binaries (no
-compile step) for Windows (x64/arm64), Linux (x64/arm64, glibc + musl), and Apple Silicon macOS.
-**Intel Macs (`darwin-x64`) are not supported** — LanceDB ships no prebuilt for them.
+Requires **Node ≥20**. No server to install — the default backend embeds in-process via ONNX
+(`@huggingface/transformers` + `onnxruntime-node`, pulled in by `npm install`). Both LanceDB and
+onnxruntime ship prebuilt native binaries (no compile step) for Windows (x64/arm64), Linux (x64/arm64,
+glibc + musl), and Apple Silicon macOS. **Intel Macs (`darwin-x64`) are not supported** — LanceDB ships
+no prebuilt for them. (The opt-in Ollama backend additionally needs **Ollama ≥0.24** running locally.)
 
 ## 🔧 Setup (once per machine)
 
@@ -124,7 +131,18 @@ compile step) for Windows (x64/arm64), Linux (x64/arm64, glibc + musl), and Appl
 gtir doctor
 ```
 
-Checks Ollama, pulls the embedding model if missing, and verifies embeddings work:
+Loads the embedding model (downloading it on first run to warm the offline cache) and verifies
+embeddings work. On the default in-process backend:
+
+```text
+gtir doctor — ready ✓
+  ✓  Node 26.1.0
+  ✓  embed backend: transformers (in-process ONNX, no server) — qwen3-embedding:0.6b|transformers|fp32
+  ✓  transformers embeddings (dim=1024)
+```
+
+On the Ollama backend it instead checks the server is reachable, pulls the model if missing, and probes
+`/api/embed`:
 
 ```text
 gtir doctor — ready ✓
@@ -134,9 +152,32 @@ gtir doctor — ready ✓
   ✓  embeddings (dim=1024)
 ```
 
-The first run pulls the model (~1 GB GGUF, one-time). `--no-pull` only diagnoses and prints the
-`ollama pull` command; `--repo <project>` checks that repo's configured model. It exits non-zero when
-something's missing, so it works as a script preflight.
+The first run fetches the model (in-process: ~0.5–1 GB ONNX from the HF hub; Ollama: ~1 GB GGUF via
+`ollama pull`), one-time. `--repo <project>` checks that repo's configured backend + model. It exits
+non-zero when something's missing, so it works as a script preflight.
+
+### Embedding backends
+
+gtir picks the embedding (and rerank) runtime from `embedBackend` in `.gtir/config.json`:
+
+| `embedBackend` | Runs the model | Needs | Default |
+| --- | --- | --- | --- |
+| `"transformers"` | in-process (ONNX via `@huggingface/transformers` + `onnxruntime-node`) | nothing — no server | ✅ |
+| `"ollama"` | a local Ollama HTTP server (`/api/embed`) | Ollama ≥0.24 running | — |
+
+The in-process backend embeds **and** reranks with no external process. Knobs (all in `.gtir/config.json`):
+
+- `transformersDtype` — `"fp32"` (default; matches the Ollama baseline on the eval) · `"fp16"` · `"q8"`
+  (smaller/faster, lower precision — measurably worse on the hard eval tier, so not the default).
+- `transformersLocalOnly` — `true` forbids the HF-hub fetch; the model is served only from
+  `transformersCacheDir` (a warmed offline bundle) or `transformersModelDir`, so the run makes **zero**
+  network calls. Warm the cache once with `gtir doctor` online, then flip this on.
+- `transformersRerankDtype` — rerank dtype, default `"fp16"` (a single-file export; fp32 is split with a
+  large `.onnx_data` sidecar that isn't auto-fetched).
+
+To use Ollama instead, set `"embedBackend": "ollama"` and run `gtir doctor` — it checks the server, pulls
+the model, and probes `/api/embed`. Switching backends (or dtype) changes the actual vectors, so gtir
+forces a one-time `--rebuild` automatically via the stored embedding identity.
 
 ## 🚀 Quick start
 
@@ -202,7 +243,7 @@ gtir search  "how are sessions created" --repo <project> [-k 8] [--language pyth
 gtir status  --repo <project>                          # model, dim, file count
 gtir hook    --repo <project> [--remove]               # install/remove the auto-refresh git hooks
 gtir fetch-grammars                                    # download prebuilt HLSL/GLSL grammars (~5 MB)
-gtir doctor  [--repo <project>] [--no-pull]            # check Ollama + model, pull if missing
+gtir doctor  [--repo <project>] [--no-pull]            # check the backend + model (loads ONNX, or checks Ollama)
 gtir mcp     --repo <project> [--label name:<repo>] [--watch] [--print-config]   # run the MCP server
 gtir eval    --repo <corpus> --golden <f> [--save] [--json]            # score retrieval quality
 gtir eval    --repo <corpus> --tune ["ftsWeight=0,0.2;ftsWeightMixed=0,1"]   # sweep fusion weights
@@ -459,9 +500,9 @@ Endpoints (JSON; bind is loopback-only):
 - `POST /search { query, k? }` → `{ results }` — the same hybrid search as the CLI/MCP.
 
 `--token <t>` requires callers to send `X-Gtir-Token: <t>` (the plugin generates one). `--watch`
-live-refreshes the index on vault edits (reuses `gtir watch`). Like every gtir command, `serve`
-makes outbound requests only to your configured Ollama endpoint — it *listens* on localhost and
-calls nothing else (asserted by `test/no-egress.test.mjs`).
+live-refreshes the index on vault edits (reuses `gtir watch`). Like every gtir command, `serve` makes no
+outbound requests on the default in-process backend (and only to your configured Ollama endpoint on that
+backend) — it *listens* on localhost and calls nothing else (asserted by `test/no-egress.test.mjs`).
 
 Tunables (`.gtir/config.json`): `connK` (12), `connGraphWeight` (0.25), `connGraphHops` (2),
 `connFusion` (true — set false for vector+BM25 only).
@@ -561,20 +602,23 @@ older index, run `gtir index --rebuild` first.
 
 ## 🤖 Model
 
-Default code model (in `src/config.mjs`): **`qwen3-embedding:0.6b`** (639 MB, 1024-dim), pulled by
-`gtir doctor`. It's embedding-native (Ollama serves `/api/embed` for it first-class) and scores overall
-R@1 0.918 / MRR 0.949 on the bundled eval.
+Default code model (in `src/config.mjs`): **`qwen3-embedding:0.6b`** (1024-dim). On the default
+in-process backend it loads from `onnx-community/Qwen3-Embedding-0.6B-ONNX` (ONNX, fp32); on the Ollama
+backend it's the 639 MB GGUF pulled by `gtir doctor`. Either path scores overall R@1 ≈ 0.90–0.918 /
+MRR ≈ 0.94 on the bundled eval (fp32 in-process matches the Ollama baseline; q8 regresses the hard tier).
 
 - **Notes vaults** default to `nomic-embed-text` (prose, 768-dim) — `gtir init` picks it automatically
-  for an Obsidian vault or markdown-dominant repo.
+  for an Obsidian vault or markdown-dominant repo. In-process it maps to `Xenova/nomic-embed-text-v1`.
 - **Higher recall:** override in `.gtir/config.json`, e.g. `{ "model": "qwen3-embedding:4b" }`, then
   `gtir index --rebuild`.
-- Changing the model changes the embedding dimension, so `gtir index --rebuild` is required.
+- Changing the model (or backend/dtype) changes the embedding identity, so `gtir index --rebuild` is
+  required — gtir forces it automatically when the stored identity no longer matches.
 
-**"does not support embeddings"?** Ollama only serves `/api/embed` for models whose GGUF carries
-`pooling_type` metadata; decoder models repackaged as embedders lack it and load completion-only, so the
-embed call fails. Fix: use a pooling-native model — the default `qwen3-embedding:0.6b`, or
-`nomic-embed-text`. `gtir doctor` detects this and names the fix.
+**"does not support embeddings"?** (Ollama backend only.) Ollama serves `/api/embed` only for models
+whose GGUF carries `pooling_type` metadata; decoder models repackaged as embedders lack it and load
+completion-only, so the embed call fails. Fix: use a pooling-native model — the default
+`qwen3-embedding:0.6b`, or `nomic-embed-text` — or switch to the in-process backend, which has no such
+constraint. `gtir doctor` detects this and names the fix.
 
 ## ⚠️ Known limitations
 
@@ -599,15 +643,16 @@ npm test        # node --test — full suite, runs offline (embedder + HTTP clie
 npm run eval    # retrieval quality against the bundled corpus
 ```
 
-The embedder and Ollama client are injectable (`cfg.embedImpl` / `cfg.fetchImpl`), so the chunker,
+The embedder and HTTP client are injectable (`cfg.embedImpl` / `cfg.fetchImpl`), so the chunker,
 fusion, eval math, weight sweep, and MCP layer test offline. The integration suite stands up a mock
-Ollama HTTP server and drives the real stack end-to-end — `/api/embed` → store → search → watcher →
-rebase catch-up → doctor — still fully offline. CI runs `npm test` across {ubuntu, windows, macos} ×
-Node {20, 22} on every push and PR; only the corpus eval needs a live Ollama. If you touch retrieval,
+Ollama HTTP server and drives the real stack end-to-end on the Ollama backend — `/api/embed` → store →
+search → watcher → rebase catch-up → doctor — still fully offline. CI runs `npm test` across
+{ubuntu, windows, macos} × Node {20, 22} on every push and PR. If you touch retrieval,
 snapshot a baseline (`npm run eval -- --save`), change, and re-run — a gate/overall regression fails.
 
 **Layout** (`src/`, one job per file): `walker` → `chunker` (+ `languages` / `parser`) → `contextualize`
-→ `embed` (Ollama) → `store` (LanceDB) → `search` (fusion); plus `sweep` (weight tuning), `mcp` (server),
+→ `embed` (in-process ONNX via `transformers-embed`, or Ollama) → `store` (LanceDB) → `search` (fusion);
+plus `sweep` (weight tuning), `mcp` (server),
 `eval` (metrics), and `bin/gtir.mjs` (the CLI). The bundled grammars live in `grammars/` (gitignored,
 generated at prepack); the two shader grammars are built by `scripts/build-shader-grammars.mjs` and
 shipped as a release asset that `gtir fetch-grammars` pulls.

@@ -1,7 +1,7 @@
 {
   "name": "gtir",
   "version": "0.1.0",
-  "description": "Find code and notes by meaning — a local, hybrid semantic-search CLI + MCP server (vector + BM25 + tree-sitter, via Ollama; no cloud, no API keys).",
+  "description": "Find code and notes by meaning — a local, hybrid semantic-search CLI + MCP server (vector + BM25 + tree-sitter; in-process ONNX embeddings, no server; optional Ollama backend; no cloud, no API keys).",
   "license": "MIT",
   "author": "WooFL",
   "type": "module",
@@ -19,6 +19,8 @@
     "mcp",
     "embeddings",
     "tree-sitter",
+    "onnx",
+    "transformers-js",
     "ollama",
     "lancedb",
     "bm25",
