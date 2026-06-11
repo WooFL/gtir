@@ -46,12 +46,14 @@ test("embedIdentity: transformers folds backend + dtype into the key so a switch
   assert.equal(ids.size, 3);
 });
 
-test("loadConfig: transformers backend attaches an embedImpl; ollama default does not", () => {
+test("loadConfig: transformers backend (default) attaches an embedImpl; ollama override does not", () => {
   const repo = mkdtempSync(join(tmpdir(), "gtir-cfg-"));
-  assert.equal(typeof loadConfig(repo).embedImpl, "undefined");
-  mkdirSync(join(repo, ".gtir"), { recursive: true });
-  writeFileSync(join(repo, ".gtir", "config.json"), JSON.stringify({ embedBackend: "transformers" }));
+  // Default backend is transformers → loadConfig hangs the in-process embedder on cfg.embedImpl.
   assert.equal(typeof loadConfig(repo).embedImpl, "function");
+  // Opting back to the ollama HTTP backend leaves embedImpl unset (consumers use embedTexts).
+  mkdirSync(join(repo, ".gtir"), { recursive: true });
+  writeFileSync(join(repo, ".gtir", "config.json"), JSON.stringify({ embedBackend: "ollama" }));
+  assert.equal(typeof loadConfig(repo).embedImpl, "undefined");
 });
 
 test("noCache defaults to false", () => {

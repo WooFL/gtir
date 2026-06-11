@@ -13,10 +13,12 @@ import { makeEmbedImpl, makeRerankImpl } from "./transformers-embed.mjs";
 // Override per-repo in .gtir/config.json (e.g. qwen3-embedding:4b for higher recall).
 export const DEFAULTS = {
   model: "qwen3-embedding:0.6b",
-  // Embedding backend: "ollama" (default, /api/embed server) or "transformers" (in-process ONNX, no server —
-  // see transformers-embed.mjs). The transformers path needs the optional @huggingface/transformers dep and
-  // currently covers embeddings only; rerank stays on the llama-server path (and degrades to null if absent).
-  embedBackend: "ollama",
+  // Embedding backend: "transformers" (default — in-process ONNX via @huggingface/transformers, no server;
+  // see transformers-embed.mjs) or "ollama" (legacy, /api/embed on a running Ollama server). The transformers
+  // path covers BOTH embeddings and rerank in-process, so the default install needs no external process. The
+  // first run downloads the ONNX model from the HF hub (a one-time fetch, like `ollama pull`); set
+  // transformersLocalOnly + a warmed transformersCacheDir to forbid even that and run fully offline.
+  embedBackend: "transformers",
   transformersDtype: "fp32",      // transformers backend: fp32 (parity) | fp16 | q8 (smaller/faster)
   transformersLocalOnly: false,   // true = forbid HF-hub fetch; serve only from cacheDir/modelDir (zero-egress)
   transformersCacheDir: null,     // gtir-owned on-disk model cache (the offline bundle); null = library default

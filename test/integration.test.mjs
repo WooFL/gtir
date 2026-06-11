@@ -50,7 +50,9 @@ const repoWith = (files) => {
   return repo;
 };
 const FN = (name, words) => `export function ${name}(input) {\n  // ${words} — body long enough to clear the hundred-char minimum chunk threshold here ok\n  return String(input).trim()\n}\n`;
-const cfgFor = (repo) => ({ ...loadConfig(repo), ollamaUrl: URL, model: MODEL });
+// Pin the ollama backend: this suite exercises the real /api/embed HTTP path against the mock
+// Ollama above. The default is now the in-process transformers backend, which would bypass the mock.
+const cfgFor = (repo) => ({ ...loadConfig(repo), embedBackend: "ollama", embedImpl: undefined, ollamaUrl: URL, model: MODEL });
 
 test("integration: doctor talks to a real (mock) Ollama and reports ready", async () => {
   const r = await runDoctor(cfgFor(mkdtempSync(join(tmpdir(), "gtir-int-"))), { pull: false });
@@ -125,7 +127,7 @@ test("integration: `gtir index` CLI gitignores .gtir/ in a git repo (audit fix, 
   // Required now that `gtir index` runs a preflight check (model-present gate).
   const { mkdirSync } = await import("node:fs");
   mkdirSync(join(repo, ".gtir"), { recursive: true });
-  writeFileSync(join(repo, ".gtir", "config.json"), JSON.stringify({ model: MODEL }));
+  writeFileSync(join(repo, ".gtir", "config.json"), JSON.stringify({ embedBackend: "ollama", model: MODEL }));
   const bin = join(dirname(fileURLToPath(import.meta.url)), "..", "bin", "gtir.mjs");
   // ASYNC spawn — execFileSync would block this process's event loop and the in-process mock Ollama
   // could never answer the child's /api/embed, deadlocking the run.
@@ -173,7 +175,7 @@ test("integration: index build survives a dropped first /api/embed (retry layer)
   // Then override ollamaUrl+model+embedRetryBackoffMs via cfgFor-style spread.
   const repo = repoWith({ "a.js": FN("helloRetry", "retry resilience check helper function here") });
   mkdirSync(join(repo, ".gtir"), { recursive: true });
-  writeFileSync(join(repo, ".gtir", "config.json"), JSON.stringify({ ollamaUrl: url, model: "m", embedRetryBackoffMs: 0 }));
+  writeFileSync(join(repo, ".gtir", "config.json"), JSON.stringify({ embedBackend: "ollama", ollamaUrl: url, model: "m", embedRetryBackoffMs: 0 }));
 
   const cfg = loadConfig(repo);
   try {

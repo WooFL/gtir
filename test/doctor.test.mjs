@@ -120,12 +120,16 @@ test("preflight throws when the model is missing", async () => {
 });
 
 import { runIndex } from "../bin/gtir.mjs";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 test("runIndex with preflight:true throws before walking when Ollama is unreachable", async () => {
   const repo = mkdtempSync(join(tmpdir(), "gtir-preflight-"));
+  // Pin the ollama backend so preflight runs (the default transformers backend sets cfg.embedImpl,
+  // which runIndex treats as a non-Ollama backend and skips preflight for).
+  mkdirSync(join(repo, ".gtir"), { recursive: true });
+  writeFileSync(join(repo, ".gtir", "config.json"), JSON.stringify({ embedBackend: "ollama" }));
   await assert.rejects(
     () => runIndex({ repo, preflight: true, fetchImpl: async () => { throw new Error("ECONNREFUSED"); } }),
     /gtir doctor/,

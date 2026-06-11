@@ -112,7 +112,10 @@ test("zero egress: gtir serve /connections only contacts configured loopback hos
   const { startServer } = await import("../src/serve.mjs");
   recordedHosts.length = 0;
   const repo = fixtureRepo();
-  const cfg = { ...loadConfig(repo), ollamaUrl: "http://localhost:11434" };
+  // Pin the ollama HTTP backend: this test asserts the egress guarantee for the network path
+  // (every fetch hits a configured loopback host). The default transformers backend embeds
+  // in-process with no fetch — a different, separately-tested guarantee.
+  const cfg = { ...loadConfig(repo), embedBackend: "ollama", embedImpl: undefined, ollamaUrl: "http://localhost:11434" };
   let server;
   try {
     await buildIndex(cfg, { rebuild: true });
@@ -153,7 +156,8 @@ test("zero egress: index → search → MCP search_code only ever contact config
   recordedHosts.length = 0;
   const repo = fixtureRepo();
   // Default loopback ollamaUrl; pin DIM-matching model name is irrelevant — the stub ignores it.
-  const cfg = { ...loadConfig(repo), ollamaUrl: "http://localhost:11434" };
+  // Pin the ollama HTTP backend (the default is now in-process transformers, which makes no fetch).
+  const cfg = { ...loadConfig(repo), embedBackend: "ollama", embedImpl: undefined, ollamaUrl: "http://localhost:11434" };
 
   try {
     // 1. INDEX — drives the real embed.mjs HTTP path through GLOBAL fetch (no cfg.fetchImpl set).
